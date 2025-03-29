@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "exceldb"
+name = "excel-dbapi"
 version = "0.1.0"
 description = "A DBAPI-like interface for Excel files with extensible engines"
 authors = [{ name = "Yeongseon Choe", email = "yeongseon.choe@gmail.com" }]

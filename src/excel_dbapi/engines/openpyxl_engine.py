@@ -1,9 +1,9 @@
 from io import BytesIO
-from typing import Union, Optional
+from typing import Optional, Union
 
 import openpyxl
-from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.workbook.workbook import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
 
 from ..exceptions import OperationalError
 

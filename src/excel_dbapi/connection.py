@@ -2,8 +2,9 @@ from io import BytesIO
 from pathlib import Path
 from typing import Optional, Protocol, Union
 
-from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.workbook.workbook import Workbook
+from openpyxl.worksheet.worksheet import Worksheet
+
 from .engines.openpyxl_engine import OpenPyXLEngine
 from .exceptions import OperationalError
 from .remote import fetch_remote_file

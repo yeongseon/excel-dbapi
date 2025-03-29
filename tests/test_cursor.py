@@ -1,7 +1,7 @@
 import pytest
 
-from exceldb.connection import ExcelConnection
-from exceldb.exceptions import ProgrammingError
+from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.exceptions import ProgrammingError
 
 
 def test_cursor_execute_fetchall(tmp_path):

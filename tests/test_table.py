@@ -1,8 +1,8 @@
 import pytest
 
-from exceldb.connection import ExcelConnection
-from exceldb.exceptions import OperationalError
-from exceldb.table import ExcelTable
+from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.exceptions import OperationalError
+from excel_dbapi.table import ExcelTable
 
 
 def test_table_fetch_all(tmp_path):

@@ -1,5 +1,5 @@
-from exceldb.connection import ExcelConnection
-from exceldb.table import ExcelTable
+from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.table import ExcelTable
 
 
 def test_query_all(tmp_path):

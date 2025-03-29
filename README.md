@@ -1,4 +1,4 @@
-# exceldb
+# excel-dbapi
 
 A DBAPI-like interface for Excel files with extensible engines.
 

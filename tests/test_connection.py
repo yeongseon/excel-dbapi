@@ -1,7 +1,7 @@
 import pytest
 
-from exceldb.connection import ExcelConnection
-from exceldb.exceptions import OperationalError
+from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.exceptions import OperationalError
 
 
 def test_connection_local(tmp_path):
