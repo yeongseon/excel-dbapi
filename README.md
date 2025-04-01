@@ -1,5 +1,8 @@
 # excel-dbapi
 
+![CI](https://github.com/your-username/excel-dbapi/actions/workflows/ci.yml/badge.svg)
+[![codecov](https://codecov.io/gh/your-username/excel-dbapi/branch/main/graph/badge.svg)](https://codecov.io/gh/your-username/excel-dbapi)
+
 A DBAPI-like interface for Excel files with extensible engines.
 
 ---
