@@ -33,6 +33,12 @@ hatch develop
 > 💡 This installs runtime and development dependencies (e.g. `pytest`, `black`, `mypy`, `ruff`, etc.)  
 > and sets up the project in editable mode using Hatch.
 
+Alternatively, you can use the provided Makefile to automatically set up everything:
+
+```bash
+make setup
+```
+
 ---
 
 ### 4. Run tests, linters, and formatters
@@ -43,41 +49,77 @@ You can use the provided `Makefile` for convenient commands:
 make test       # Run all tests
 make format     # Auto-format code (black + isort)
 make lint       # Run static analysis (ruff + mypy)
-make sec-check  # Run security check (bandit)
-make dead-code  # Detect unused code (vulture)
 make build      # Build the package
 make clean      # Remove build artifacts
 ```
 
+You can also use additional quality checks:
+
+```bash
+make changelog         # Generate changelog
+make release-patch     # Release a patch version
+make release-minor     # Release a minor version
+make release-major     # Release a major version
+make commit m="msg"    # Commit and push changes
+```
+
 ---
 
-### ✅ 5. Pre-commit setup
+### ✅ Pre-commit setup
 
 We use `pre-commit` to ensure consistent code quality before every commit.
 
 #### Install and activate hooks
 
 ```bash
-pre-commit install
+make precommit
 ```
 
-#### Run checks on all files manually (first time)
+#### Run checks on all files manually (optional)
 
 ```bash
-pre-commit run --all-files
+make lint
 ```
 
-#### Pre-commit will automatically run the following tools:
+The following tools are automatically run before each commit:
 - `black`: code formatter
 - `isort`: import sorter
 - `ruff`: code style checker
 - `mypy`: type checker
-- `bandit`: security analyzer
-- `vulture`: unused code detector
 
 ---
 
-### 🧹 6. Clean build artifacts
+### 📄 Documentation
+
+The project documentation is located in the `docs/` folder.
+
+You can create an initial documentation file by running:
+
+```bash
+make docs
+```
+
+The `docs/` folder is structured to include:
+- User Guide
+- API Reference
+- Example Use Cases
+
+---
+
+### 🐳 Development Environment with Docker
+
+You can run a lightweight development environment using Docker:
+
+```bash
+make docker-dev    # Start development container
+make docker-stop   # Stop development container
+```
+
+The Docker image uses **Python 3.9** to ensure compatibility with the minimum supported version.
+
+---
+
+### 🧹 Clean build artifacts
 
 ```bash
 make clean
@@ -91,4 +133,7 @@ make clean
 - We use [Hatchling](https://hatch.pypa.io/latest/) as the build backend.
 - Editable installs are handled with `hatch develop`.
 - Development dependencies are managed via `[project.optional-dependencies].dev` in `pyproject.toml`.
+- A `Makefile` is provided to automate common development tasks.
+- A lightweight Docker development environment is available.
 
+---

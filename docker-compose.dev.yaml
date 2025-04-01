@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  dbapi-dev:
+    image: python:3.9
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: tail -f /dev/null
