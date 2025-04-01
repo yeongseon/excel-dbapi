@@ -99,6 +99,9 @@ release-major: changelog bump-version-major
 	git push origin main
 	git push --tags
 
+test:
+	$(VENV)/bin/pytest --cov=src --cov-report=term --cov-report=html --cov-report=xml
+
 docs:
 	mkdir -p docs
 	echo "# excel-dbapi Documentation" > docs/README.md
