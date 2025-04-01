@@ -140,3 +140,57 @@ make clean
 - A lightweight Docker development environment is available.
 
 ---
+
+## ✅ Continuous Integration & Coverage
+
+This project uses **GitHub Actions** for Continuous Integration (CI) and **Codecov** for test coverage reporting.
+
+Every push and pull request to the `main` branch will automatically:
+- Run lint checks
+- Run tests on Python 3.9, 3.10, 3.11, 3.12
+- Upload test coverage to [Codecov](https://codecov.io/)
+
+---
+
+## 🚀 Release Automation
+
+This project supports automated release and deployment to [PyPI](https://pypi.org).
+
+When a new **version tag** is pushed to the `main` branch (e.g. `v0.1.0`), the following steps are automatically performed:
+
+1. Build the package
+2. Generate/update `CHANGELOG.md`
+3. Publish the package to PyPI
+
+### 🛠️ Release commands
+
+You can use the following Makefile commands to create and publish a new release:
+
+| Command                 | Description                                   |
+|------------------------|-----------------------------------------------|
+| `make release-patch`   | Create a patch release (e.g. `0.1.1 → 0.1.2`) |
+| `make release-minor`   | Create a minor release (e.g. `0.1.2 → 0.2.0`) |
+| `make release-major`   | Create a major release (e.g. `0.2.0 → 1.0.0`) |
+
+These commands will:
+- Update the version in `pyproject.toml`
+- Generate the changelog
+- Commit and push changes
+- Create a Git tag
+- Trigger the GitHub Actions workflow to publish the package to PyPI
+
+---
+
+### 🔐 PyPI Authentication
+
+The release workflow uses a **PyPI API Token** stored in your repository secrets.
+
+Required secret:
+
+| Secret Name      | Description                               |
+|------------------|-------------------------------------------|
+| `PYPI_API_TOKEN` | PyPI API token for publishing the package |
+
+You can generate this token from your [PyPI account](https://pypi.org/manage/account/token/).
+
+---
