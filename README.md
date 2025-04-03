@@ -27,6 +27,34 @@ See [CHANGELOG](CHANGELOG.md) for release history.
 
 ---
 
+## Quick Start
+
+### Local file connection
+
+```python
+from excel_dbapi.connection import ExcelConnection
+
+with ExcelConnection("path/to/sample.xlsx") as conn:
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM Sheet1")
+    print(cursor.fetchall())
+```
+
+### Remote file connection
+
+```python
+from excel_dbapi.connection import ExcelConnection
+
+with ExcelConnection("https://example.com/sample.xlsx") as conn:
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM Sheet1")
+    print(cursor.fetchall())
+```
+
+⚠️ Note
+Remote file fetching requires the Excel file to be publicly accessible.
+Authentication and private URLs are not supported yet.
+
 ## Documentation
 
 - [Usage Guide](docs/USAGE.md)

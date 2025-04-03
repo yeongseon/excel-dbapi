@@ -10,9 +10,9 @@ The project aims to implement a DBAPI-compliant connector for Excel files.
 **Goal:** Provide minimum functionality to read Excel data using DBAPI 2.0 standard.
 
 ### TODO
-- [ ] Implement `connect()` function and `Connection` class
-  - [ ] `cursor()` method
-  - [ ] `close()` method
+- [x] Implement `connect()` function and `Connection` class
+  - [x] `cursor()` method
+  - [x] `close()` method
 - [ ] Implement `Cursor` class
   - [ ] `execute()` method (SELECT query parser)
   - [ ] `fetchone()` and `fetchall()` methods
