@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "excel-dbapi"
-version = "0.1.1"
+version = "0.1.2"
 description = "A DBAPI-like interface for Excel files with extensible engines"
 requires-python = ">=3.9"
 dependencies = [ "openpyxl>=3.1.0", "requests>=2.28.0",]
