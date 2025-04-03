@@ -1,3 +1,4 @@
+
 # excel-dbapi
 
 ![CI](https://github.com/your-username/excel-dbapi/actions/workflows/ci.yml/badge.svg)
@@ -11,9 +12,11 @@ A lightweight, Python DB-API 2.0 compliant connector for Excel files.
 
 - Python DB-API 2.0 compliant interface
 - Query Excel files using SQL syntax
-- Supports SELECT, INSERT, UPDATE, DELETE
-- Transaction support
-- SQLAlchemy Dialect integration (upcoming)
+- Supports SELECT (INSERT, UPDATE, DELETE planned)
+- Sheet-to-Table mapping
+- Pandas & Openpyxl engine selector
+- Transaction simulation (planned)
+- SQLAlchemy Dialect integration (planned)
 
 ---
 
@@ -29,31 +32,52 @@ See [CHANGELOG](CHANGELOG.md) for release history.
 
 ## Quick Start
 
-### Local file connection
+### Basic Usage (Local File)
 
 ```python
 from excel_dbapi.connection import ExcelConnection
 
+# Using default engine (openpyxl)
 with ExcelConnection("path/to/sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM Sheet1")
     print(cursor.fetchall())
-```
 
-### Remote file connection
-
-```python
-from excel_dbapi.connection import ExcelConnection
-
-with ExcelConnection("https://example.com/sample.xlsx") as conn:
+# Using pandas engine
+with ExcelConnection("path/to/sample.xlsx", engine="pandas") as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM Sheet1")
     print(cursor.fetchall())
 ```
 
-⚠️ Note
-Remote file fetching requires the Excel file to be publicly accessible.
-Authentication and private URLs are not supported yet.
+### Engine Options
+
+| Engine    | Description                  | Dependency  |
+|---------|------------------------------|--------------|
+| openpyxl (default) | Fast sheet access (read-only) | openpyxl   |
+| pandas  | DataFrame based operations   | pandas, openpyxl |
+
+You can explicitly specify the engine using:
+
+```python
+conn = ExcelConnection("sample.xlsx", engine="openpyxl")
+conn = ExcelConnection("sample.xlsx", engine="pandas")
+```
+
+---
+
+## Planned Features
+
+- Write operations (INSERT, UPDATE, DELETE)
+- DDL support (CREATE TABLE, DROP TABLE)
+- Transaction simulation
+- Advanced SQL condition support (WHERE, ORDER BY, LIMIT)
+- Remote file connection support
+- SQLAlchemy Dialect
+
+See [Project Roadmap](docs/ROADMAP.md) for details.
+
+---
 
 ## Documentation
 

@@ -40,8 +40,8 @@ install: venv
 	$(PIP) install git-changelog toml
 
 format:
-	$(VENV)/bin/black src tests examples
-	$(VENV)/bin/isort src tests examples
+	$(VENV)/bin/black src tests
+	$(VENV)/bin/isort src tests
 
 lint:
 	$(VENV)/bin/pre-commit run --all-files
@@ -99,8 +99,11 @@ release-major: changelog bump-version-major
 	git push origin main
 	git push --tags
 
+pytest:
+	pytest
+	
 test:
-	$(VENV)/bin/pytest --cov=src --cov-report=term --cov-report=html --cov-report=xml
+	PYTHONPATH=src .venv/bin/pytest --cov=src --cov-report=term --cov-report=html --cov-report=xml
 
 docs:
 	mkdir -p docs

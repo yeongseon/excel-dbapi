@@ -1,75 +1,84 @@
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
-from .connection import ExcelConnection
-from .exceptions import OperationalError, ProgrammingError
-from .query import QueryEngine
-from .table import ExcelTable
+from .engine.executor import execute_query
+from .engine.parser import parse_sql
+from .exceptions import InterfaceError
+
+
+def check_closed(func):
+    """Decorator to check if cursor is closed before executing method."""
+
+    def wrapper(self, *args, **kwargs):
+        if self.closed:
+            raise InterfaceError("Cursor is already closed")
+        return func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class ExcelCursor:
-    """DBAPI-compliant cursor for executing queries on Excel tables."""
+    """
+    ExcelCursor provides a PEP 249 compliant Cursor interface
+    for executing SQL-like queries on Excel data.
+    """
 
-    def __init__(self, connection: ExcelConnection) -> None:
-        """Initialize with a connection."""
+    def __init__(self, connection: Any):
+        """
+        Initialize the cursor with a connection.
+
+        Args:
+            connection (ExcelConnection): The parent connection object.
+        """
         self.connection = connection
-        self.table: Optional[ExcelTable] = None
-        self._results: Optional[List[Dict[str, Union[str, int, float]]]] = None
-        self._rowcount = -1
+        self.closed: bool = False
+        self._results: List[Dict[str, Any]] = []
+        self._index: int = 0
 
-    def execute(self, query: str, params: Optional[tuple] = None) -> None:
-        """Execute a SQL-like query."""
-        if not query.strip().upper().startswith("SELECT"):
-            raise ProgrammingError("Only SELECT queries are supported.")
+    @check_closed
+    def execute(self, query: str, params: Optional[tuple] = None) -> "ExcelCursor":
+        """
+        Execute a SQL query.
 
-        if "FROM" not in query.upper():
-            raise ProgrammingError("Query must include FROM clause.")
+        Args:
+            query (str): The SQL query string.
+            params (Optional[tuple]): Parameters to bind to query placeholders.
 
-        table_name = query.split("FROM", 1)[1].strip().split()[0]
-        self.table = ExcelTable(self.connection, table_name)
+        Returns:
+            ExcelCursor: The cursor itself.
+        """
+        parsed = parse_sql(query, params)
+        self._results = execute_query(parsed, self.connection.data)
+        self._index = 0
+        return self
 
-        with self.table:
-            qe = QueryEngine(self.table)
-            if "*" in query:
-                self._results = qe.select()
-            else:
-                columns = [
-                    col.strip()
-                    for col in query.split("SELECT")[1].split("FROM")[0].split(",")
-                ]
-                self._results = qe.select(columns=columns)
-            self._rowcount = len(self._results or [])
+    @check_closed
+    def fetchone(self) -> Optional[Dict[str, Any]]:
+        """
+        Fetch the next row of a query result.
 
-    def fetchone(self) -> Optional[Dict[str, Union[str, int, float]]]:
-        """Fetch the next row of the query result."""
-        if self._results is None:
-            raise OperationalError("No query executed.")
-        if not self._results:
+        Returns:
+            Optional[Dict[str, Any]]: The next row or None if no more rows.
+        """
+        if self._index >= len(self._results):
             return None
-        return self._results.pop(0)
+        result = self._results[self._index]
+        self._index += 1
+        return result
 
-    def fetchall(self) -> List[Dict[str, Union[str, int, float]]]:
-        """Fetch all rows of the query result."""
-        if self._results is None:
-            raise OperationalError("No query executed.")
-        results = self._results or []
-        self._results = []
+    @check_closed
+    def fetchall(self) -> List[Dict[str, Any]]:
+        """
+        Fetch all remaining rows of a query result.
+
+        Returns:
+            List[Dict[str, Any]]: List of all remaining rows.
+        """
+        results = self._results[self._index :]
+        self._index = len(self._results)
         return results
-
-    def fetchmany(self, size: int = 1) -> List[Dict[str, Union[str, int, float]]]:
-        """Fetch a specified number of rows."""
-        if self._results is None:
-            raise OperationalError("No query executed.")
-        results = self._results[:size]
-        self._results = self._results[size:]
-        return results
-
-    @property
-    def rowcount(self) -> int:
-        """Return the number of rows affected."""
-        return self._rowcount
 
     def close(self) -> None:
-        """Close the cursor."""
-        self.table = None
-        self._results = None
-        self._rowcount = -1
+        """
+        Close the cursor.
+        """
+        self.closed = True

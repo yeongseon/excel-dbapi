@@ -1,75 +1,107 @@
-from io import BytesIO
-from pathlib import Path
-from typing import Optional, Protocol, Union
+from typing import Optional, Type
 
-from openpyxl.workbook.workbook import Workbook
-from openpyxl.worksheet.worksheet import Worksheet
-
-from .engines.openpyxl_engine import OpenPyXLEngine
-from .exceptions import OperationalError
-from .remote import fetch_remote_file
+from .cursor import ExcelCursor
+from .engine import BaseEngine, OpenpyxlEngine, PandasEngine
+from .exceptions import InterfaceError, NotSupportedError
 
 
-class ExcelEngine(Protocol):
-    """Protocol for Excel processing engines."""
+def check_closed(func):
+    """Decorator to check if connection is closed before executing method."""
 
-    def load_workbook(self, file_path: Union[str, BytesIO]) -> "ExcelEngine": ...
-    def close(self) -> None: ...
-    def get_sheet(self, sheet_name: str) -> Worksheet: ...
-    @property
-    def workbook(self) -> Workbook: ...
+    def wrapper(self, *args, **kwargs):
+        if self.closed:
+            raise InterfaceError("Connection is already closed")
+        return func(self, *args, **kwargs)
+
+    return wrapper
 
 
 class ExcelConnection:
-    """DBAPI-compliant connection to an Excel file."""
+    """
+    ExcelConnection provides a PEP 249 compliant Connection interface
+    for reading and querying Excel files.
+    """
 
-    def __init__(
-        self, file_path: Union[str, Path], engine: Optional[ExcelEngine] = None
-    ) -> None:
-        """Initialize with file path and optional engine."""
-        self.file_path = Path(file_path)
-        self.engine: ExcelEngine = engine if engine else OpenPyXLEngine()
-        self._connected = False
+    def __init__(self, file_path: str, engine: str = "openpyxl"):
+        """
+        Initialize the connection with the Excel file and selected engine.
 
-    def connect(self) -> "ExcelConnection":
-        """Establish connection to the Excel file."""
-        try:
-            if str(self.file_path).startswith(("http://", "https://")):
-                file_data = fetch_remote_file(self.file_path)
-                self.engine.load_workbook(file_data)
-            else:
-                self.engine.load_workbook(str(self.file_path))
-            self._connected = True
-            return self
-        except Exception as e:
-            raise OperationalError(f"Failed to connect to {self.file_path}: {e}")
+        Args:
+            file_path (str): Path to the Excel file.
+            engine (str): Engine type ('pandas' or 'openpyxl').
+        """
+        self.file_path: str = file_path
+        self.closed: bool = False
+
+        if engine == "pandas":
+            self.engine: BaseEngine = PandasEngine(file_path)
+        elif engine == "openpyxl":
+            self.engine: BaseEngine = OpenpyxlEngine(file_path)
+        else:
+            raise ValueError(f"Unsupported engine: {engine}")
+
+    @check_closed
+    def cursor(self) -> ExcelCursor:
+        """
+        Return a new Cursor object using the connection.
+
+        Returns:
+            ExcelCursor: A new cursor object.
+        """
+        return ExcelCursor(self.engine)
+
+    @check_closed
+    def commit(self) -> None:
+        """
+        Commit any pending transaction (Not supported for Excel).
+
+        Raises:
+            NotSupportedError: Always raised because transactions are not supported.
+        """
+        raise NotSupportedError("Transactions are not supported")
+
+    @check_closed
+    def rollback(self) -> None:
+        """
+        Roll back to the start of any pending transaction (Not supported for Excel).
+
+        Raises:
+            NotSupportedError: Always raised because transactions are not supported.
+        """
+        raise NotSupportedError("Transactions are not supported")
 
     def close(self) -> None:
-        """Close the connection."""
-        if self._connected:
-            self.engine.close()
-            self._connected = False
+        """
+        Close the connection.
+        """
+        self.closed = True
 
-    def commit(self) -> None:
-        """Commit changes (not applicable for read-only Excel, placeholder)."""
-        pass
+    @property
+    def engine_name(self) -> str:
+        """
+        Return the name of the engine being used.
+        """
+        return self.engine.__class__.__name__
 
-    def rollback(self) -> None:
-        """Rollback changes (not applicable, placeholder)."""
-        pass
+    def __str__(self) -> str:
+        return f"<ExcelConnection file='{self.file_path}' engine='{self.engine_name}' closed={self.closed}>"
 
-    def cursor(self):  # 타입 주석 제거 및 임포트 지연
-        """Return a new cursor object."""
-        from .cursor import ExcelCursor  # 메서드 안에서 임포트
-
-        if not self._connected:
-            raise OperationalError("Connection is not established.")
-        return ExcelCursor(self)
+    def __repr__(self) -> str:
+        return self.__str__()
 
     def __enter__(self) -> "ExcelConnection":
-        """Context manager entry."""
-        return self.connect()
+        """
+        Enter the runtime context related to this object.
+        """
+        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        """Context manager exit."""
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb,
+    ) -> None:
+        """
+        Exit the runtime context and close the connection.
+        """
         self.close()

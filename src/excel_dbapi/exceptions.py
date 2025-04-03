@@ -1,34 +1,52 @@
 class Error(Exception):
-    """Base class for all DBAPI exceptions."""
-
-    pass
-
-
-class InterfaceError(Error):
-    """Raised for errors related to the database interface."""
+    """Base class for all database-related exceptions."""
 
     pass
 
 
 class DatabaseError(Error):
-    """Raised for errors related to the database itself."""
+    """Exception for errors related to the database."""
 
     pass
 
 
-class TableError(Exception):
-    """Raised when a table-related error occurs."""
+class InterfaceError(Error):
+    """Exception for errors related to the database interface."""
+
+    pass
+
+
+class DataError(DatabaseError):
+    """Exception for errors due to problems with the processed data."""
 
     pass
 
 
 class OperationalError(DatabaseError):
-    """Raised for operational errors (e.g., connection issues)."""
+    """Exception for errors related to the database's operation."""
+
+    pass
+
+
+class IntegrityError(DatabaseError):
+    """Exception for errors related to data integrity."""
+
+    pass
+
+
+class InternalError(DatabaseError):
+    """Exception for internal database errors."""
 
     pass
 
 
 class ProgrammingError(DatabaseError):
-    """Raised for programming errors (e.g., invalid SQL)."""
+    """Exception for programming errors (SQL syntax, etc.)."""
+
+    pass
+
+
+class NotSupportedError(DatabaseError):
+    """Exception for unsupported features."""
 
     pass

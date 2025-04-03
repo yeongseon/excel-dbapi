@@ -1,83 +1,71 @@
 import pytest
-from unittest.mock import MagicMock, patch
+
 from excel_dbapi.connection import ExcelConnection
-from excel_dbapi.exceptions import OperationalError
+from excel_dbapi.exceptions import InterfaceError, NotSupportedError
 
 
-def test_connection_explicit(tmp_path):
-    from openpyxl import Workbook
-
-    file_path = tmp_path / "test.xlsx"
-    wb = Workbook()
-    wb.save(file_path)
-
-    conn = ExcelConnection(file_path)
-    conn.connect()
-    assert conn._connected is True
+def test_connection_with_pandas_engine():
+    conn = ExcelConnection("tests/data/sample.xlsx", engine="pandas")
+    assert conn.engine.__class__.__name__ == "PandasEngine"
     conn.close()
-    assert conn._connected is False
+    assert conn.closed is True
 
 
-def test_connection_double_close(tmp_path):
-    from openpyxl import Workbook
-
-    file_path = tmp_path / "test.xlsx"
-    wb = Workbook()
-    wb.save(file_path)
-
-    conn = ExcelConnection(file_path)
-    conn.connect()
+def test_connection_with_openpyxl_engine():
+    conn = ExcelConnection("tests/data/sample.xlsx", engine="openpyxl")
+    assert conn.engine.__class__.__name__ == "OpenpyxlEngine"
     conn.close()
-    # Multiple close should not raise error
+    assert conn.closed is True
+
+
+def test_connection_with_invalid_engine():
+    with pytest.raises(ValueError) as e:
+        ExcelConnection("tests/data/sample.xlsx", engine="invalid")
+    assert "Unsupported engine" in str(e.value)
+
+
+def test_connection_context_manager():
+    with ExcelConnection("tests/data/sample.xlsx", engine="pandas") as conn:
+        assert conn.closed is False
+    assert conn.closed is True
+
+
+def test_connection_closed_error():
+    conn = ExcelConnection("tests/data/sample.xlsx", engine="pandas")
     conn.close()
-    assert conn._connected is False
+    with pytest.raises(InterfaceError):
+        conn.cursor()
 
 
-def test_connection_commit_rollback(tmp_path):
-    from openpyxl import Workbook
-
-    file_path = tmp_path / "test.xlsx"
-    wb = Workbook()
-    wb.save(file_path)
-
-    with ExcelConnection(file_path) as conn:
-        conn.commit()  # Should do nothing
-        conn.rollback()  # Should do nothing
-
-
-@patch("excel_dbapi.connection.fetch_remote_file")
-def test_connection_remote_file(mock_fetch):
-    mock_fetch.return_value = b"fake-content"
-    conn = ExcelConnection("https://example.com/test.xlsx")
-
-    with pytest.raises(OperationalError):
-        conn.connect()
-
-
-def test_connection_with_custom_engine(tmp_path):
-    from openpyxl import Workbook
-
-    class DummyEngine:
-        def load_workbook(self, file):
-            self.loaded = True
-
-        def close(self):
-            self.closed = True
-
-        def get_sheet(self, sheet_name):
-            return None
-
-        @property
-        def workbook(self):
-            return "dummy"
-
-    file_path = tmp_path / "test.xlsx"
-    wb = Workbook()
-    wb.save(file_path)
-
-    engine = DummyEngine()
-    conn = ExcelConnection(file_path, engine=engine)
-    conn.connect()
-    assert engine.loaded is True
+def test_connection_commit_rollback_not_supported():
+    conn = ExcelConnection("tests/data/sample.xlsx", engine="openpyxl")
+    with pytest.raises(NotSupportedError):
+        conn.commit()
+    with pytest.raises(NotSupportedError):
+        conn.rollback()
     conn.close()
-    assert engine.closed is True
+
+
+def test_engine_name_pandas():
+    conn = ExcelConnection("tests/data/sample.xlsx", engine="pandas")
+    assert conn.engine_name == "PandasEngine"
+    conn.close()
+
+
+def test_engine_name_openpyxl():
+    conn = ExcelConnection("tests/data/sample.xlsx", engine="openpyxl")
+    assert conn.engine_name == "OpenpyxlEngine"
+    conn.close()
+
+
+def test_connection_str_and_repr():
+    conn = ExcelConnection("tests/data/sample.xlsx", engine="pandas")
+    conn_str = str(conn)
+    conn_repr = repr(conn)
+
+    assert "ExcelConnection" in conn_str
+    assert "pandas" in conn_str or "PandasEngine" in conn_str
+    assert conn_str == conn_repr
+
+    conn.close()
+    assert "closed=True" in str(conn)
