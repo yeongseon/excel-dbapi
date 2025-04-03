@@ -1,8 +1,16 @@
 <!-- insertion marker -->
 <a name="Unreleased"></a>
-## Unreleased ([compare](https://github.com/yeongseon/excel-dbapi/compare/v0.1.2...HEAD)) (2025-04-03)
+## Unreleased ([compare](https://github.com/yeongseon/excel-dbapi/compare/v0.1.3...HEAD)) (2025-04-03)
+
+### Fixed
+
+-  ([4eb08a3](https://github.com/yeongseon/excel-dbapi/commit/4eb08a365834d1f1844f047c870ccf43d7b7b710))
 
 <!-- insertion marker -->
+<a name="v0.1.3"></a>
+
+## [v0.1.3](https://github.com/yeongseon/excel-dbapi/compare/v0.1.2...v0.1.3) (2025-04-03)
+
 <a name="v0.1.2"></a>
 
 ## [v0.1.2](https://github.com/yeongseon/excel-dbapi/compare/v0.1.0...v0.1.2) (2025-04-03)
