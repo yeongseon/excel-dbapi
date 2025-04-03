@@ -1,31 +1,19 @@
 [build-system]
-requires = ["hatchling"]
+requires = [ "hatchling",]
 build-backend = "hatchling.build"
 
 [project]
 name = "excel-dbapi"
-version = "0.1.0"
+version = "0.1.1"
 description = "A DBAPI-like interface for Excel files with extensible engines"
-authors = [{ name = "Yeongseon Choe", email = "yeongseon.choe@gmail.com" }]
 requires-python = ">=3.9"
-dependencies = [
-    "openpyxl>=3.1.0",
-    "requests>=2.28.0"
-]
+dependencies = [ "openpyxl>=3.1.0", "requests>=2.28.0",]
+[[project.authors]]
+name = "Yeongseon Choe"
+email = "yeongseon.choe@gmail.com"
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=8.3.5,<9.0.0",
-    "black>=25.1.0,<26.0.0",
-    "isort>=6.0.1,<7.0.0",
-    "ruff>=0.11.2,<0.12.0",
-    "mypy>=1.15.0,<2.0.0",
-    "build",
-    "bandit>=1.7.0,<2.0.0",
-    "vulture>=2.0,<3.0",
-    "pre-commit",
-    "types-requests>=2.28.0,<3.0.0"
-]
+dev = [ "pytest>=8.3.5,<9.0.0", "black>=25.1.0,<26.0.0", "isort>=6.0.1,<7.0.0", "ruff>=0.11.2,<0.12.0", "mypy>=1.15.0,<2.0.0", "build", "bandit>=1.7.0,<2.0.0", "vulture>=2.0,<3.0", "pre-commit", "types-requests>=2.28.0,<3.0.0",]
 
 [tool.mypy]
 ignore_missing_imports = true
