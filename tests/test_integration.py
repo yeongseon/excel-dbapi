@@ -9,4 +9,4 @@ def test_full_flow():
 
         assert isinstance(results, list)
         assert isinstance(results[0], dict)
-        assert "Name" in results[0]  # assuming sample.xlsx has a 'Name' column
+        assert "name" in results[0]  # assuming sample.xlsx has a 'name' column
