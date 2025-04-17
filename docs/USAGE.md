@@ -9,21 +9,22 @@ pip install excel-dbapi
 ## Basic Example
 
 ```python
-import excel_dbapi
+from excel_dbapi.connection import ExcelConnection
 
-# Connect to Excel file with default engine (openpyxl)
-conn = excel_dbapi.connect("sample.xlsx")
-cursor = conn.cursor()
-cursor.execute("SELECT * FROM [Sheet1$]")
-print(cursor.fetchall())
-conn.close()
-
-# You can also use pandas engine
-conn = excel_dbapi.connect("sample.xlsx", engine="pandas")
-cursor = conn.cursor()
-cursor.execute("SELECT * FROM [Sheet1$]")
-print(cursor.fetchall())
-conn.close()
+# Open a connection to the Excel file
+with ExcelConnection("tests/data/sample.xlsx") as conn:
+    # Create a cursor
+    cursor = conn.cursor()
+    
+    # Execute a query
+    cursor.execute("SELECT * FROM Sheet1")
+    
+    # Fetch results
+    results = cursor.fetchall()
+    
+    # Display results
+    for row in results:
+        print(row)
 
 ```
 

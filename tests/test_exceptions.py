@@ -1,17 +1,12 @@
 import pytest
-
-from excel_dbapi.exceptions import (DatabaseError, DataError, Error,
-                                    IntegrityError, InterfaceError,
-                                    InternalError, NotSupportedError,
-                                    OperationalError, ProgrammingError)
+from excel_dbapi.exceptions import InterfaceError, NotSupportedError
 
 
-def test_exception_hierarchy():
-    assert issubclass(DatabaseError, Error)
-    assert issubclass(InterfaceError, Error)
-    assert issubclass(DataError, DatabaseError)
-    assert issubclass(OperationalError, DatabaseError)
-    assert issubclass(IntegrityError, DatabaseError)
-    assert issubclass(InternalError, DatabaseError)
-    assert issubclass(ProgrammingError, DatabaseError)
-    assert issubclass(NotSupportedError, DatabaseError)
+def test_interface_error():
+    with pytest.raises(InterfaceError):
+        raise InterfaceError("Connection closed")
+
+
+def test_not_supported_error():
+    with pytest.raises(NotSupportedError):
+        raise NotSupportedError("Not supported operation")

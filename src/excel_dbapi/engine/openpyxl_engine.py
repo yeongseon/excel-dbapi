@@ -1,39 +1,29 @@
 from typing import Any, Dict, List
-
 from openpyxl import load_workbook
 
 from .base import BaseEngine
+from .executor import execute_query
+from .parser import parse_sql
 
 
 class OpenpyxlEngine(BaseEngine):
     def __init__(self, file_path: str):
-        """
-        Initialize OpenpyxlEngine with the given file path.
-        """
         self.file_path = file_path
         self.data = self.load()
 
     def load(self) -> Dict[str, Any]:
-        """
-        Load all sheets using openpyxl.
-        """
         wb = load_workbook(self.file_path, data_only=True)
         return {sheet: wb[sheet] for sheet in wb.sheetnames}
 
     def save(self) -> None:
-        """
-        Save is not implemented for OpenpyxlEngine.
-        """
-        raise NotImplementedError(
-            "Save operation is not implemented for OpenpyxlEngine."
-        )
+        wb = load_workbook(self.file_path)
+        for sheet_name, sheet in self.data.items():
+            ws = wb[sheet_name]
+            for row_idx, row in enumerate(sheet.iter_rows(), start=1):
+                for col_idx, cell in enumerate(row, start=1):
+                    ws.cell(row=row_idx, column=col_idx, value=cell.value)
+        wb.save(self.file_path)
 
     def execute(self, query: str) -> List[Dict[str, Any]]:
-        """
-        Example execution: return all records from the first sheet.
-        """
-        sheet = list(self.data.keys())[0]
-        ws = self.data[sheet]
-        rows = list(ws.iter_rows(values_only=True))
-        headers = rows[0]
-        return [dict(zip(headers, row)) for row in rows[1:]]
+        parsed = parse_sql(query)
+        return execute_query(parsed, self.data)

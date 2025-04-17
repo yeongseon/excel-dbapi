@@ -4,7 +4,7 @@ PIP=$(VENV)/bin/pip
 CHANGELOG=CHANGELOG.md
 VERSION=$(shell grep '^version =' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
 
-.PHONY: help venv install format lint test clean build precommit publish changelog bump-version-patch bump-version-minor bump-version-major release-patch release-minor release-major commit setup docs docker-dev docker-stop
+.PHONY: help venv install format lint test clean build precommit publish changelog bump-version-patch bump-version-minor bump-version-major release-patch release-minor release-major commit setup docs docker-dev docker-stop example
 
 help:
 	@echo "Makefile commands:"
@@ -14,6 +14,7 @@ help:
 	@echo "  make format           - Run black & isort"
 	@echo "  make lint             - Run pre-commit"
 	@echo "  make test             - Run tests"
+	@echo "  make example          - Run examples/basic_usage.py"
 	@echo "  make build            - Build package"
 	@echo "  make clean            - Remove build artifacts"
 	@echo "  make precommit        - Install pre-commit hooks"
@@ -47,7 +48,10 @@ lint:
 	$(VENV)/bin/pre-commit run --all-files
 
 test:
-	$(VENV)/bin/pytest --cov=src --cov-report=term --cov-report=html
+	PYTHONPATH=src $(VENV)/bin/pytest --cov=src --cov-report=term --cov-report=html --cov-report=xml
+
+example:
+	PYTHONPATH=src $(VENV)/bin/python examples/basic_usage.py
 
 build:
 	$(PYTHON) -m build
@@ -98,12 +102,6 @@ release-major: changelog bump-version-major
 	git tag v$(VERSION)
 	git push origin main
 	git push --tags
-
-pytest:
-	pytest
-	
-test:
-	PYTHONPATH=src .venv/bin/pytest --cov=src --cov-report=term --cov-report=html --cov-report=xml
 
 docs:
 	mkdir -p docs

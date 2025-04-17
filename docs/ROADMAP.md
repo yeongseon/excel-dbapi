@@ -14,17 +14,17 @@ The project aims to implement a **PEP 249 (DB-API 2.0) compliant driver for Exce
   - [x] `cursor()` method
   - [x] `close()` method
   - [x] Context manager support (`__enter__`, `__exit__`)
-  - [x] Engine selection (`pandas`, `openpyxl`)
+  - [x] Engine selection (currently openpyxl only)
 - [x] Implement `ExcelCursor` class
   - [x] `execute()` method (SELECT query parser & executor)
   - [x] `fetchone()` and `fetchall()` methods
   - [x] `close()` method
-- [x] Implement basic SQL parser (SELECT & INSERT structure)
+- [x] Implement basic SQL parser (SELECT structure only)
 - [x] Sheet-to-Table mapping (first row as header)
 - [x] Implement PEP 249 Exception hierarchy
-- [x] Parameter binding support (`?` placeholder)
+- [ ] Parameter binding support (`?` placeholder) (⚠️ Partial: parsing not applied yet)
 - [x] Basic unit tests (Connection, Cursor, Parser, Executor)
-- [x] Add usage examples in `README.md`
+- [x] Add usage examples (README.md + examples/basic_usage.py)
 - [x] Project structure reorganization (`src/`, `tests/`)
 - [x] pyproject.toml modernization
 
