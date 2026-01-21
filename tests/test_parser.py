@@ -65,3 +65,8 @@ def test_parse_select_with_order_limit_and_conditions():
     assert parsed["order_by"]["direction"] == "DESC"
     assert parsed["limit"] == 1
     assert parsed["where"]["conditions"][0]["operator"] == ">="
+
+
+def test_parse_update_with_or_where():
+    parsed = parse_sql("UPDATE Sheet1 SET name = 'A' WHERE id = 1 OR id = 2")
+    assert parsed["where"]["conjunctions"] == ["OR"]

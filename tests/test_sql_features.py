@@ -115,3 +115,22 @@ def test_pandas_update_delete_rowcount(tmp_path: Path) -> None:
 
     data = pd.read_excel(file_path, sheet_name=None)
     assert len(data["Sheet1"]) == 0
+
+
+def test_pandas_update_all_rows(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.xlsx"
+    df = pd.DataFrame(
+        [
+            {"id": 1, "name": "Alice", "score": 10},
+            {"id": 2, "name": "Bob", "score": 20},
+        ]
+    )
+    df.to_excel(file_path, index=False, sheet_name="Sheet1")
+
+    with ExcelConnection(str(file_path), engine="pandas", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE Sheet1 SET score = 1")
+        assert cursor.rowcount == 2
+
+    data = pd.read_excel(file_path, sheet_name=None)
+    assert list(data["Sheet1"]["score"]) == [1, 1]

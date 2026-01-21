@@ -110,6 +110,22 @@ def test_openpyxl_update_delete_and_rollback(tmp_path: Path) -> None:
     assert rows[1] == (1, "Alice")
 
 
+def test_openpyxl_update_and_delete_all(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.xlsx"
+    _create_sample_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE Sheet1 SET name = 'All'")
+        assert cursor.rowcount == 1
+        cursor.execute("DELETE FROM Sheet1")
+        assert cursor.rowcount == 1
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert rows == [("id", "name")]
+
+
 def test_pandas_update_and_delete(tmp_path: Path) -> None:
     file_path = tmp_path / "sample.xlsx"
     df = pd.DataFrame([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}])
