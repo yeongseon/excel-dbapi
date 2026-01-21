@@ -42,15 +42,21 @@ hatch develop
 
 ## 🚀 Release Automation
 
-This project uses GitHub Actions for automated releases.
+This project uses GitHub Actions for automated releases on tag push.
 
 ### Release commands
 
 | Command                 | Description                                   |
 |------------------------|-----------------------------------------------|
-| `make release-patch`   | Create a patch release (e.g. `0.1.1 → 0.1.2`) |
-| `make release-minor`   | Create a minor release (e.g. `0.1.2 → 0.2.0`) |
-| `make release-major`   | Create a major release (e.g. `0.2.0 → 1.0.0`) |
+| `make release-patch`   | Create a patch release (e.g. `1.0.0 → 1.0.1`) |
+| `make release-minor`   | Create a minor release (e.g. `1.0.0 → 1.1.0`) |
+| `make release-major`   | Create a major release (e.g. `1.0.0 → 2.0.0`) |
+
+### Release steps
+
+1. Update `CHANGELOG.md` and `pyproject.toml`.
+2. Create and push a tag (e.g. `v1.0.0`).
+3. GitHub Actions builds and publishes to PyPI.
 
 ### PyPI Authentication
 
@@ -59,6 +65,10 @@ Required secret:
 | Secret Name      | Description                               |
 |------------------|-------------------------------------------|
 | `PYPI_API_TOKEN` | PyPI API token for publishing the package |
+
+### Trigger
+
+The workflow triggers on tag pushes that match `v*`.
 
 ---
 
