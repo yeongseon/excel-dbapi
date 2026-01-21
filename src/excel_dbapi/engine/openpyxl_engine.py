@@ -1,5 +1,7 @@
 from typing import Any, Dict, Optional
 from io import BytesIO
+import os
+import tempfile
 
 from openpyxl import load_workbook
 from openpyxl.workbook.workbook import Workbook
@@ -48,7 +50,16 @@ class OpenpyxlEngine(BaseEngine):
         """
         if self.workbook is None:
             raise ValueError("Workbook is not loaded")
-        self.workbook.save(self.file_path)
+        directory = os.path.dirname(self.file_path) or "."
+        temp_file = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx", dir=directory) as handle:
+                temp_file = handle.name
+            self.workbook.save(temp_file)
+            os.replace(temp_file, self.file_path)
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                os.unlink(temp_file)
 
     def snapshot(self) -> BytesIO:
         if self.workbook is None:

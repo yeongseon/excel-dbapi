@@ -1,5 +1,7 @@
 from copy import deepcopy
 from typing import Any, Dict, Optional
+import os
+import tempfile
 
 import pandas as pd
 
@@ -22,9 +24,18 @@ class PandasEngine(BaseEngine):
         return pd.read_excel(self.file_path, sheet_name=None)
 
     def save(self) -> None:
-        with pd.ExcelWriter(self.file_path, engine="openpyxl") as writer:
-            for sheet_name, frame in self.data.items():
-                frame.to_excel(writer, sheet_name=sheet_name, index=False)
+        directory = os.path.dirname(self.file_path) or "."
+        temp_file = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx", dir=directory) as handle:
+                temp_file = handle.name
+            with pd.ExcelWriter(temp_file, engine="openpyxl") as writer:
+                for sheet_name, frame in self.data.items():
+                    frame.to_excel(writer, sheet_name=sheet_name, index=False)
+            os.replace(temp_file, self.file_path)
+        finally:
+            if temp_file and os.path.exists(temp_file):
+                os.unlink(temp_file)
 
     def snapshot(self) -> Dict[str, pd.DataFrame]:
         return {name: frame.copy(deep=True) for name, frame in self.data.items()}
