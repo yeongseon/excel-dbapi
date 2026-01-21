@@ -35,34 +35,38 @@ excel-dbapi is a lightweight, Python DB-API 2.0 compliant driver that enables SQ
 
 ## 3. Scope
 
-### 3.1 Current Capabilities (v0.1.x)
-- **Engine Support:** `openpyxl` engine (read-only)
-- **SQL Support:** Basic SELECT parser and executor
-- **Data Mapping:** Automatic sheet-to-table mapping using first row as column headers
+### 3.1 Current Capabilities (v0.4.x)
+- **Engine Support:** `openpyxl` and `pandas` engines
+- **SQL Support:** SELECT, INSERT, UPDATE, DELETE
+- **Query Features:** WHERE with AND/OR and comparison operators, ORDER BY, LIMIT
+- **DDL Support:** CREATE TABLE, DROP TABLE
 - **DB-API Interface:** Standard `connection` and `cursor` objects with:
   - `cursor()` method
-  - `execute()` method for query execution
-  - `fetchone()` and `fetchall()` methods for result retrieval
+  - `execute()` and `executemany()`
+  - `fetchone()`, `fetchmany()`, `fetchall()`
+  - `description`, `rowcount`, `lastrowid`
   - Context manager support (`with` statement)
+- **Parameter Binding:** `?` placeholders for parameters
+- **Transactions:** `commit()` and `rollback()` with optional autocommit
 - **Exception Handling:** PEP 249 compliant exception hierarchy
 - **Project Scaffolding:** Core tests and project structure (`src/`, `tests/`)
 
 ### 3.2 Planned Features (Future Releases)
 
-#### Phase 1: Write Operations & DDL (v0.2.x)
+#### Phase 1: Write Operations & DDL (v0.2.x) - Completed
 - INSERT INTO statements (column-specified and column-unspecified)
 - `executemany()` for bulk inserts
 - CREATE TABLE (creates new worksheet with headers)
 - DROP TABLE (removes worksheet)
 - Auto-commit for write operations
 
-#### Phase 2: Data Modification (v0.3.x)
+#### Phase 2: Data Modification (v0.3.x) - Completed
 - UPDATE statements with simple WHERE conditions
 - DELETE statements (conditional and full sheet deletion)
 - In-memory transaction simulation (commit/rollback)
 - Track `rowcount` and `lastrowid`
 
-#### Phase 3: Advanced SQL (v0.4.x)
+#### Phase 3: Advanced SQL (v0.4.x) - Completed
 - ORDER BY clause support
 - LIMIT clause support
 - Extended WHERE conditions (AND, OR, comparison operators)
@@ -228,45 +232,26 @@ excel-dbapi is a lightweight, Python DB-API 2.0 compliant driver that enables SQ
 ## 7. Milestones
 
 ### 7.1 Current Release
-**v0.1.x** (Current)
-- ✅ Implement `ExcelConnection` with context manager support
-- ✅ Implement `ExcelCursor` with `execute()`, `fetchone()`, `fetchall()`
-- ✅ Basic SELECT parser and executor
-- ✅ Sheet-to-table mapping (first row as header)
-- ✅ PEP 249 compliant exception hierarchy
-- ✅ Basic unit tests and usage examples
-- ✅ Project structure and tooling updates (`src/`, `tests/`)
+**v0.4.x** (Current)
+- ✅ Engines: openpyxl and pandas
+- ✅ SELECT, INSERT, UPDATE, DELETE
+- ✅ WHERE (AND/OR, comparison operators), ORDER BY, LIMIT
+- ✅ CREATE TABLE, DROP TABLE
+- ✅ `executemany()`, `fetchmany()`, `description`, `rowcount`, `lastrowid`
+- ✅ Parameter binding (`?` placeholders)
+- ✅ Transaction simulation (commit/rollback)
+- ✅ Tests and documentation updates
 
 ### 7.2 Upcoming Releases
 
 **Milestone 1: Write Operations & DDL (v0.2.x)**
-- **Deliverables:**
-  - INSERT statement support
-  - executemany() implementation
-  - CREATE TABLE support
-  - DROP TABLE support
-  - Auto-commit behavior
-  - Unit tests and documentation updates
-- **Success Criteria:** All planned features implemented and tested with >80% coverage
+- **Status:** Completed
 
 **Milestone 2: Data Modification (v0.3.x)**
-- **Deliverables:**
-  - UPDATE statement support
-  - DELETE statement support
-  - Transaction simulation (commit/rollback)
-  - rowcount and lastrowid tracking
-  - Comprehensive unit tests
-- **Success Criteria:** Transaction behavior matches standard DB-API expectations
+- **Status:** Completed
 
 **Milestone 3: Advanced SQL Features (v0.4.x)**
-- **Deliverables:**
-  - ORDER BY clause implementation
-  - LIMIT clause implementation
-  - Extended WHERE conditions (AND, OR, operators)
-  - Parameter binding (?) support
-  - SQL parser improvements
-  - Advanced usage examples
-- **Success Criteria:** Query syntax compatibility with standard SQL expectations
+- **Status:** Completed
 
 **Milestone 4: Production Release (v1.0.0)**
 - **Deliverables:**
@@ -456,3 +441,4 @@ excel-dbapi should follow **Semantic Versioning 2.0.0**:
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 1.0 | 2026-01-21 | PRD Author | Initial PRD creation aligned to v0.1.x roadmap |
+| 1.1 | 2026-01-21 | PRD Author | Updated to reflect v0.4.x completion |
