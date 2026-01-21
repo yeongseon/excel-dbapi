@@ -30,14 +30,19 @@ with ExcelConnection("tests/data/sample.xlsx") as conn:
 
 ## Supported SQL Syntax
 
-- SELECT (Basic query with optional WHERE clause)
-Currently, only SELECT queries are supported.
-
-The following features are planned for future releases:
-- INSERT
-- UPDATE
-- DELETE
+- SELECT with WHERE (AND/OR, comparison operators), ORDER BY, LIMIT
+- INSERT, UPDATE, DELETE
 - CREATE TABLE, DROP TABLE
-- Transaction support
+
+## Transactions
+
+Autocommit is enabled by default. To use transactions:
+
+```python
+with ExcelConnection("tests/data/sample.xlsx", autocommit=False) as conn:
+    cursor = conn.cursor()
+    cursor.execute("UPDATE Sheet1 SET name = 'Ann' WHERE id = 1")
+    conn.rollback()
+```
 
 For upcoming features, see [Project Roadmap](ROADMAP.md).

@@ -34,17 +34,17 @@ The project aims to implement a **PEP 249 (DB-API 2.0) compliant driver for Exce
 
 **Goal:** Add data write capability and minimal DDL operations.
 
-### Planned
-- [ ] Implement `INSERT INTO` execution
-  - [ ] Column-specified and column-unspecified INSERT
-  - [ ] `executemany()` support
-- [ ] Add row(s) to Excel sheet
-- [ ] Save changes to file (auto-commit)
-- [ ] Implement basic DDL
-  - [ ] `CREATE TABLE` → Create new worksheet with headers
-  - [ ] `DROP TABLE` → Remove worksheet (optional)
-- [ ] Unit tests for INSERT and DDL
-- [ ] Documentation update
+### Completed
+- [x] Implement `INSERT INTO` execution
+  - [x] Column-specified and column-unspecified INSERT
+  - [x] `executemany()` support
+- [x] Add row(s) to Excel sheet
+- [x] Save changes to file (auto-commit)
+- [x] Implement basic DDL
+  - [x] `CREATE TABLE` → Create new worksheet with headers
+  - [x] `DROP TABLE` → Remove worksheet (optional)
+- [x] Unit tests for INSERT and DDL
+- [x] Documentation update
 
 ---
 
@@ -52,16 +52,16 @@ The project aims to implement a **PEP 249 (DB-API 2.0) compliant driver for Exce
 
 **Goal:** Enable data modification and transaction simulation.
 
-### Planned
-- [ ] Implement `UPDATE` execution
-  - [ ] Simple `WHERE` condition support
-- [ ] Implement `DELETE` execution
-  - [ ] Conditional and full sheet deletion
-- [ ] In-memory transaction simulation
-  - [ ] `commit()` and `rollback()` behavior
-- [ ] Track `rowcount` and `lastrowid`
-- [ ] Unit tests for UPDATE, DELETE, transactions
-- [ ] Documentation update
+### Completed
+- [x] Implement `UPDATE` execution
+  - [x] Simple `WHERE` condition support
+- [x] Implement `DELETE` execution
+  - [x] Conditional and full sheet deletion
+- [x] In-memory transaction simulation
+  - [x] `commit()` and `rollback()` behavior
+- [x] Track `rowcount` and `lastrowid`
+- [x] Unit tests for UPDATE, DELETE, transactions
+- [x] Documentation update
 
 ---
 
@@ -69,11 +69,11 @@ The project aims to implement a **PEP 249 (DB-API 2.0) compliant driver for Exce
 
 **Goal:** Enhance SQL support for advanced queries.
 
-### Planned
-- [ ] Implement `ORDER BY`, `LIMIT` clauses
-- [ ] Extend `WHERE` condition (AND, OR, comparison operators)
-- [ ] Improve parser robustness
-- [ ] Comprehensive unit tests
+### Completed
+- [x] Implement `ORDER BY`, `LIMIT` clauses
+- [x] Extend `WHERE` condition (AND, OR, comparison operators)
+- [x] Improve parser robustness
+- [x] Comprehensive unit tests
 - [ ] Advanced usage examples in documentation
 
 ---
