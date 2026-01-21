@@ -18,34 +18,35 @@ class PandasExecutor:
             if frame is None:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
 
-            columns = parsed["columns"]
-            if columns == ["*"]:
-                selected = frame
-                selected_columns = list(frame.columns)
-            else:
-                missing = [col for col in columns if col not in frame.columns]
-                if missing:
-                    raise ValueError(f"Unknown column(s): {', '.join(missing)}")
-                selected = frame[list(columns)]
-                selected_columns = list(columns)
-
+            base = frame
             where = parsed.get("where")
             if where:
-                mask = self._build_mask(selected, where)
-                selected = selected[mask]
+                mask = self._build_mask(base, where)
+                base = base[mask]
 
             order_by = parsed.get("order_by")
             if order_by:
-                if order_by["column"] not in selected.columns:
+                if order_by["column"] not in base.columns:
                     raise ValueError(f"Unknown column: {order_by['column']}")
-                selected = selected.sort_values(
+                base = base.sort_values(
                     by=order_by["column"],
                     ascending=order_by["direction"] == "ASC",
                 )
 
             limit = parsed.get("limit")
             if limit is not None:
-                selected = selected.head(limit)
+                base = base.head(limit)
+
+            columns = parsed["columns"]
+            if columns == ["*"]:
+                selected = base
+                selected_columns = list(base.columns)
+            else:
+                missing = [col for col in columns if col not in base.columns]
+                if missing:
+                    raise ValueError(f"Unknown column(s): {', '.join(missing)}")
+                selected = base[list(columns)]
+                selected_columns = list(columns)
 
             rows_out = list(selected.itertuples(index=False, name=None))
             description: Description = [

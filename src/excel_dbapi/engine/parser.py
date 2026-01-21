@@ -47,7 +47,11 @@ def _parse_columns(columns_token: str) -> List[str]:
     return columns
 
 
-def _parse_where_expression(where_part: str, params: Optional[tuple]) -> Dict[str, Any]:
+def _parse_where_expression(
+    where_part: str,
+    params: Optional[tuple],
+    bind_params: bool = True,
+) -> Dict[str, Any]:
     tokens = where_part.strip().split()
     if len(tokens) < 3:
         raise ValueError("Invalid WHERE clause format")
@@ -70,7 +74,7 @@ def _parse_where_expression(where_part: str, params: Optional[tuple]) -> Dict[st
             index += 1
 
     values_to_bind = [condition["value"] for condition in conditions]
-    if params is not None or any(value == "?" for value in values_to_bind):
+    if bind_params and (params is not None or any(value == "?" for value in values_to_bind)):
         bound = _bind_params(values_to_bind, params)
         for idx, condition in enumerate(conditions):
             condition["value"] = bound[idx]
@@ -117,7 +121,7 @@ def _parse_select(query: str, params: Optional[tuple]) -> Dict[str, Any]:
         where_end_candidates = [idx for idx in [order_index, limit_index] if idx >= 0]
         where_end = min(where_end_candidates) if where_end_candidates else len(remainder)
         where_part = remainder[where_start:where_end].strip()
-        where = _parse_where_expression(where_part, params)
+        where = _parse_where_expression(where_part, params, bind_params=False)
 
     if order_index >= 0:
         order_start = order_index + len("ORDER BY ")
@@ -138,11 +142,29 @@ def _parse_select(query: str, params: Optional[tuple]) -> Dict[str, Any]:
         if not limit_part:
             raise ValueError("Invalid LIMIT clause format")
         limit_value = _parse_value(limit_part)
-        if params is not None or limit_value == "?":
-            limit_value = _bind_params([limit_value], params)[0]
         if not isinstance(limit_value, int):
-            raise ValueError("LIMIT must be an integer")
+            if limit_value != "?":
+                raise ValueError("LIMIT must be an integer")
         limit = limit_value
+
+    if params is not None or (
+        (where and any(condition["value"] == "?" for condition in where["conditions"]))
+        or limit == "?"
+    ):
+        values_to_bind = []
+        if where:
+            values_to_bind.extend([condition["value"] for condition in where["conditions"]])
+        if limit is not None:
+            values_to_bind.append(limit)
+        bound = _bind_params(values_to_bind, params)
+        if where:
+            for idx, condition in enumerate(where["conditions"]):
+                condition["value"] = bound[idx]
+        if limit is not None:
+            limit = bound[-1]
+
+    if limit is not None and not isinstance(limit, int):
+        raise ValueError("LIMIT must be an integer")
 
     return {
         "action": "SELECT",
