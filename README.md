@@ -18,7 +18,7 @@ A lightweight, Python DB-API 2.0 compliant connector for Excel files.
 - ORDER BY and LIMIT for SELECT
 - Sheet-to-Table mapping
 - Pandas & Openpyxl engine selector
-- Transaction simulation (planned)
+- Transaction simulation (commit/rollback)
 - SQLAlchemy Dialect integration (planned)
 
 ---
@@ -56,6 +56,18 @@ with ExcelConnection("path/to/sample.xlsx", engine="pandas") as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM Sheet1")
     print(cursor.fetchall())
+
+# Update and delete rows
+with ExcelConnection("path/to/sample.xlsx") as conn:
+    cursor = conn.cursor()
+    cursor.execute("UPDATE Sheet1 SET name = 'Ann' WHERE id = 1")
+    cursor.execute("DELETE FROM Sheet1 WHERE id = 2")
+
+# Create and drop sheets
+with ExcelConnection("path/to/sample.xlsx") as conn:
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE NewSheet (id, name)")
+    cursor.execute("DROP TABLE NewSheet")
 ```
 
 ### Engine Options
@@ -74,10 +86,27 @@ conn = ExcelConnection("sample.xlsx", engine="pandas")
 
 ---
 
+## Transaction Example
+
+```python
+with ExcelConnection("path/to/sample.xlsx", autocommit=False) as conn:
+    cursor = conn.cursor()
+    cursor.execute("UPDATE Sheet1 SET name = 'Ann' WHERE id = 1")
+    conn.rollback()
+```
+
+## Cursor Metadata
+
+```python
+with ExcelConnection("path/to/sample.xlsx") as conn:
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM Sheet1")
+    print(cursor.description)
+    print(cursor.rowcount)
+```
+
 ## Planned Features
 
-- Transaction simulation
-- Advanced SQL condition support (WHERE, ORDER BY, LIMIT)
 - Remote file connection support
 - SQLAlchemy Dialect
 
