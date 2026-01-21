@@ -14,6 +14,8 @@ A lightweight, Python DB-API 2.0 compliant connector for Excel files.
 - Query Excel files using SQL syntax
 - Supports SELECT, INSERT, UPDATE, DELETE
 - Basic DDL support (CREATE TABLE, DROP TABLE)
+- WHERE conditions with AND/OR and comparison operators
+- ORDER BY and LIMIT for SELECT
 - Sheet-to-Table mapping
 - Pandas & Openpyxl engine selector
 - Transaction simulation (planned)

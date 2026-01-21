@@ -15,6 +15,17 @@ def _create_sample_workbook(path: Path) -> None:
     wb.save(path)
 
 
+def _create_multi_row_workbook(path: Path) -> None:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["id", "name"])
+    ws.append([1, "Alice"])
+    ws.append([2, "Bob"])
+    ws.append([3, "Cara"])
+    wb.save(path)
+
+
 def test_openpyxl_insert_and_executemany(tmp_path: Path) -> None:
     file_path = tmp_path / "sample.xlsx"
     _create_sample_workbook(file_path)
@@ -94,3 +105,28 @@ def test_pandas_update_and_delete(tmp_path: Path) -> None:
 
     data = pd.read_excel(file_path, sheet_name=None)
     assert list(data["Sheet1"]["name"]) == ["Ann"]
+
+
+def test_select_order_limit_with_where_openpyxl(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.xlsx"
+    _create_multi_row_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name FROM Sheet1 WHERE id >= 2 ORDER BY id DESC LIMIT 1")
+        results = cursor.fetchall()
+        assert results == [(3, "Cara")]
+
+
+def test_select_order_limit_with_where_pandas(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.xlsx"
+    df = pd.DataFrame(
+        [{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}, {"id": 3, "name": "Cara"}]
+    )
+    df.to_excel(file_path, index=False, sheet_name="Sheet1")
+
+    with ExcelConnection(str(file_path), engine="pandas", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, name FROM Sheet1 WHERE id >= 2 ORDER BY id DESC LIMIT 1")
+        results = cursor.fetchall()
+        assert results == [(3, "Cara")]

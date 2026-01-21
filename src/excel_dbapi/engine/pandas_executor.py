@@ -31,16 +31,21 @@ class PandasExecutor:
 
             where = parsed.get("where")
             if where:
-                column = where["column"]
-                operator = where["operator"]
-                value = where["value"]
-                if column not in selected.columns:
-                    raise ValueError(f"Unknown column: {column}")
-                if operator == "=":
-                    mask = selected[column].astype(str) == str(value)
-                else:
-                    raise NotImplementedError(f"Unsupported operator: {operator}")
+                mask = self._build_mask(selected, where)
                 selected = selected[mask]
+
+            order_by = parsed.get("order_by")
+            if order_by:
+                if order_by["column"] not in selected.columns:
+                    raise ValueError(f"Unknown column: {order_by['column']}")
+                selected = selected.sort_values(
+                    by=order_by["column"],
+                    ascending=order_by["direction"] == "ASC",
+                )
+
+            limit = parsed.get("limit")
+            if limit is not None:
+                selected = selected.head(limit)
 
             rows_out = list(selected.itertuples(index=False, name=None))
             description: Description = [
@@ -60,15 +65,7 @@ class PandasExecutor:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
             where = parsed.get("where")
             if where:
-                column = where["column"]
-                operator = where["operator"]
-                value = where["value"]
-                if column not in frame.columns:
-                    raise ValueError(f"Unknown column: {column}")
-                if operator == "=":
-                    mask = frame[column].astype(str) == str(value)
-                else:
-                    raise NotImplementedError(f"Unsupported operator: {operator}")
+                mask = self._build_mask(frame, where)
             else:
                 mask = pd.Series([True] * len(frame), index=frame.index)
 
@@ -92,15 +89,7 @@ class PandasExecutor:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
             where = parsed.get("where")
             if where:
-                column = where["column"]
-                operator = where["operator"]
-                value = where["value"]
-                if column not in frame.columns:
-                    raise ValueError(f"Unknown column: {column}")
-                if operator == "=":
-                    mask = frame[column].astype(str) == str(value)
-                else:
-                    raise NotImplementedError(f"Unsupported operator: {operator}")
+                mask = self._build_mask(frame, where)
             else:
                 mask = pd.Series([True] * len(frame), index=frame.index)
 
@@ -172,3 +161,39 @@ class PandasExecutor:
             )
 
         raise ValueError(f"Unsupported action: {action}")
+
+    def _build_mask(self, frame: pd.DataFrame, where: Dict[str, Any]) -> pd.Series:
+        if "conditions" in where:
+            conditions = where["conditions"]
+            conjunctions = where["conjunctions"]
+            mask = self._evaluate_condition(frame, conditions[0])
+            for idx, conj in enumerate(conjunctions):
+                next_mask = self._evaluate_condition(frame, conditions[idx + 1])
+                if conj == "AND":
+                    mask = mask & next_mask
+                else:
+                    mask = mask | next_mask
+            return mask
+        return self._evaluate_condition(frame, where)
+
+    def _evaluate_condition(self, frame: pd.DataFrame, condition: Dict[str, Any]) -> pd.Series:
+        column = condition["column"]
+        operator = condition["operator"]
+        value = condition["value"]
+        if column not in frame.columns:
+            raise ValueError(f"Unknown column: {column}")
+        series = frame[column]
+
+        if operator in {"=", "=="}:
+            return series == value
+        if operator in {"!=", "<>"}:
+            return series != value
+        if operator == ">":
+            return series > value
+        if operator == ">=":
+            return series >= value
+        if operator == "<":
+            return series < value
+        if operator == "<=":
+            return series <= value
+        raise NotImplementedError(f"Unsupported operator: {operator}")

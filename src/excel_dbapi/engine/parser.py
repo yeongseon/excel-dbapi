@@ -47,6 +47,37 @@ def _parse_columns(columns_token: str) -> List[str]:
     return columns
 
 
+def _parse_where_expression(where_part: str, params: Optional[tuple]) -> Dict[str, Any]:
+    tokens = where_part.strip().split()
+    if len(tokens) < 3:
+        raise ValueError("Invalid WHERE clause format")
+    conditions = []
+    conjunctions = []
+    index = 0
+    while index < len(tokens):
+        if index + 2 >= len(tokens):
+            raise ValueError("Invalid WHERE clause format")
+        column = tokens[index]
+        operator = tokens[index + 1]
+        value = _parse_value(tokens[index + 2])
+        conditions.append({"column": column, "operator": operator, "value": value})
+        index += 3
+        if index < len(tokens):
+            conj = tokens[index].upper()
+            if conj not in {"AND", "OR"}:
+                raise ValueError("Invalid WHERE clause format")
+            conjunctions.append(conj)
+            index += 1
+
+    values_to_bind = [condition["value"] for condition in conditions]
+    if params is not None or any(value == "?" for value in values_to_bind):
+        bound = _bind_params(values_to_bind, params)
+        for idx, condition in enumerate(conditions):
+            condition["value"] = bound[idx]
+
+    return {"conditions": conditions, "conjunctions": conjunctions}
+
+
 def _parse_select(query: str, params: Optional[tuple]) -> Dict[str, Any]:
     tokens = query.strip().split()
     try:
@@ -66,26 +97,60 @@ def _parse_select(query: str, params: Optional[tuple]) -> Dict[str, Any]:
         raise ValueError(f"Invalid SQL query format: {query}")
     table = tokens[from_index + 1]
 
+    remainder = " ".join(tokens[from_index + 2:]).strip()
+    remainder_upper = remainder.upper()
     where = None
-    if len(tokens) > from_index + 2 and tokens[from_index + 2].upper() == "WHERE":
-        if len(tokens) < from_index + 6:
-            raise ValueError(f"Invalid WHERE clause format: {query}")
-        column = tokens[from_index + 3]
-        operator = tokens[from_index + 4]
-        value = _parse_value(tokens[from_index + 5])
-        if params is not None or value == "?":
-            value = _bind_params([value], params)[0]
-        where = {
-            "column": column,
-            "operator": operator,
-            "value": value,
-        }
+    order_by = None
+    limit = None
+
+    where_index = remainder_upper.find("WHERE ")
+    order_index = remainder_upper.find("ORDER BY ")
+    limit_index = remainder_upper.find("LIMIT ")
+
+    if where_index >= 0 and order_index >= 0 and order_index < where_index:
+        raise ValueError("ORDER BY cannot appear before WHERE")
+    if where_index >= 0 and limit_index >= 0 and limit_index < where_index:
+        raise ValueError("LIMIT cannot appear before WHERE")
+
+    if where_index >= 0:
+        where_start = where_index + len("WHERE ")
+        where_end_candidates = [idx for idx in [order_index, limit_index] if idx >= 0]
+        where_end = min(where_end_candidates) if where_end_candidates else len(remainder)
+        where_part = remainder[where_start:where_end].strip()
+        where = _parse_where_expression(where_part, params)
+
+    if order_index >= 0:
+        order_start = order_index + len("ORDER BY ")
+        order_end = limit_index if limit_index >= 0 and limit_index > order_index else len(remainder)
+        order_part = remainder[order_start:order_end].strip()
+        order_tokens = order_part.split()
+        if not order_tokens:
+            raise ValueError("Invalid ORDER BY clause format")
+        direction = "ASC"
+        if len(order_tokens) > 1:
+            direction = order_tokens[1].upper()
+        if direction not in {"ASC", "DESC"}:
+            raise ValueError("Invalid ORDER BY direction")
+        order_by = {"column": order_tokens[0], "direction": direction}
+
+    if limit_index >= 0:
+        limit_part = remainder[limit_index + len("LIMIT "):].strip()
+        if not limit_part:
+            raise ValueError("Invalid LIMIT clause format")
+        limit_value = _parse_value(limit_part)
+        if params is not None or limit_value == "?":
+            limit_value = _bind_params([limit_value], params)[0]
+        if not isinstance(limit_value, int):
+            raise ValueError("LIMIT must be an integer")
+        limit = limit_value
 
     return {
         "action": "SELECT",
         "columns": columns,
         "table": table,
         "where": where,
+        "order_by": order_by,
+        "limit": limit,
     }
 
 
@@ -236,24 +301,19 @@ def _parse_update(query: str, params: Optional[tuple]) -> Dict[str, Any]:
 
     where = None
     if where_part:
-        where_tokens = where_part.strip().split()
-        if len(where_tokens) < 3:
-            raise ValueError(f"Invalid WHERE clause format: {query}")
-        where = {
-            "column": where_tokens[0],
-            "operator": where_tokens[1],
-            "value": _parse_value(where_tokens[2]),
-        }
+        where = _parse_where_expression(where_part, params)
 
     values_to_bind = [item["value"] for item in assignments]
     if where is not None:
-        values_to_bind.append(where["value"])
+        values_to_bind.extend([condition["value"] for condition in where["conditions"]])
     if params is not None or any(value == "?" for value in values_to_bind):
         bound = _bind_params(values_to_bind, params)
         for idx, item in enumerate(assignments):
             item["value"] = bound[idx]
         if where is not None:
-            where["value"] = bound[-1]
+            offset = len(assignments)
+            for idx, condition in enumerate(where["conditions"]):
+                condition["value"] = bound[offset + idx]
 
     return {
         "action": "UPDATE",
@@ -271,16 +331,10 @@ def _parse_delete(query: str, params: Optional[tuple]) -> Dict[str, Any]:
 
     where = None
     if len(tokens) > 3:
-        if tokens[3].upper() != "WHERE" or len(tokens) < 7:
+        if tokens[3].upper() != "WHERE":
             raise ValueError(f"Invalid DELETE format: {query}")
-        where = {
-            "column": tokens[4],
-            "operator": tokens[5],
-            "value": _parse_value(tokens[6]),
-        }
-
-    if where is not None and (params is not None or where["value"] == "?"):
-        where["value"] = _bind_params([where["value"]], params)[0]
+        where_part = " ".join(tokens[4:])
+        where = _parse_where_expression(where_part, params)
 
     return {
         "action": "DELETE",

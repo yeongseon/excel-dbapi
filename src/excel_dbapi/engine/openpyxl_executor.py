@@ -58,13 +58,22 @@ class OpenpyxlExecutor:
 
             where = parsed.get("where")
             if where:
-                column = where["column"]
-                operator = where["operator"]
-                value = where["value"]
-                if operator == "=":
-                    data = [row for row in data if str(row.get(column)) == str(value)]
-                else:
-                    raise NotImplementedError(f"Unsupported operator: {operator}")
+                data = [row for row in data if self._matches_where(row, where)]
+
+            order_by = parsed.get("order_by")
+            if order_by:
+                if order_by["column"] not in headers:
+                    raise ValueError(f"Unknown column: {order_by['column']}")
+                reverse = order_by["direction"] == "DESC"
+                data = sorted(
+                    data,
+                    key=lambda row: self._sort_key(row.get(order_by["column"])),
+                    reverse=reverse,
+                )
+
+            limit = parsed.get("limit")
+            if limit is not None:
+                data = data[:limit]
 
             rows_out = [tuple(row.get(col) for col in selected_columns) for row in data]
             description: Description = [
@@ -211,9 +220,64 @@ class OpenpyxlExecutor:
         raise ValueError(f"Unsupported action: {action}")
 
     def _matches_where(self, row: Dict[str, Any], where: Dict[str, Any]) -> bool:
-        column = where["column"]
-        operator = where["operator"]
-        value = where["value"]
-        if operator == "=":
-            return str(row.get(column)) == str(value)
+        if "conditions" in where:
+            conditions = where["conditions"]
+            conjunctions = where["conjunctions"]
+            result = self._evaluate_condition(row, conditions[0])
+            for idx, conj in enumerate(conjunctions):
+                next_result = self._evaluate_condition(row, conditions[idx + 1])
+                if conj == "AND":
+                    result = result and next_result
+                else:
+                    result = result or next_result
+            return result
+
+        return self._evaluate_condition(row, where)
+
+    def _evaluate_condition(self, row: Dict[str, Any], condition: Dict[str, Any]) -> bool:
+        column = condition["column"]
+        operator = condition["operator"]
+        value = condition["value"]
+        row_value = row.get(column)
+
+        left, right = self._coerce_for_compare(row_value, value)
+        if operator in {"=", "=="}:
+            return left == right
+        if operator in {"!=", "<>"}:
+            return left != right
+        if operator == ">":
+            return left > right
+        if operator == ">=":
+            return left >= right
+        if operator == "<":
+            return left < right
+        if operator == "<=":
+            return left <= right
         raise NotImplementedError(f"Unsupported operator: {operator}")
+
+    def _coerce_for_compare(self, left: Any, right: Any) -> tuple[Any, Any]:
+        left_num = self._to_number(left)
+        right_num = self._to_number(right)
+        if left_num is not None and right_num is not None:
+            return left_num, right_num
+        return str(left), str(right)
+
+    def _sort_key(self, value: Any) -> tuple[int, Any]:
+        if value is None:
+            return (1, "")
+        numeric = self._to_number(value)
+        if numeric is not None:
+            return (0, numeric)
+        return (0, str(value))
+
+    def _to_number(self, value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                return None
+        return None
