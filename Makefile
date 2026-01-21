@@ -12,7 +12,7 @@ help:
 	@echo "  make venv             - Create virtualenv"
 	@echo "  make install          - Install dependencies"
 	@echo "  make format           - Run black & isort"
-	@echo "  make lint             - Run pre-commit"
+	@echo "  make lint             - Run ruff and mypy"
 	@echo "  make test             - Run tests"
 	@echo "  make build            - Build package"
 	@echo "  make clean            - Remove build artifacts"
@@ -44,7 +44,8 @@ format:
 	$(VENV)/bin/isort src tests
 
 lint:
-	$(VENV)/bin/pre-commit run --all-files
+	$(VENV)/bin/ruff check src tests
+	$(VENV)/bin/mypy src
 
 test:
 	PYTHONPATH=src $(VENV)/bin/pytest --cov=src --cov-report=term --cov-report=html --cov-report=xml
