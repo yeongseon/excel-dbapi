@@ -7,6 +7,7 @@ Description = Sequence[Tuple[Optional[str], Optional[str], Optional[int], Option
 
 @dataclass
 class ExecutionResult:
+    action: str
     rows: List[Tuple]
     description: Description
     rowcount: int

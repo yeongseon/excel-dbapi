@@ -5,8 +5,8 @@ threadsafety = 1
 paramstyle = "qmark"
 
 
-def connect(file_path: str) -> ExcelConnection:
-    return ExcelConnection(file_path)
+def connect(file_path: str, engine: str = "openpyxl", autocommit: bool = True) -> ExcelConnection:
+    return ExcelConnection(file_path, engine=engine, autocommit=autocommit)
 
 
 __all__ = [

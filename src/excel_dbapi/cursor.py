@@ -40,6 +40,27 @@ class ExcelCursor:
         self.description = result.description
         self.rowcount = result.rowcount
         self.lastrowid = result.lastrowid
+        if self.connection.autocommit and result.action in {"INSERT", "CREATE", "DROP"}:
+            self.connection.engine.save()
+        return self
+
+    @check_closed
+    def executemany(self, query: str, seq_of_params: List[tuple]) -> "ExcelCursor":
+        total_rowcount = 0
+        last_rowid = None
+        last_action = None
+        for params in seq_of_params:
+            result: ExecutionResult = self.connection.engine.execute_with_params(query, params)
+            total_rowcount += result.rowcount
+            last_rowid = result.lastrowid
+            last_action = result.action
+        self._results = []
+        self._index = 0
+        self.description = None
+        self.rowcount = total_rowcount
+        self.lastrowid = last_rowid
+        if self.connection.autocommit and last_action in {"INSERT", "CREATE", "DROP"}:
+            self.connection.engine.save()
         return self
 
     @check_closed

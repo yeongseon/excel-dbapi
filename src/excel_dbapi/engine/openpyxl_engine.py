@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 from openpyxl import load_workbook
+from openpyxl.workbook.workbook import Workbook
 
 from .base import BaseEngine
 from .executor import execute_query
@@ -21,6 +22,7 @@ class OpenpyxlEngine(BaseEngine):
             file_path (str): Path to the Excel (.xlsx) file.
         """
         self.file_path = file_path
+        self.workbook: Workbook | None = None
         self.data = self.load()
 
     def load(self) -> Dict[str, Any]:
@@ -30,8 +32,8 @@ class OpenpyxlEngine(BaseEngine):
         Returns:
             Dict[str, Any]: A dictionary mapping sheet names to openpyxl Worksheet objects.
         """
-        wb = load_workbook(self.file_path, data_only=True)
-        return {sheet: wb[sheet] for sheet in wb.sheetnames}
+        self.workbook = load_workbook(self.file_path, data_only=True)
+        return {sheet: self.workbook[sheet] for sheet in self.workbook.sheetnames}
 
     def save(self) -> None:
         """
@@ -42,13 +44,9 @@ class OpenpyxlEngine(BaseEngine):
               with the current in-memory data, and saves it back to the file.
             - Intended for future use when INSERT, UPDATE, DELETE operations are supported.
         """
-        wb = load_workbook(self.file_path)
-        for sheet_name, sheet in self.data.items():
-            ws = wb[sheet_name]
-            for row_idx, row in enumerate(sheet.iter_rows(), start=1):
-                for col_idx, cell in enumerate(row, start=1):
-                    ws.cell(row=row_idx, column=col_idx, value=cell.value)
-        wb.save(self.file_path)
+        if self.workbook is None:
+            raise ValueError("Workbook is not loaded")
+        self.workbook.save(self.file_path)
 
     def execute(self, query: str) -> ExecutionResult:
         """
@@ -61,8 +59,8 @@ class OpenpyxlEngine(BaseEngine):
             ExecutionResult: Query results with rows, description, and rowcount.
         """
         parsed = parse_sql(query)
-        return execute_query(parsed, self.data)
+        return execute_query(parsed, self.data, self.workbook)
 
     def execute_with_params(self, query: str, params: Optional[tuple] = None) -> ExecutionResult:
         parsed = parse_sql(query, params)
-        return execute_query(parsed, self.data)
+        return execute_query(parsed, self.data, self.workbook)

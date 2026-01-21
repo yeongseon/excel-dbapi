@@ -13,6 +13,11 @@ class BaseEngine(ABC):
         pass
 
     @abstractmethod
+    def save(self) -> None:
+        """Persist in-memory changes to disk."""
+        pass
+
+    @abstractmethod
     def execute(self, query: str) -> ExecutionResult:
         """
         Execute a query against the loaded data.

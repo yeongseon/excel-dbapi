@@ -8,7 +8,7 @@ class OpenpyxlExecutor:
     on in-memory Excel worksheet data using openpyxl.
     """
 
-    def __init__(self, data: Dict[str, Any]):
+    def __init__(self, data: Dict[str, Any], workbook: Any):
         """
         Initialize the OpenpyxlExecutor.
 
@@ -16,6 +16,7 @@ class OpenpyxlExecutor:
             data (Dict[str, Any]): A dictionary mapping sheet names to openpyxl Worksheet objects.
         """
         self.data = data
+        self.workbook = workbook
 
     def execute(self, parsed: Dict[str, Any]) -> ExecutionResult:
         """
@@ -33,45 +34,115 @@ class OpenpyxlExecutor:
             ValueError: If the specified table (sheet) does not exist.
             NotImplementedError: If an unsupported operator is used in the WHERE clause.
         """
+        action = parsed["action"]
         table = parsed["table"]
-        ws = self.data.get(table)
-        if ws is None:
-            raise ValueError(f"Sheet '{table}' not found in Excel")
 
-        # Read all rows from the worksheet
-        rows = list(ws.iter_rows(values_only=True))
-        headers = list(rows[0])  # First row is assumed to be the header
-        data = [dict(zip(headers, row)) for row in rows[1:]]
+        if action == "SELECT":
+            ws = self.data.get(table)
+            if ws is None:
+                raise ValueError(f"Sheet '{table}' not found in Excel")
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                return ExecutionResult(action=action, rows=[], description=[], rowcount=0, lastrowid=None)
+            headers = list(rows[0])
+            data = [dict(zip(headers, row)) for row in rows[1:]]
 
-        columns: Sequence[str] = parsed["columns"]
-        if columns == ["*"]:
-            selected_columns = headers
-        else:
-            selected_columns = list(columns)
-            missing = [col for col in selected_columns if col not in headers]
-            if missing:
-                raise ValueError(f"Unknown column(s): {', '.join(missing)}")
-
-        # Apply WHERE clause filtering if provided
-        where = parsed.get("where")
-        if where:
-            column = where["column"]
-            operator = where["operator"]
-            value = where["value"]
-
-            if operator == "=":
-                data = [row for row in data if str(row.get(column)) == str(value)]
+            columns = parsed["columns"]
+            if columns == ["*"]:
+                selected_columns = headers
             else:
-                raise NotImplementedError(f"Unsupported operator: {operator}")
+                selected_columns = list(columns)
+                missing = [col for col in selected_columns if col not in headers]
+                if missing:
+                    raise ValueError(f"Unknown column(s): {', '.join(missing)}")
 
-        rows_out = [tuple(row.get(col) for col in selected_columns) for row in data]
-        description: Description = [
-            (col, None, None, None, None, None, None) for col in selected_columns
-        ]
+            where = parsed.get("where")
+            if where:
+                column = where["column"]
+                operator = where["operator"]
+                value = where["value"]
+                if operator == "=":
+                    data = [row for row in data if str(row.get(column)) == str(value)]
+                else:
+                    raise NotImplementedError(f"Unsupported operator: {operator}")
 
-        return ExecutionResult(
-            rows=rows_out,
-            description=description,
-            rowcount=len(rows_out),
-            lastrowid=None,
-        )
+            rows_out = [tuple(row.get(col) for col in selected_columns) for row in data]
+            description: Description = [
+                (col, None, None, None, None, None, None) for col in selected_columns
+            ]
+            return ExecutionResult(
+                action=action,
+                rows=rows_out,
+                description=description,
+                rowcount=len(rows_out),
+                lastrowid=None,
+            )
+
+        if action == "INSERT":
+            ws = self.data.get(table)
+            if ws is None:
+                raise ValueError(f"Sheet '{table}' not found in Excel")
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                raise ValueError("Cannot insert into sheet without headers")
+            headers = list(rows[0])
+
+            values = parsed["values"]
+            insert_columns = parsed.get("columns")
+            if insert_columns is None:
+                if len(values) != len(headers):
+                    raise ValueError("INSERT values count does not match header count")
+                row_values = list(values)
+            else:
+                missing = [col for col in insert_columns if col not in headers]
+                if missing:
+                    raise ValueError(f"Unknown column(s): {', '.join(missing)}")
+                if len(values) != len(insert_columns):
+                    raise ValueError("INSERT values count does not match column count")
+                row_values = [None for _ in headers]
+                for col, value in zip(insert_columns, values):
+                    row_values[headers.index(col)] = value
+
+            ws.append(row_values)
+            last_row = ws.max_row
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=1,
+                lastrowid=last_row,
+            )
+
+        if action == "CREATE":
+            if self.workbook is None:
+                raise ValueError("Workbook is not loaded")
+            if table in self.data:
+                raise ValueError(f"Sheet '{table}' already exists")
+            ws = self.workbook.create_sheet(title=table)
+            ws.append(parsed["columns"])
+            self.data[table] = ws
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=0,
+                lastrowid=None,
+            )
+
+        if action == "DROP":
+            if self.workbook is None:
+                raise ValueError("Workbook is not loaded")
+            ws = self.data.get(table)
+            if ws is None:
+                raise ValueError(f"Sheet '{table}' not found in Excel")
+            self.workbook.remove(ws)
+            del self.data[table]
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=0,
+                lastrowid=None,
+            )
+
+        raise ValueError(f"Unsupported action: {action}")

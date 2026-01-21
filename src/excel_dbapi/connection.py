@@ -3,6 +3,7 @@ from typing import Optional, Type
 from .cursor import ExcelCursor
 from .engine.base import BaseEngine
 from .engine.openpyxl_engine import OpenpyxlEngine
+from .engine.pandas_engine import PandasEngine
 from .exceptions import InterfaceError, NotSupportedError
 
 
@@ -21,15 +22,20 @@ class ExcelConnection:
     for reading and querying Excel files using openpyxl.
     """
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, engine: str = "openpyxl", autocommit: bool = True):
         """
         Initialize the connection with the Excel file.
         """
         self.file_path: str = file_path
         self.closed: bool = False
+        self.autocommit: bool = autocommit
 
-        self.engine: BaseEngine = OpenpyxlEngine(file_path)
-        self.data = self.engine.load()
+        if engine == "openpyxl":
+            self.engine = OpenpyxlEngine(file_path)
+        elif engine == "pandas":
+            self.engine = PandasEngine(file_path)
+        else:
+            raise InterfaceError(f"Unsupported engine: {engine}")
 
     @check_closed
     def cursor(self) -> ExcelCursor:
@@ -37,7 +43,7 @@ class ExcelConnection:
 
     @check_closed
     def commit(self) -> None:
-        raise NotSupportedError("Transactions are not supported")
+        self.engine.save()
 
     @check_closed
     def rollback(self) -> None:
