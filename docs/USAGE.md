@@ -46,3 +46,15 @@ with ExcelConnection("tests/data/sample.xlsx", autocommit=False) as conn:
 ```
 
 For upcoming features, see [Project Roadmap](ROADMAP.md).
+
+## Advanced Examples
+
+```python
+with ExcelConnection("tests/data/sample.xlsx") as conn:
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, name FROM Sheet1 WHERE id >= ? ORDER BY id DESC LIMIT 1",
+        (1,),
+    )
+    print(cursor.fetchall())
+```
