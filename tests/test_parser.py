@@ -45,3 +45,15 @@ def test_parse_create_and_drop():
     parsed = parse_sql("DROP TABLE Foo")
     assert parsed["action"] == "DROP"
     assert parsed["table"] == "Foo"
+
+
+def test_parse_update_and_delete():
+    parsed = parse_sql("UPDATE Sheet1 SET name = 'Bob' WHERE id = 1")
+    assert parsed["action"] == "UPDATE"
+    assert parsed["set"][0]["column"] == "name"
+    assert parsed["set"][0]["value"] == "Bob"
+    assert parsed["where"]["value"] == 1
+
+    parsed = parse_sql("DELETE FROM Sheet1 WHERE id = 2")
+    assert parsed["action"] == "DELETE"
+    assert parsed["where"]["value"] == 2

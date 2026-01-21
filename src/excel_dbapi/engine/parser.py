@@ -47,7 +47,7 @@ def _parse_columns(columns_token: str) -> List[str]:
     return columns
 
 
-def _parse_select(query: str) -> Dict[str, Any]:
+def _parse_select(query: str, params: Optional[tuple]) -> Dict[str, Any]:
     tokens = query.strip().split()
     try:
         from_index = tokens.index("FROM")
@@ -73,6 +73,8 @@ def _parse_select(query: str) -> Dict[str, Any]:
         column = tokens[from_index + 3]
         operator = tokens[from_index + 4]
         value = _parse_value(tokens[from_index + 5])
+        if params is not None or value == "?":
+            value = _bind_params([value], params)[0]
         where = {
             "column": column,
             "operator": operator,
@@ -111,11 +113,14 @@ def _parse_insert(query: str, params: Optional[tuple]) -> Dict[str, Any]:
     upper = query.upper()
     if " VALUES " not in upper:
         raise ValueError(f"Invalid INSERT format: {query}")
-    before_values, values_part = query.split("VALUES", 1)
+    values_index = upper.index(" VALUES ")
+    before_values = query[:values_index]
+    values_part = query[values_index + len(" VALUES "):]
     before_tokens = before_values.strip().split()
     if len(before_tokens) < 3 or before_tokens[0].upper() != "INSERT" or before_tokens[1].upper() != "INTO":
         raise ValueError(f"Invalid INSERT format: {query}")
-    table_and_cols = before_values.strip()[len("INSERT INTO"):].strip()
+    prefix_len = len(before_tokens[0]) + 1 + len(before_tokens[1])
+    table_and_cols = before_values.strip()[prefix_len:].strip()
 
     columns = None
     if "(" in table_and_cols:
@@ -182,15 +187,103 @@ def parse_sql(query: str, params: Optional[tuple] = None) -> Dict[str, Any]:
         raise ValueError(f"Invalid SQL query format: {query}")
     action = tokens[0].upper()
     if action == "SELECT":
-        parsed = _parse_select(query)
+        parsed = _parse_select(query, params)
     elif action == "INSERT":
         parsed = _parse_insert(query, params)
     elif action == "CREATE":
         parsed = _parse_create(query)
     elif action == "DROP":
         parsed = _parse_drop(query)
+    elif action == "UPDATE":
+        parsed = _parse_update(query, params)
+    elif action == "DELETE":
+        parsed = _parse_delete(query, params)
     else:
         raise ValueError(f"Unsupported SQL action: {action}")
 
     parsed["params"] = params
     return parsed
+
+
+def _parse_update(query: str, params: Optional[tuple]) -> Dict[str, Any]:
+    upper = query.upper()
+    if " SET " not in upper:
+        raise ValueError(f"Invalid UPDATE format: {query}")
+    set_index = upper.index(" SET ")
+    before_set = query[:set_index]
+    after_set = query[set_index + len(" SET "):]
+    before_tokens = before_set.strip().split()
+    if len(before_tokens) < 2 or before_tokens[0].upper() != "UPDATE":
+        raise ValueError(f"Invalid UPDATE format: {query}")
+    table = before_tokens[1].strip()
+
+    where_part = None
+    after_upper = after_set.upper()
+    if " WHERE " in after_upper:
+        where_index = after_upper.index(" WHERE ")
+        set_part = after_set[:where_index]
+        where_part = after_set[where_index + len(" WHERE "):]
+    else:
+        set_part = after_set
+
+    assignments = []
+    raw_assignments = _split_csv(set_part.strip())
+    for assignment in raw_assignments:
+        if "=" not in assignment:
+            raise ValueError(f"Invalid UPDATE format: {query}")
+        col, value = assignment.split("=", 1)
+        assignments.append({"column": col.strip(), "value": _parse_value(value)})
+
+    where = None
+    if where_part:
+        where_tokens = where_part.strip().split()
+        if len(where_tokens) < 3:
+            raise ValueError(f"Invalid WHERE clause format: {query}")
+        where = {
+            "column": where_tokens[0],
+            "operator": where_tokens[1],
+            "value": _parse_value(where_tokens[2]),
+        }
+
+    values_to_bind = [item["value"] for item in assignments]
+    if where is not None:
+        values_to_bind.append(where["value"])
+    if params is not None or any(value == "?" for value in values_to_bind):
+        bound = _bind_params(values_to_bind, params)
+        for idx, item in enumerate(assignments):
+            item["value"] = bound[idx]
+        if where is not None:
+            where["value"] = bound[-1]
+
+    return {
+        "action": "UPDATE",
+        "table": table,
+        "set": assignments,
+        "where": where,
+    }
+
+
+def _parse_delete(query: str, params: Optional[tuple]) -> Dict[str, Any]:
+    tokens = query.strip().split()
+    if len(tokens) < 3 or tokens[0].upper() != "DELETE" or tokens[1].upper() != "FROM":
+        raise ValueError(f"Invalid DELETE format: {query}")
+    table = tokens[2]
+
+    where = None
+    if len(tokens) > 3:
+        if tokens[3].upper() != "WHERE" or len(tokens) < 7:
+            raise ValueError(f"Invalid DELETE format: {query}")
+        where = {
+            "column": tokens[4],
+            "operator": tokens[5],
+            "value": _parse_value(tokens[6]),
+        }
+
+    if where is not None and (params is not None or where["value"] == "?"):
+        where["value"] = _bind_params([where["value"]], params)[0]
+
+    return {
+        "action": "DELETE",
+        "table": table,
+        "where": where,
+    }

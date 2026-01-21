@@ -1,4 +1,6 @@
 from typing import Any, Dict, Optional
+from io import BytesIO
+
 from openpyxl import load_workbook
 from openpyxl.workbook.workbook import Workbook
 
@@ -47,6 +49,19 @@ class OpenpyxlEngine(BaseEngine):
         if self.workbook is None:
             raise ValueError("Workbook is not loaded")
         self.workbook.save(self.file_path)
+
+    def snapshot(self) -> BytesIO:
+        if self.workbook is None:
+            raise ValueError("Workbook is not loaded")
+        buffer = BytesIO()
+        self.workbook.save(buffer)
+        buffer.seek(0)
+        return buffer
+
+    def restore(self, snapshot: BytesIO) -> None:
+        snapshot.seek(0)
+        self.workbook = load_workbook(snapshot, data_only=True)
+        self.data = {sheet: self.workbook[sheet] for sheet in self.workbook.sheetnames}
 
     def execute(self, query: str) -> ExecutionResult:
         """

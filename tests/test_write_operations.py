@@ -61,3 +61,36 @@ def test_pandas_insert_and_create(tmp_path: Path) -> None:
     data = pd.read_excel(file_path, sheet_name=None)
     assert len(data["Sheet1"]) == 2
     assert set(data["Extra"].columns) == {"col1", "col2"}
+
+
+def test_openpyxl_update_delete_and_rollback(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.xlsx"
+    _create_sample_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=False) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE Sheet1 SET name = 'Ann' WHERE id = 1")
+        assert cursor.rowcount == 1
+        cursor.execute("DELETE FROM Sheet1 WHERE id = 1")
+        assert cursor.rowcount == 1
+        conn.rollback()
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert rows[1] == (1, "Alice")
+
+
+def test_pandas_update_and_delete(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.xlsx"
+    df = pd.DataFrame([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}])
+    df.to_excel(file_path, index=False, sheet_name="Sheet1")
+
+    with ExcelConnection(str(file_path), engine="pandas", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE Sheet1 SET name = 'Ann' WHERE id = 2")
+        assert cursor.rowcount == 1
+        cursor.execute("DELETE FROM Sheet1 WHERE id = 1")
+        assert cursor.rowcount == 1
+
+    data = pd.read_excel(file_path, sheet_name=None)
+    assert list(data["Sheet1"]["name"]) == ["Ann"]

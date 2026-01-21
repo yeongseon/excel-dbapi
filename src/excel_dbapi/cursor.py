@@ -40,7 +40,7 @@ class ExcelCursor:
         self.description = result.description
         self.rowcount = result.rowcount
         self.lastrowid = result.lastrowid
-        if self.connection.autocommit and result.action in {"INSERT", "CREATE", "DROP"}:
+        if self.connection.autocommit and result.action in {"INSERT", "CREATE", "DROP", "UPDATE", "DELETE"}:
             self.connection.engine.save()
         return self
 
@@ -59,7 +59,7 @@ class ExcelCursor:
         self.description = None
         self.rowcount = total_rowcount
         self.lastrowid = last_rowid
-        if self.connection.autocommit and last_action in {"INSERT", "CREATE", "DROP"}:
+        if self.connection.autocommit and last_action in {"INSERT", "CREATE", "DROP", "UPDATE", "DELETE"}:
             self.connection.engine.save()
         return self
 

@@ -78,6 +78,69 @@ class OpenpyxlExecutor:
                 lastrowid=None,
             )
 
+        if action == "UPDATE":
+            ws = self.data.get(table)
+            if ws is None:
+                raise ValueError(f"Sheet '{table}' not found in Excel")
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                return ExecutionResult(action=action, rows=[], description=[], rowcount=0, lastrowid=None)
+            headers = list(rows[0])
+            updates = parsed["set"]
+            for update in updates:
+                if update["column"] not in headers:
+                    raise ValueError(f"Unknown column: {update['column']}")
+
+            where = parsed.get("where")
+            rowcount = 0
+            for row_index in range(2, ws.max_row + 1):
+                row_values = {
+                    headers[col_index]: ws.cell(row=row_index, column=col_index + 1).value
+                    for col_index in range(len(headers))
+                }
+                if where and not self._matches_where(row_values, where):
+                    continue
+                for update in updates:
+                    col_index = headers.index(update["column"]) + 1
+                    ws.cell(row=row_index, column=col_index, value=update["value"])
+                rowcount += 1
+
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=rowcount,
+                lastrowid=None,
+            )
+
+        if action == "DELETE":
+            ws = self.data.get(table)
+            if ws is None:
+                raise ValueError(f"Sheet '{table}' not found in Excel")
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
+                return ExecutionResult(action=action, rows=[], description=[], rowcount=0, lastrowid=None)
+            headers = list(rows[0])
+            where = parsed.get("where")
+            rowcount = 0
+            for row_index in range(ws.max_row, 1, -1):
+                row_values = {
+                    headers[col_index]: ws.cell(row=row_index, column=col_index + 1).value
+                    for col_index in range(len(headers))
+                }
+                if where and not self._matches_where(row_values, where):
+                    continue
+                ws.delete_rows(row_index)
+                rowcount += 1
+
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=rowcount,
+                lastrowid=None,
+            )
+
         if action == "INSERT":
             ws = self.data.get(table)
             if ws is None:
@@ -146,3 +209,11 @@ class OpenpyxlExecutor:
             )
 
         raise ValueError(f"Unsupported action: {action}")
+
+    def _matches_where(self, row: Dict[str, Any], where: Dict[str, Any]) -> bool:
+        column = where["column"]
+        operator = where["operator"]
+        value = where["value"]
+        if operator == "=":
+            return str(row.get(column)) == str(value)
+        raise NotImplementedError(f"Unsupported operator: {operator}")

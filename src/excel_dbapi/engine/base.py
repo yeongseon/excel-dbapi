@@ -18,6 +18,16 @@ class BaseEngine(ABC):
         pass
 
     @abstractmethod
+    def snapshot(self) -> Any:
+        """Return a snapshot of the current in-memory state."""
+        pass
+
+    @abstractmethod
+    def restore(self, snapshot: Any) -> None:
+        """Restore in-memory state from a snapshot."""
+        pass
+
+    @abstractmethod
     def execute(self, query: str) -> ExecutionResult:
         """
         Execute a query against the loaded data.

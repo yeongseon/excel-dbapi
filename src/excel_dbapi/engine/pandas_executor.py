@@ -18,7 +18,7 @@ class PandasExecutor:
             if frame is None:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
 
-            columns: Sequence[str] = parsed["columns"]
+            columns = parsed["columns"]
             if columns == ["*"]:
                 selected = frame
                 selected_columns = list(frame.columns)
@@ -54,23 +54,85 @@ class PandasExecutor:
                 lastrowid=None,
             )
 
+        if action == "UPDATE":
+            frame = self.data.get(table)
+            if frame is None:
+                raise ValueError(f"Sheet '{table}' not found in Excel")
+            where = parsed.get("where")
+            if where:
+                column = where["column"]
+                operator = where["operator"]
+                value = where["value"]
+                if column not in frame.columns:
+                    raise ValueError(f"Unknown column: {column}")
+                if operator == "=":
+                    mask = frame[column].astype(str) == str(value)
+                else:
+                    raise NotImplementedError(f"Unsupported operator: {operator}")
+            else:
+                mask = pd.Series([True] * len(frame), index=frame.index)
+
+            updates = parsed["set"]
+            for update in updates:
+                if update["column"] not in frame.columns:
+                    raise ValueError(f"Unknown column: {update['column']}")
+                frame.loc[mask, update["column"]] = update["value"]
+            self.data[table] = frame
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=int(mask.sum()),
+                lastrowid=None,
+            )
+
+        if action == "DELETE":
+            frame = self.data.get(table)
+            if frame is None:
+                raise ValueError(f"Sheet '{table}' not found in Excel")
+            where = parsed.get("where")
+            if where:
+                column = where["column"]
+                operator = where["operator"]
+                value = where["value"]
+                if column not in frame.columns:
+                    raise ValueError(f"Unknown column: {column}")
+                if operator == "=":
+                    mask = frame[column].astype(str) == str(value)
+                else:
+                    raise NotImplementedError(f"Unsupported operator: {operator}")
+            else:
+                mask = pd.Series([True] * len(frame), index=frame.index)
+
+            rowcount = int(mask.sum())
+            self.data[table] = frame.loc[~mask].reset_index(drop=True)
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=rowcount,
+                lastrowid=None,
+            )
+
         if action == "INSERT":
             frame = self.data.get(table)
             if frame is None:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
 
             values = parsed["values"]
-            columns = parsed.get("columns")
-            if columns is None:
+            insert_columns = parsed.get("columns")
+            if insert_columns is None:
                 if len(values) != len(frame.columns):
                     raise ValueError("INSERT values count does not match header count")
                 row_data = dict(zip(frame.columns, values))
             else:
-                missing = [col for col in columns if col not in frame.columns]
+                missing = [col for col in insert_columns if col not in frame.columns]
                 if missing:
                     raise ValueError(f"Unknown column(s): {', '.join(missing)}")
+                if len(values) != len(insert_columns):
+                    raise ValueError("INSERT values count does not match column count")
                 row_data = {col: None for col in frame.columns}
-                for col, value in zip(columns, values):
+                for col, value in zip(insert_columns, values):
                     row_data[col] = value
 
             self.data[table] = pd.concat(

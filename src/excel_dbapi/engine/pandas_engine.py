@@ -1,3 +1,4 @@
+from copy import deepcopy
 from typing import Any, Dict, Optional
 
 import pandas as pd
@@ -24,6 +25,12 @@ class PandasEngine(BaseEngine):
         with pd.ExcelWriter(self.file_path, engine="openpyxl") as writer:
             for sheet_name, frame in self.data.items():
                 frame.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    def snapshot(self) -> Dict[str, pd.DataFrame]:
+        return {name: frame.copy(deep=True) for name, frame in self.data.items()}
+
+    def restore(self, snapshot: Dict[str, pd.DataFrame]) -> None:
+        self.data = {name: frame.copy(deep=True) for name, frame in snapshot.items()}
 
     def execute(self, query: str) -> ExecutionResult:
         parsed = parse_sql(query)

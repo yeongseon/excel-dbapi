@@ -1,4 +1,4 @@
-from typing import Optional, Type
+from typing import Any, Optional, Type
 
 from .cursor import ExcelCursor
 from .engine.base import BaseEngine
@@ -37,6 +37,8 @@ class ExcelConnection:
         else:
             raise InterfaceError(f"Unsupported engine: {engine}")
 
+        self._snapshot: Any = self.engine.snapshot()
+
     @check_closed
     def cursor(self) -> ExcelCursor:
         return ExcelCursor(self)
@@ -44,10 +46,11 @@ class ExcelConnection:
     @check_closed
     def commit(self) -> None:
         self.engine.save()
+        self._snapshot = self.engine.snapshot()
 
     @check_closed
     def rollback(self) -> None:
-        raise NotSupportedError("Transactions are not supported")
+        self.engine.restore(self._snapshot)
 
     def close(self) -> None:
         self.closed = True

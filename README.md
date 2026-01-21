@@ -12,7 +12,7 @@ A lightweight, Python DB-API 2.0 compliant connector for Excel files.
 
 - Python DB-API 2.0 compliant interface
 - Query Excel files using SQL syntax
-- Supports SELECT and INSERT
+- Supports SELECT, INSERT, UPDATE, DELETE
 - Basic DDL support (CREATE TABLE, DROP TABLE)
 - Sheet-to-Table mapping
 - Pandas & Openpyxl engine selector
@@ -74,7 +74,6 @@ conn = ExcelConnection("sample.xlsx", engine="pandas")
 
 ## Planned Features
 
-- UPDATE and DELETE operations
 - Transaction simulation
 - Advanced SQL condition support (WHERE, ORDER BY, LIMIT)
 - Remote file connection support
