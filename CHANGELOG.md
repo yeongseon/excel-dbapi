@@ -2,7 +2,21 @@
 <a name="Unreleased"></a>
 ## Unreleased ([compare](https://github.com/yeongseon/excel-dbapi/compare/v0.1.3...HEAD))
 
-_No unreleased changes yet._
+### Added
+
+- INSERT/UPDATE/DELETE support with `executemany()`.
+- CREATE TABLE and DROP TABLE support.
+- Pandas engine alongside openpyxl.
+- WHERE (AND/OR, comparison operators), ORDER BY, and LIMIT.
+- Parameter binding for `?` placeholders.
+- Transaction simulation with autocommit, commit, and rollback.
+- Cursor metadata: `description`, `rowcount`, `lastrowid`, `fetchmany()`.
+- Expanded test coverage and usage examples.
+
+### Changed
+
+- SELECT results return tuples (DB-API style) instead of dicts.
+- Minimum supported Python version is now 3.10.
 
 <a name="v2.0.0"></a>
 ## v2.0.0 (2025-04-03)
