@@ -1,8 +1,8 @@
 
 # excel-dbapi
 
-![CI](https://github.com/your-username/excel-dbapi/actions/workflows/ci.yml/badge.svg)
-[![codecov](https://codecov.io/gh/your-username/excel-dbapi/branch/main/graph/badge.svg)](https://codecov.io/gh/your-username/excel-dbapi)
+![CI](https://github.com/yeongseon/excel-dbapi/actions/workflows/ci.yml/badge.svg)
+[![codecov](https://codecov.io/gh/yeongseon/excel-dbapi/branch/main/graph/badge.svg)](https://codecov.io/gh/yeongseon/excel-dbapi)
 
 A lightweight, Python DB-API 2.0 compliant connector for Excel files.
 
