@@ -1,7 +1,7 @@
 from typing import Any, List, Optional
 
 from .engine.result import ExecutionResult
-from .exceptions import InterfaceError
+from .exceptions import InterfaceError, NotSupportedError, ProgrammingError
 
 
 def check_closed(func):
@@ -34,7 +34,12 @@ class ExcelCursor:
 
     @check_closed
     def execute(self, query: str, params: Optional[tuple] = None) -> "ExcelCursor":
-        result: ExecutionResult = self.connection.engine.execute_with_params(query, params)
+        try:
+            result: ExecutionResult = self.connection.engine.execute_with_params(query, params)
+        except ValueError as exc:
+            raise ProgrammingError(str(exc)) from exc
+        except NotImplementedError as exc:
+            raise NotSupportedError(str(exc)) from exc
         self._results = result.rows
         self._index = 0
         self.description = result.description
@@ -49,8 +54,20 @@ class ExcelCursor:
         total_rowcount = 0
         last_rowid = None
         last_action = None
+        snapshot = None
+        if not self.connection.autocommit:
+            snapshot = self.connection.engine.snapshot()
         for params in seq_of_params:
-            result: ExecutionResult = self.connection.engine.execute_with_params(query, params)
+            try:
+                result: ExecutionResult = self.connection.engine.execute_with_params(query, params)
+            except ValueError as exc:
+                if snapshot is not None:
+                    self.connection.engine.restore(snapshot)
+                raise ProgrammingError(str(exc)) from exc
+            except NotImplementedError as exc:
+                if snapshot is not None:
+                    self.connection.engine.restore(snapshot)
+                raise NotSupportedError(str(exc)) from exc
             total_rowcount += result.rowcount
             last_rowid = result.lastrowid
             last_action = result.action

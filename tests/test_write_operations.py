@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from openpyxl import Workbook, load_workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -44,6 +45,24 @@ def test_openpyxl_insert_and_executemany(tmp_path: Path) -> None:
     wb = load_workbook(file_path, data_only=True)
     rows = list(wb["Sheet1"].iter_rows(values_only=True))
     assert rows[-3:] == [(2, "Bob"), (3, "Cora"), (4, "Dane")]
+
+
+def test_openpyxl_executemany_rollback_on_error(tmp_path: Path) -> None:
+    file_path = tmp_path / "sample.xlsx"
+    _create_sample_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=False) as conn:
+        cursor = conn.cursor()
+        with pytest.raises(Exception):
+            cursor.executemany(
+                "INSERT INTO Sheet1 (id, name) VALUES (?, ?)",
+                [(2, "Bob"), (3,)],
+            )
+        conn.rollback()
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert rows == [("id", "name"), (1, "Alice")]
 
 
 def test_openpyxl_create_and_drop_table(tmp_path: Path) -> None:

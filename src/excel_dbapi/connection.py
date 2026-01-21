@@ -50,6 +50,8 @@ class ExcelConnection:
 
     @check_closed
     def rollback(self) -> None:
+        if self.autocommit:
+            raise NotSupportedError("Rollback is disabled when autocommit is enabled")
         self.engine.restore(self._snapshot)
 
     def close(self) -> None:
