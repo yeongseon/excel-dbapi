@@ -74,7 +74,7 @@ The project aims to implement a **PEP 249 (DB-API 2.0) compliant driver for Exce
 - [x] Extend `WHERE` condition (AND, OR, comparison operators)
 - [x] Improve parser robustness
 - [x] Comprehensive unit tests
-- [ ] Advanced usage examples in documentation
+- [x] Advanced usage examples in documentation
 
 ---
 
@@ -82,11 +82,13 @@ The project aims to implement a **PEP 249 (DB-API 2.0) compliant driver for Exce
 
 **Goal:** Stabilize and release v1.0.0
 
-### Planned
-- [ ] Complete feature set for read/write
-- [ ] Extensive documentation & examples
-- [ ] Full test coverage
-- [ ] Packaging, versioning, CI/CD ready
+### Completed
+- [x] Complete feature set for read/write
+- [x] Extensive documentation & examples
+- [x] Full test coverage
+- [x] Packaging, versioning, CI/CD ready
+
+### Pending
 - [ ] PyPI deployment
 
 ---

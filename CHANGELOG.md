@@ -1,6 +1,11 @@
 <!-- insertion marker -->
 <a name="Unreleased"></a>
-## Unreleased ([compare](https://github.com/yeongseon/excel-dbapi/compare/v0.1.3...HEAD))
+## Unreleased ([compare](https://github.com/yeongseon/excel-dbapi/compare/v1.0.0...HEAD))
+
+_No unreleased changes yet._
+
+<a name="v1.0.0"></a>
+## [v1.0.0](https://github.com/yeongseon/excel-dbapi/compare/v0.1.3...v1.0.0) (2026-01-21)
 
 ### Added
 
