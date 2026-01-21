@@ -17,6 +17,8 @@
 
 - SELECT results return tuples (DB-API style) instead of dicts.
 - Minimum supported Python version is now 3.10.
+- SQL errors now raise PEP 249 exceptions (ProgrammingError/NotSupportedError).
+- `rollback()` is disabled when autocommit is enabled.
 
 <a name="v2.0.0"></a>
 ## v2.0.0 (2025-04-03)

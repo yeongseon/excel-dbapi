@@ -75,6 +75,8 @@ with ExcelConnection("tests/data/sample.xlsx", autocommit=False) as conn:
     conn.rollback()
 ```
 
+When autocommit is enabled, `rollback()` is not supported.
+
 For upcoming features, see [Project Roadmap](ROADMAP.md).
 
 ## Advanced Examples
@@ -88,6 +90,11 @@ with ExcelConnection("tests/data/sample.xlsx") as conn:
     )
     print(cursor.fetchall())
 ```
+
+## Limitations
+
+- `PandasEngine` rewrites workbooks and may drop formatting, charts, and formulas.
+- `OpenpyxlEngine` loads with `data_only=True`, so formulas are evaluated to values when reading.
 
 ## Cursor Metadata
 
