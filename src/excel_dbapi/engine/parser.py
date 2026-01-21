@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 def parse_sql(query: str, params: Optional[tuple] = None) -> Dict[str, Any]:
@@ -10,20 +10,39 @@ def parse_sql(query: str, params: Optional[tuple] = None) -> Dict[str, Any]:
     """
     tokens = query.strip().split()
 
-    if len(tokens) < 4 or tokens[0].upper() != "SELECT" or tokens[2].upper() != "FROM":
+    if len(tokens) < 4 or tokens[0].upper() != "SELECT":
         raise ValueError(f"Invalid SQL query format: {query}")
 
-    table = tokens[3]
+    try:
+        from_index = tokens.index("FROM")
+    except ValueError:
+        try:
+            from_index = tokens.index("from")
+        except ValueError as exc:
+            raise ValueError(f"Invalid SQL query format: {query}") from exc
+
+    columns_token = " ".join(tokens[1:from_index]).strip()
+    if not columns_token:
+        raise ValueError(f"Invalid SQL query format: {query}")
+
+    if columns_token == "*":
+        columns: List[str] = ["*"]
+    else:
+        columns = [col.strip() for col in columns_token.split(",") if col.strip()]
+        if not columns:
+            raise ValueError(f"Invalid SQL query format: {query}")
+
+    table = tokens[from_index + 1]
 
     # Check if there's a WHERE clause
     where = None
-    if len(tokens) > 4 and tokens[4].upper() == "WHERE":
+    if len(tokens) > from_index + 2 and tokens[from_index + 2].upper() == "WHERE":
         # For now, assume very simple: WHERE column = value
-        if len(tokens) < 8:
+        if len(tokens) < from_index + 6:
             raise ValueError(f"Invalid WHERE clause format: {query}")
-        column = tokens[5]
-        operator = tokens[6]
-        value = tokens[7]
+        column = tokens[from_index + 3]
+        operator = tokens[from_index + 4]
+        value = tokens[from_index + 5]
 
         # Remove quotes if present
         if value.startswith(("'", '"')) and value.endswith(("'", '"')):
@@ -37,7 +56,7 @@ def parse_sql(query: str, params: Optional[tuple] = None) -> Dict[str, Any]:
 
     return {
         "action": "SELECT",
-        "columns": tokens[1],
+        "columns": columns,
         "table": table,
         "where": where,
         "params": params,

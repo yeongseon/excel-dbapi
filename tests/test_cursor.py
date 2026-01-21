@@ -8,7 +8,9 @@ def test_cursor_execute_and_fetchall():
         cursor.execute("SELECT * FROM Sheet1")
         results = cursor.fetchall()
         assert isinstance(results, list)
-        assert isinstance(results[0], dict)
+        assert isinstance(results[0], tuple)
+        assert cursor.description is not None
+        assert cursor.rowcount == len(results)
 
 
 def test_cursor_fetchone():
@@ -16,7 +18,7 @@ def test_cursor_fetchone():
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM Sheet1")
         row = cursor.fetchone()
-        assert isinstance(row, dict)
+        assert isinstance(row, tuple)
 
 def test_cursor_closed():
     with ExcelConnection("tests/data/sample.xlsx") as conn:

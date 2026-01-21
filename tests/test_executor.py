@@ -8,8 +8,8 @@ def test_executor_select():
     data = engine.load()
     parsed = parse_sql("SELECT * FROM Sheet1")
     results = execute_query(parsed, data)
-    assert isinstance(results, list)
-    assert isinstance(results[0], dict)
+    assert isinstance(results.rows, list)
+    assert isinstance(results.rows[0], tuple)
 
 
 def test_executor_select_with_where():
@@ -18,6 +18,6 @@ def test_executor_select_with_where():
     parsed = parse_sql("SELECT * FROM Sheet1 WHERE id = 1")
     results = execute_query(parsed, data)
 
-    assert isinstance(results, list)
-    assert len(results) == 1
-    assert results[0]["id"] == 1
+    assert isinstance(results.rows, list)
+    assert len(results.rows) == 1
+    assert results.rows[0][0] == 1

@@ -1,8 +1,9 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, Optional
 from openpyxl import load_workbook
 
 from .base import BaseEngine
 from .executor import execute_query
+from .result import ExecutionResult
 from .parser import parse_sql
 
 
@@ -49,7 +50,7 @@ class OpenpyxlEngine(BaseEngine):
                     ws.cell(row=row_idx, column=col_idx, value=cell.value)
         wb.save(self.file_path)
 
-    def execute(self, query: str) -> List[Dict[str, Any]]:
+    def execute(self, query: str) -> ExecutionResult:
         """
         Execute a SQL-like query on the loaded Excel data.
 
@@ -57,8 +58,11 @@ class OpenpyxlEngine(BaseEngine):
             query (str): A SQL-like query string (e.g., "SELECT * FROM Sheet1 WHERE id = '1'").
 
         Returns:
-            List[Dict[str, Any]]: Query results as a list of dictionaries, where each dictionary
-                                  represents a row with column names as keys.
+            ExecutionResult: Query results with rows, description, and rowcount.
         """
         parsed = parse_sql(query)
+        return execute_query(parsed, self.data)
+
+    def execute_with_params(self, query: str, params: Optional[tuple] = None) -> ExecutionResult:
+        parsed = parse_sql(query, params)
         return execute_query(parsed, self.data)

@@ -12,5 +12,5 @@ def test_engine_load():
 def test_engine_execute_select():
     engine = OpenpyxlEngine("tests/data/sample.xlsx")
     results = engine.execute("SELECT * FROM Sheet1")
-    assert isinstance(results, list)
-    assert isinstance(results[0], dict)
+    assert isinstance(results.rows, list)
+    assert isinstance(results.rows[0], tuple)

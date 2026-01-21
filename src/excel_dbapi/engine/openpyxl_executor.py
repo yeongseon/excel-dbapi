@@ -1,4 +1,6 @@
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
+
+from .result import ExecutionResult, Description
 
 class OpenpyxlExecutor:
     """
@@ -15,7 +17,7 @@ class OpenpyxlExecutor:
         """
         self.data = data
 
-    def execute(self, parsed: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def execute(self, parsed: Dict[str, Any]) -> ExecutionResult:
         """
         Execute a parsed SQL-like query on the in-memory Excel data.
 
@@ -38,8 +40,17 @@ class OpenpyxlExecutor:
 
         # Read all rows from the worksheet
         rows = list(ws.iter_rows(values_only=True))
-        headers = rows[0]  # First row is assumed to be the header
+        headers = list(rows[0])  # First row is assumed to be the header
         data = [dict(zip(headers, row)) for row in rows[1:]]
+
+        columns: Sequence[str] = parsed["columns"]
+        if columns == ["*"]:
+            selected_columns = headers
+        else:
+            selected_columns = list(columns)
+            missing = [col for col in selected_columns if col not in headers]
+            if missing:
+                raise ValueError(f"Unknown column(s): {', '.join(missing)}")
 
         # Apply WHERE clause filtering if provided
         where = parsed.get("where")
@@ -53,4 +64,14 @@ class OpenpyxlExecutor:
             else:
                 raise NotImplementedError(f"Unsupported operator: {operator}")
 
-        return data
+        rows_out = [tuple(row.get(col) for col in selected_columns) for row in data]
+        description: Description = [
+            (col, None, None, None, None, None, None) for col in selected_columns
+        ]
+
+        return ExecutionResult(
+            rows=rows_out,
+            description=description,
+            rowcount=len(rows_out),
+            lastrowid=None,
+        )

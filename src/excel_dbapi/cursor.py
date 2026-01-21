@@ -1,7 +1,6 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
-from .engine.executor import execute_query
-from .engine.parser import parse_sql
+from .engine.result import ExecutionResult
 from .exceptions import InterfaceError
 
 
@@ -26,18 +25,25 @@ class ExcelCursor:
         """
         self.connection = connection
         self.closed: bool = False
-        self._results: List[Dict[str, Any]] = []
+        self._results: List[tuple] = []
         self._index: int = 0
+        self.description = None
+        self.rowcount = -1
+        self.lastrowid = None
+        self.arraysize = 1
 
     @check_closed
     def execute(self, query: str, params: Optional[tuple] = None) -> "ExcelCursor":
-        parsed = parse_sql(query, params)
-        self._results = execute_query(parsed, self.connection.data)
+        result: ExecutionResult = self.connection.engine.execute_with_params(query, params)
+        self._results = result.rows
         self._index = 0
+        self.description = result.description
+        self.rowcount = result.rowcount
+        self.lastrowid = result.lastrowid
         return self
 
     @check_closed
-    def fetchone(self) -> Optional[Dict[str, Any]]:
+    def fetchone(self) -> Optional[tuple]:
         if self._index >= len(self._results):
             return None
         result = self._results[self._index]
@@ -45,10 +51,20 @@ class ExcelCursor:
         return result
 
     @check_closed
-    def fetchall(self) -> List[Dict[str, Any]]:
+    def fetchall(self) -> List[tuple]:
         results = self._results[self._index:]
         self._index = len(self._results)
         return results
+
+    @check_closed
+    def fetchmany(self, size: Optional[int] = None) -> List[tuple]:
+        count = self.arraysize if size is None else size
+        if count <= 0:
+            return []
+        start = self._index
+        end = min(self._index + count, len(self._results))
+        self._index = end
+        return self._results[start:end]
 
     def close(self) -> None:
         self.closed = True

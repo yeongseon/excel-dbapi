@@ -1,8 +1,10 @@
-from typing import Any, Dict, List
+from typing import Any, Dict
+
 from .openpyxl_executor import OpenpyxlExecutor
+from .result import ExecutionResult
 
 
-def execute_query(parsed: Dict[str, Any], data: Dict[str, Any]) -> List[Dict[str, Any]]:
+def execute_query(parsed: Dict[str, Any], data: Dict[str, Any]) -> ExecutionResult:
     """
     Execute a query against the loaded data.
     This function is responsible for executing the parsed SQL query
@@ -18,7 +20,7 @@ def execute_query(parsed: Dict[str, Any], data: Dict[str, Any]) -> List[Dict[str
     Returns:
         List[Dict[str, Any]]: _description_
     """
-    table = parsed.get("table").lower()
+    table = parsed["table"].lower()
     data_lower = {sheet.lower(): sheet for sheet in data.keys()}
 
     if table not in data_lower:

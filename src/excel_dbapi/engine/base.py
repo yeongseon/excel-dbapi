@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import Any, Dict, Optional
+
+from .result import ExecutionResult
 
 
 class BaseEngine(ABC):
@@ -11,8 +13,12 @@ class BaseEngine(ABC):
         pass
 
     @abstractmethod
-    def execute(self, query: str) -> List[Dict[str, Any]]:
+    def execute(self, query: str) -> ExecutionResult:
         """
         Execute a query against the loaded data.
         """
         pass
+
+    def execute_with_params(self, query: str, params: Optional[tuple] = None) -> ExecutionResult:
+        """Execute a query with optional parameters."""
+        return self.execute(query)
