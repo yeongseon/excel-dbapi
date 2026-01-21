@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "excel-dbapi"
-version = "2.1.0"
+version = "0.1.3"
 description = "PEP 249 compliant DB-API driver for Excel files"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [ "pandas>=2.0.0,<3.0.0", "openpyxl>=3.1.0,<4.0.0",]
 [[project.authors]]
 name = "Yeongseon Choe"

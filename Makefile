@@ -32,7 +32,7 @@ setup: venv install precommit
 	@echo "Development environment is ready!"
 
 venv:
-	python3.9 -m venv $(VENV)
+	python3 -m venv $(VENV)
 
 install: venv
 	$(PIP) install --upgrade pip
