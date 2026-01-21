@@ -4,7 +4,7 @@ PIP=$(VENV)/bin/pip
 CHANGELOG=CHANGELOG.md
 VERSION=$(shell grep '^version =' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
 
-.PHONY: help venv install format lint test clean build precommit publish changelog bump-version-patch bump-version-minor bump-version-major release-patch release-minor release-major commit setup docs docker-dev docker-stop example examples example-basic example-write example-transactions example-advanced example-pandas
+.PHONY: help venv install format lint test clean build precommit publish changelog bump-version-patch bump-version-minor bump-version-major release-patch release-minor release-major commit setup docs docker-dev docker-stop
 
 help:
 	@echo "Makefile commands:"
@@ -14,13 +14,6 @@ help:
 	@echo "  make format           - Run black & isort"
 	@echo "  make lint             - Run pre-commit"
 	@echo "  make test             - Run tests"
-	@echo "  make example          - Run examples/basic_usage.py"
-	@echo "  make examples         - Run all example scripts"
-	@echo "  make example-basic    - Run examples/basic_usage.py"
-	@echo "  make example-write    - Run examples/write_operations.py"
-	@echo "  make example-transactions - Run examples/transactions.py"
-	@echo "  make example-advanced - Run examples/advanced_query.py"
-	@echo "  make example-pandas   - Run examples/pandas_engine.py"
 	@echo "  make build            - Build package"
 	@echo "  make clean            - Remove build artifacts"
 	@echo "  make precommit        - Install pre-commit hooks"
@@ -56,25 +49,6 @@ lint:
 test:
 	PYTHONPATH=src $(VENV)/bin/pytest --cov=src --cov-report=term --cov-report=html --cov-report=xml
 
-example:
-	PYTHONPATH=src $(VENV)/bin/python examples/basic_usage.py
-
-example-basic:
-	PYTHONPATH=src $(VENV)/bin/python examples/basic_usage.py
-
-example-write:
-	PYTHONPATH=src $(VENV)/bin/python examples/write_operations.py
-
-example-transactions:
-	PYTHONPATH=src $(VENV)/bin/python examples/transactions.py
-
-example-advanced:
-	PYTHONPATH=src $(VENV)/bin/python examples/advanced_query.py
-
-example-pandas:
-	PYTHONPATH=src $(VENV)/bin/python examples/pandas_engine.py
-
-examples: example-basic example-write example-transactions example-advanced example-pandas
 
 build:
 	$(PYTHON) -m build
