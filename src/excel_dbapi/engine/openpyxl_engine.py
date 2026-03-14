@@ -18,14 +18,15 @@ class OpenpyxlEngine(BaseEngine):
     using the openpyxl library. It implements the BaseEngine interface.
     """
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path: str, *, data_only: bool = True, create: bool = False):
         """
         Initialize the OpenpyxlEngine with the given file path.
 
         Args:
             file_path (str): Path to the Excel (.xlsx) file.
         """
-        self.file_path = file_path
+        super().__init__(file_path, create=create)
+        self._data_only = data_only
         self.workbook: Workbook | None = None
         self.data = self.load()
 
@@ -36,7 +37,11 @@ class OpenpyxlEngine(BaseEngine):
         Returns:
             Dict[str, Any]: A dictionary mapping sheet names to openpyxl Worksheet objects.
         """
-        self.workbook = load_workbook(self.file_path, data_only=True)
+        if self.create and not os.path.exists(self.file_path):
+            self.workbook = Workbook()
+            self.workbook.save(self.file_path)
+        else:
+            self.workbook = load_workbook(self.file_path, data_only=self._data_only)
         return {sheet: self.workbook[sheet] for sheet in self.workbook.sheetnames}
 
     def save(self) -> None:
@@ -71,7 +76,7 @@ class OpenpyxlEngine(BaseEngine):
 
     def restore(self, snapshot: BytesIO) -> None:
         snapshot.seek(0)
-        self.workbook = load_workbook(snapshot, data_only=True)
+        self.workbook = load_workbook(snapshot, data_only=self._data_only)
         self.data = {sheet: self.workbook[sheet] for sheet in self.workbook.sheetnames}
 
     def execute(self, query: str) -> ExecutionResult:

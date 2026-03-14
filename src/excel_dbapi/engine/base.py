@@ -5,6 +5,10 @@ from .result import ExecutionResult
 
 
 class BaseEngine(ABC):
+    def __init__(self, file_path: str, *, create: bool = False) -> None:
+        self.file_path = file_path
+        self.create = create
+
     @abstractmethod
     def load(self) -> Dict[str, Any]:
         """

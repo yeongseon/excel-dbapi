@@ -16,11 +16,16 @@ class PandasEngine(BaseEngine):
     PandasEngine loads Excel sheets into DataFrames and executes queries.
     """
 
-    def __init__(self, file_path: str):
-        self.file_path = file_path
+    def __init__(self, file_path: str, *, data_only: bool = True, create: bool = False):
+        super().__init__(file_path, create=create)
         self.data = self.load()
 
     def load(self) -> Dict[str, Any]:
+        if self.create and not os.path.exists(self.file_path):
+            from openpyxl import Workbook
+            wb = Workbook()
+            wb.save(self.file_path)
+            wb.close()
         return pd.read_excel(self.file_path, sheet_name=None)
 
     def save(self) -> None:

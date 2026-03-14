@@ -22,7 +22,14 @@ class ExcelConnection:
     for reading and querying Excel files using openpyxl.
     """
 
-    def __init__(self, file_path: str, engine: str = "openpyxl", autocommit: bool = True):
+    def __init__(
+        self,
+        file_path: str,
+        engine: str = "openpyxl",
+        autocommit: bool = True,
+        create: bool = False,
+        data_only: bool = True,
+    ):
         """
         Initialize the connection with the Excel file.
         """
@@ -31,9 +38,9 @@ class ExcelConnection:
         self.autocommit: bool = autocommit
 
         if engine == "openpyxl":
-            self.engine = OpenpyxlEngine(file_path)
+            self.engine = OpenpyxlEngine(file_path, data_only=data_only, create=create)
         elif engine == "pandas":
-            self.engine = PandasEngine(file_path)
+            self.engine = PandasEngine(file_path, data_only=data_only, create=create)
         else:
             raise InterfaceError(f"Unsupported engine: {engine}")
 
@@ -60,6 +67,13 @@ class ExcelConnection:
     @property
     def engine_name(self) -> str:
         return self.engine.__class__.__name__
+
+    @property
+    def workbook(self) -> Any:
+        wb = getattr(self.engine, "workbook", None)
+        if wb is None:
+            raise NotSupportedError(f"Engine '{self.engine_name}' does not expose a workbook object")
+        return wb
 
     def __str__(self) -> str:
         return f"<ExcelConnection file='{self.file_path}' engine='{self.engine_name}' closed={self.closed}>"
