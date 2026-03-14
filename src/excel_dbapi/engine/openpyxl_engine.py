@@ -37,7 +37,7 @@ class OpenpyxlEngine(BaseEngine):
         Returns:
             Dict[str, Any]: A dictionary mapping sheet names to openpyxl Worksheet objects.
         """
-        if self.create and not os.path.exists(self.file_path):
+        if self.create and (not os.path.exists(self.file_path) or os.path.getsize(self.file_path) == 0):
             self.workbook = Workbook()
             self.workbook.save(self.file_path)
         else:
