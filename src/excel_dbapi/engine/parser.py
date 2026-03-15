@@ -95,6 +95,8 @@ def _parse_select(query: str, params: Optional[tuple]) -> Dict[str, Any]:
     columns_token = " ".join(tokens[1:from_index]).strip()
     if not columns_token:
         raise ValueError(f"Invalid SQL query format: {query}")
+    if columns_token.upper().startswith("DISTINCT "):
+        raise ValueError("Unsupported SQL grammar: DISTINCT")
     columns = _parse_columns(columns_token)
 
     if len(tokens) <= from_index + 1:
@@ -103,6 +105,9 @@ def _parse_select(query: str, params: Optional[tuple]) -> Dict[str, Any]:
 
     remainder = " ".join(tokens[from_index + 2:]).strip()
     remainder_upper = remainder.upper()
+    for unsupported in (" JOIN ", " GROUP BY ", " HAVING "):
+        if unsupported in f" {remainder_upper} ":
+            raise ValueError(f"Unsupported SQL grammar:{unsupported.strip()}")
     where = None
     order_by = None
     limit = None
