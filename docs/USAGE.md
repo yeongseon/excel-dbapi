@@ -95,6 +95,17 @@ with ExcelConnection("tests/data/sample.xlsx") as conn:
 
 - `PandasEngine` rewrites workbooks and may drop formatting, charts, and formulas.
 - `OpenpyxlEngine` loads with `data_only=True`, so formulas are evaluated to values when reading.
+- SQL subset deliberately excludes JOIN/GROUP BY/HAVING and subqueries.
+
+## Security and parameter binding
+
+Always prefer placeholders (`?`) for dynamic values:
+
+```python
+cursor.execute("SELECT * FROM Sheet1 WHERE id = ?", (1,))
+```
+
+Avoid string interpolation for SQL parameters.
 
 ## Cursor Metadata
 

@@ -4,6 +4,10 @@
 - [Usage Guide](USAGE.md)
 - [Development Guide](DEVELOPMENT.md)
 - [Project Roadmap](ROADMAP.md)
+- [10-Minute Quickstart](QUICKSTART_10_MIN.md)
+- [Operations Notes](OPERATIONS.md)
+- [Public Roadmap](PUBLIC_ROADMAP.md)
+- [Versioning Policy](VERSIONING.md)
 
 ## Limitations
 

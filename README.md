@@ -6,6 +6,13 @@
 
 A lightweight, Python DB-API 2.0 compliant connector for Excel files.
 
+## What it is / What it is not
+
+- ✅ **It is** a DB-API style adapter for querying and updating worksheet-like tables.
+- ✅ **It is** useful for education, prototyping, and small automation workflows.
+- ❌ **It is not** a full SQL engine (no JOIN/GROUP BY/HAVING/subquery support).
+- ❌ **It is not** a concurrent multi-writer datastore.
+
 ---
 
 ## Features
@@ -35,7 +42,7 @@ See [CHANGELOG](CHANGELOG.md) for release history.
 
 ## Quick Start
 
-### Basic Usage (Local File)
+### 10-Minute Quickstart (Local File)
 
 ```python
 from excel_dbapi.connection import ExcelConnection
@@ -46,10 +53,10 @@ with ExcelConnection("path/to/sample.xlsx") as conn:
     cursor.execute("SELECT * FROM Sheet1")
     print(cursor.fetchall())
 
-# Insert a row
+# Insert a row (prefer parameter binding)
 with ExcelConnection("path/to/sample.xlsx") as conn:
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO Sheet1 (id, name) VALUES (1, 'Alice')")
+    cursor.execute("INSERT INTO Sheet1 (id, name) VALUES (?, ?)", (1, "Alice"))
 
 # Using pandas engine
 with ExcelConnection("path/to/sample.xlsx", engine="pandas") as conn:
@@ -107,10 +114,12 @@ with ExcelConnection("path/to/sample.xlsx") as conn:
     print(cursor.rowcount)
 ```
 
-## Limitations
+## Limitations and operational guidance
 
 - `PandasEngine` rewrites workbooks and may drop formatting, charts, and formulas.
 - `OpenpyxlEngine` loads with `data_only=True`, so formulas are evaluated to values when reading.
+- Use a **single-writer model** for writes. Avoid writing to the same file from multiple processes.
+- Save is implemented with a temporary file + atomic replace (`os.replace`) for safer persistence.
 
 ## Planned Features
 
@@ -126,6 +135,9 @@ See [Project Roadmap](docs/ROADMAP.md) for details.
 - [Usage Guide](docs/USAGE.md)
 - [Development Guide](docs/DEVELOPMENT.md)
 - [Project Roadmap](docs/ROADMAP.md)
+- [10-Minute Quickstart](docs/QUICKSTART_10_MIN.md)
+- [Operations Notes](docs/OPERATIONS.md)
+- [Public Roadmap](docs/PUBLIC_ROADMAP.md)
 
 ## Examples
 
