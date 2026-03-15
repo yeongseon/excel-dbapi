@@ -1,8 +1,11 @@
+from pathlib import Path
+
 from .connection import ExcelConnection
 
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"
+__version__ = (Path(__file__).resolve().parents[2] / "VERSION").read_text(encoding="utf-8").strip()
 
 
 def connect(
@@ -27,4 +30,5 @@ __all__ = [
     "apilevel",
     "threadsafety",
     "paramstyle",
+    "__version__",
 ]

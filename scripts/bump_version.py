@@ -31,8 +31,11 @@ def main():
     new_version = bump(current_version, bump_type)
     data["project"]["version"] = new_version
 
-    with open(pyproject, "w") as f:
+    with open(pyproject, "w", encoding="utf-8") as f:
         toml.dump(data, f)
+
+    with open("VERSION", "w", encoding="utf-8") as f:
+        f.write(f"{new_version}\n")
 
     print(f"Bumped version: {current_version} → {new_version}")
 

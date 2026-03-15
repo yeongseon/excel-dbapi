@@ -4,7 +4,7 @@ PIP=$(VENV)/bin/pip
 CHANGELOG=CHANGELOG.md
 VERSION=$(shell grep '^version =' pyproject.toml | sed -E 's/version = "(.*)"/\1/')
 
-.PHONY: help venv install format lint test clean build precommit publish changelog bump-version-patch bump-version-minor bump-version-major release-patch release-minor release-major commit setup docs docker-dev docker-stop
+.PHONY: help venv install format lint test clean build precommit publish changelog bump-version-patch bump-version-minor bump-version-major release-patch release-minor release-major commit setup docs docker-dev docker-stop version-check
 
 help:
 	@echo "Makefile commands:"
@@ -22,6 +22,7 @@ help:
 	@echo "  make release-patch    - Create a patch release"
 	@echo "  make release-minor    - Create a minor release"
 	@echo "  make release-major    - Create a major release"
+	@echo "  make version-check    - Verify VERSION/pyproject/changelog alignment"
 	@echo "  make commit m='msg'   - Add, commit, and push changes"
 	@echo "  make docs             - Create docs folder and README"
 	@echo "  make docker-dev       - Run development docker container"
@@ -80,22 +81,25 @@ bump-version-minor:
 bump-version-major:
 	$(PYTHON) scripts/bump_version.py major
 
+version-check:
+	$(PYTHON) scripts/check_version_surfaces.py
+
 release-patch: changelog bump-version-patch
-	git add pyproject.toml $(CHANGELOG)
+	git add pyproject.toml VERSION $(CHANGELOG)
 	git commit -m "chore: release v$(VERSION)"
 	git tag v$(VERSION)
 	git push origin main
 	git push --tags
 
 release-minor: changelog bump-version-minor
-	git add pyproject.toml $(CHANGELOG)
+	git add pyproject.toml VERSION $(CHANGELOG)
 	git commit -m "chore: release v$(VERSION)"
 	git tag v$(VERSION)
 	git push origin main
 	git push --tags
 
 release-major: changelog bump-version-major
-	git add pyproject.toml $(CHANGELOG)
+	git add pyproject.toml VERSION $(CHANGELOG)
 	git commit -m "chore: release v$(VERSION)"
 	git tag v$(VERSION)
 	git push origin main

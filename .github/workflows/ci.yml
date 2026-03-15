@@ -20,10 +20,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
-      - name: Run tests
+      - name: Run tests with deterministic coverage artifact
         run: |
-          PYTHONPATH=src pytest --cov=src --cov-report=term
+          PYTHONPATH=src pytest --cov=src --cov-report=term --cov-report=xml:coverage.xml
+      - name: Verify version surfaces
+        run: python scripts/check_version_surfaces.py
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: ./coverage.xml
+          files: coverage.xml
+          fail_ci_if_error: true
+
+  smoke:
+    name: smoke-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+      - name: Smoke test
+        shell: bash
+        run: |
+          PYTHONPATH=src pytest -q tests/test_connection.py tests/test_cursor.py

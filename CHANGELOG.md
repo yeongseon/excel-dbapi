@@ -2,7 +2,22 @@
 <a name="Unreleased"></a>
 ## Unreleased ([compare](https://github.com/yeongseon/excel-dbapi/compare/v1.0.0...HEAD))
 
-_No unreleased changes yet._
+### Added
+
+- Added canonical `VERSION` file and runtime `__version__` loading.
+- Added version surface validation script (`scripts/check_version_surfaces.py`).
+- Added CI OS smoke matrix (Ubuntu/Windows/macOS).
+- Added SQL boundary tests for unsupported grammar.
+- Added integration tests for rollback snapshot behavior and atomic save failure handling.
+- Added 10-minute quickstart docs and classroom examples.
+- Added operations docs for single-writer guidance and engine tradeoffs.
+- Added issue templates, PR template, and public milestone roadmap page.
+
+### Changed
+
+- Migrated PyPI release workflow to Trusted Publishing (OIDC).
+- Hardened coverage generation to always emit `coverage.xml` before upload.
+- Expanded project metadata for PyPI (classifiers, keywords, project URLs).
 
 <a name="v1.0.0"></a>
 ## [v1.0.0](https://github.com/yeongseon/excel-dbapi/compare/v0.1.3...v1.0.0) (2026-01-21)
