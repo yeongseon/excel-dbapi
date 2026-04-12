@@ -11,7 +11,7 @@ pip install excel-dbapi
 ```python
 from excel_dbapi.connection import ExcelConnection
 
-with ExcelConnection("tests/data/sample.xlsx") as conn:
+with ExcelConnection("sample.xlsx") as conn:
     cur = conn.cursor()
     cur.execute("SELECT id, name FROM Sheet1 ORDER BY id LIMIT 3")
     print(cur.fetchall())
@@ -20,11 +20,24 @@ with ExcelConnection("tests/data/sample.xlsx") as conn:
 ## 3) Safe write pattern
 
 ```python
-with ExcelConnection("tests/data/sample.xlsx", autocommit=False) as conn:
+with ExcelConnection("sample.xlsx", autocommit=False) as conn:
     cur = conn.cursor()
     cur.execute("INSERT INTO Sheet1 (id, name) VALUES (?, ?)", (99, "Classroom"))
     conn.commit()
 ```
+
+## 4) Supported SQL
+
+For the complete formal grammar, see [SQL_SPEC.md](SQL_SPEC.md).
+
+| Statement | Example |
+|-----------|---------|
+| SELECT | `SELECT * FROM Sheet1 WHERE id > ? ORDER BY name LIMIT 10` |
+| INSERT | `INSERT INTO Sheet1 (id, name) VALUES (?, ?)` |
+| UPDATE | `UPDATE Sheet1 SET name = ? WHERE id = ?` |
+| DELETE | `DELETE FROM Sheet1 WHERE id = ?` |
+| CREATE | `CREATE TABLE NewSheet (id, name, email)` |
+| DROP | `DROP TABLE NewSheet` |
 
 ## Tool comparison
 

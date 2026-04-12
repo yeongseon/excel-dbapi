@@ -1,106 +1,73 @@
-# excel-dbapi Project Roadmap
+# excel-dbapi Roadmap
 
-This document outlines the planned milestones and tasks for the `excel-dbapi` project.  
-The project aims to implement a **PEP 249 (DB-API 2.0) compliant driver for Excel files.**
+> **Current version**: 0.3.0 · **Python**: 3.10+ · **Published**: [PyPI](https://pypi.org/project/excel-dbapi/)
 
----
+## Completed
 
-## Version 0.1.x - Basic Read-Only Support
+### v0.1.0 — PEP 249 Foundation
 
-**Goal:** Provide minimal functionality to read Excel data using DB-API 2.0 standard.
+- PEP 249 (DB-API 2.0) compliant `ExcelConnection` and `ExcelCursor`
+- SQL parser: SELECT with WHERE (AND/OR, comparison operators), ORDER BY, LIMIT
+- INSERT, UPDATE, DELETE execution
+- CREATE TABLE / DROP TABLE (DDL)
+- Openpyxl engine (default) and Pandas engine (optional)
+- Transaction simulation: `commit()` / `rollback()` with in-memory snapshot
+- PEP 249 exception hierarchy
+- Parameter binding (`?` placeholder)
+- Formula injection defense (enabled by default)
+- Reflection helpers for dialect integration
+- Metadata sheet for schema persistence
 
-### Completed
-- [x] Implement `ExcelConnection` class
-  - [x] `cursor()` method
-  - [x] `close()` method
-  - [x] Context manager support (`__enter__`, `__exit__`)
-  - [x] Engine selection (openpyxl and pandas)
-- [x] Implement `ExcelCursor` class
-  - [x] `execute()` method (SELECT query parser & executor)
-  - [x] `fetchone()` and `fetchall()` methods
-  - [x] `close()` method
-- [x] Implement basic SQL parser (SELECT structure only)
-- [x] Sheet-to-Table mapping (first row as header)
-- [x] Implement PEP 249 Exception hierarchy
-- [ ] Parameter binding support (`?` placeholder) (⚠️ Partial: parsing not applied yet)
-- [x] Basic unit tests (Connection, Cursor, Parser, Executor)
-- [x] Add usage examples (README.md + examples/basic_usage.py)
-- [x] Project structure reorganization (`src/`, `tests/`)
-- [x] pyproject.toml modernization
+### v0.2.x — Operators & Quality
 
----
+- IN, BETWEEN, LIKE operators for WHERE clauses
+- Codecov CI integration
+- mypy strict mode enabled and passing
+- PyPI Trusted Publisher (OIDC) for secure releases
 
-## Version 0.2.x - Write Operations & Basic DDL
+### v0.3.0 — Stabilization (Current)
 
-**Goal:** Add data write capability and minimal DDL operations.
+- Formal SQL subset specification ([`docs/SQL_SPEC.md`](SQL_SPEC.md)) with EBNF grammar
+- Parser golden tests for all statement families (SELECT, INSERT, UPDATE, DELETE, DDL)
+- Comprehensive test suite: **397 tests, 98% coverage**
+- Parser fix: quoted strings with embedded spaces handled correctly
+- Parser fix: escaped quotes (`''`, `""`) parsed correctly
+- README restructured: limitations-first layout
+- Microsoft Graph API engine: remote Excel files on OneDrive/SharePoint (experimental)
 
-### Completed
-- [x] Implement `INSERT INTO` execution
-  - [x] Column-specified and column-unspecified INSERT
-  - [x] `executemany()` support
-- [x] Add row(s) to Excel sheet
-- [x] Save changes to file (auto-commit)
-- [x] Implement basic DDL
-  - [x] `CREATE TABLE` → Create new worksheet with headers
-  - [x] `DROP TABLE` → Remove worksheet (optional)
-- [x] Unit tests for INSERT and DDL
-- [x] Documentation update
+## Future
 
----
+### Planned
 
-## Version 0.3.x - UPDATE, DELETE, Transaction Simulation
+- **DISTINCT**: Remove duplicate rows from SELECT results
+- **OFFSET**: Pagination support (currently only LIMIT is supported)
+- **Aggregate functions**: COUNT, SUM, AVG, MIN, MAX
+- **GROUP BY**: Grouping with aggregate functions
+- **Subqueries**: Nested SELECT statements
+- **Multi-sheet JOIN**: Cross-sheet queries (INNER JOIN, LEFT JOIN)
+- **Polars engine**: Optional backend using Polars instead of pandas
+- **Async support**: Asyncio-compatible driver
 
-**Goal:** Enable data modification and transaction simulation.
+### Not Planned
 
-### Completed
-- [x] Implement `UPDATE` execution
-  - [x] Simple `WHERE` condition support
-- [x] Implement `DELETE` execution
-  - [x] Conditional and full sheet deletion
-- [x] In-memory transaction simulation
-  - [x] `commit()` and `rollback()` behavior
-- [x] Track `rowcount` and `lastrowid`
-- [x] Unit tests for UPDATE, DELETE, transactions
-- [x] Documentation update
+These are explicitly out of scope for excel-dbapi:
 
----
+- Full ACID transactions (Excel files are not a database)
+- Concurrent write support (single-writer model by design)
+- ALTER TABLE / schema migration
+- Stored procedures or triggers
+- Foreign key enforcement
 
-## Version 0.4.x - SQL Features Expansion
+## Versioning
 
-**Goal:** Enhance SQL support for advanced queries.
+excel-dbapi follows [Semantic Versioning](https://semver.org/):
 
-### Completed
-- [x] Implement `ORDER BY`, `LIMIT` clauses
-- [x] Extend `WHERE` condition (AND, OR, comparison operators)
-- [x] Improve parser robustness
-- [x] Comprehensive unit tests
-- [x] Advanced usage examples in documentation
+- **PATCH** (0.x.**y**): Bug fixes
+- **MINOR** (0.**x**.0): New features, backward-compatible
+- **MAJOR** (**x**.0.0): Breaking changes, stable API
+
+**Current status**: Beta (0.x.x) — API may change before 1.0.0.
 
 ---
 
-## Version 1.0.0 - Production Ready Release
-
-**Goal:** Stabilize and release v1.0.0
-
-### Completed
-- [x] Complete feature set for read/write
-- [x] Extensive documentation & examples
-- [x] Full test coverage
-- [x] Packaging, versioning, CI/CD ready
-
-### Pending
-- [ ] PyPI deployment
-
----
-
-## Version 2.0.x - Advanced & Extensibility
-
-**Optional future plan**
-
-- [ ] SQLAlchemy Dialect Integration
-- [ ] Multi-sheet JOIN support
-- [ ] Polars Engine support (optional)
-- [ ] Asynchronous query support
-- [ ] Performance optimization for large files
-
----
+See [CHANGELOG.md](../CHANGELOG.md) for detailed release history.

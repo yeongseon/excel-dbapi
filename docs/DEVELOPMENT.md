@@ -5,76 +5,157 @@
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/excel-dbapi.git
+git clone https://github.com/yeongseon/excel-dbapi.git
 cd excel-dbapi
 ```
 
-### 2. Create and activate virtual environment
+### 2. Set up development environment
+
+```bash
+make install
+```
+
+This creates a virtual environment (`.venv/`), installs all dependencies in editable mode, and sets up pre-commit hooks.
+
+Or manually:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+pip install -e ".[dev,pandas]"
 ```
 
-### 3. Install dependencies
+### 3. Verify setup
 
 ```bash
-pip install --upgrade pip setuptools hatchling
-pip install .[dev]
-hatch develop
+make check-all   # lint + typecheck + tests
 ```
 
-### 4. Using Makefile
+## Makefile Commands
 
-| Command            | Description                                                  |
-|--------------------|--------------------------------------------------------------|
-| `make install`    | Install dependencies in development mode                     |
-| `make format`     | Format code with black and isort                             |
-| `make lint`       | Run code linting (ruff, mypy)                                |
-| `make test`       | Run unit tests                                               |
-| `make build`      | Build the package                                            |
-| `make clean`      | Remove build artifacts                                       |
-| `make release-patch` | Create a patch release                                    |
-| `make release-minor` | Create a minor release                                    |
-| `make release-major` | Create a major release                                    |
+| Command | Description |
+|---------|-------------|
+| `make install` | Bootstrap venv and install dev dependencies |
+| `make format` | Format code with ruff |
+| `make lint` | Run ruff linting checks |
+| `make typecheck` | Run mypy strict type checking |
+| `make test` | Run test suite with pytest |
+| `make cov` | Run tests with coverage report (HTML + terminal) |
+| `make check` | Run lint + typecheck |
+| `make check-all` | Run lint + typecheck + tests |
+| `make build` | Build distribution packages (sdist + wheel) |
+| `make clean` | Remove build artifacts |
+| `make clean-all` | Deep clean (caches, coverage, mypy cache) |
 
----
+## Code Quality
 
-## 🚀 Release Automation
+### Linting and Formatting
 
-This project uses GitHub Actions for automated releases on tag push.
-
-### Release commands
-
-| Command                 | Description                                   |
-|------------------------|-----------------------------------------------|
-| `make release-patch`   | Create a patch release (e.g. `1.0.0 → 1.0.1`) |
-| `make release-minor`   | Create a minor release (e.g. `1.0.0 → 1.1.0`) |
-| `make release-major`   | Create a major release (e.g. `1.0.0 → 2.0.0`) |
-
-### Release steps
-
-1. Update `CHANGELOG.md` and `pyproject.toml`.
-2. Create and push a tag (e.g. `v1.0.0`).
-3. GitHub Actions builds and publishes to PyPI.
-
-### PyPI Authentication
-
-Required secret:
-
-| Secret Name      | Description                               |
-|------------------|-------------------------------------------|
-| `PYPI_API_TOKEN` | PyPI API token for publishing the package |
-
-### Trigger
-
-The workflow triggers on tag pushes that match `v*`.
-
----
-
-## Docker Development Environment
+**ruff** handles both linting and formatting:
 
 ```bash
-make docker-dev    # Start development container
-make docker-stop   # Stop development container
+make format   # Auto-format
+make lint     # Check lint rules
 ```
+
+### Type Checking
+
+**mypy** is configured in strict mode:
+
+```bash
+make typecheck
+```
+
+All code must pass `mypy --strict` before merging.
+
+## Running Tests
+
+```bash
+# All tests
+make test
+
+# With coverage report
+make cov
+
+# Specific file
+.venv/bin/python -m pytest tests/test_parser.py -v
+
+# Specific test
+.venv/bin/python -m pytest tests/test_parser.py::test_select_basic -v
+```
+
+Test coverage target: **95%+** (currently 98%).
+
+## Project Structure
+
+```
+excel-dbapi/
+├── src/excel_dbapi/
+│   ├── __init__.py          # Package entry, version, DB-API globals
+│   ├── connection.py        # ExcelConnection (PEP 249)
+│   ├── cursor.py            # ExcelCursor (PEP 249)
+│   ├── parser.py            # SQL parser (tokenizer + AST)
+│   ├── executor.py          # Query executor
+│   ├── exceptions.py        # PEP 249 exception hierarchy
+│   ├── reflection.py        # Dialect reflection helpers
+│   ├── sanitize.py          # Formula injection defense
+│   ├── engines/             # Backend engine implementations
+│   ├── openpyxl/            # Openpyxl-specific engine
+│   └── py.typed             # PEP 561 marker
+├── tests/                   # 397 tests (98% coverage)
+├── docs/
+│   ├── SQL_SPEC.md          # Formal SQL grammar (EBNF)
+│   ├── USAGE.md             # Usage guide
+│   ├── QUICKSTART_10_MIN.md # 10-minute quickstart
+│   ├── OPERATIONS.md        # Concurrency & engine notes
+│   ├── DEVELOPMENT.md       # This file
+│   └── ROADMAP.md           # Project roadmap
+├── pyproject.toml           # Project metadata (hatchling)
+├── Makefile                 # Development commands
+├── README.md
+├── CHANGELOG.md
+├── CONTRIBUTING.md
+└── LICENSE
+```
+
+## Release Process
+
+sqlalchemy-excel uses **GitHub Releases** with **Trusted Publisher (OIDC)** for PyPI publishing. No API token required.
+
+### Steps
+
+1. Update `CHANGELOG.md` with new version entries.
+2. Bump version in `pyproject.toml` and `src/excel_dbapi/__init__.py`.
+3. Commit and push:
+   ```bash
+   git add pyproject.toml src/excel_dbapi/__init__.py CHANGELOG.md
+   git commit -m "chore: bump version to X.Y.Z"
+   git push origin main
+   ```
+4. Create a **GitHub Release** (via the GitHub UI or `gh release create vX.Y.Z`).
+5. The `publish-pypi.yml` workflow triggers automatically, builds, validates, and publishes to PyPI.
+
+### Verify
+
+- PyPI: https://pypi.org/project/excel-dbapi/
+- GitHub Releases: https://github.com/yeongseon/excel-dbapi/releases
+
+## Continuous Integration
+
+The CI pipeline (`.github/workflows/ci.yml`) runs on every push and pull request:
+
+1. **Linting**: ruff
+2. **Type checking**: mypy (strict mode)
+3. **Testing**: pytest on Python 3.10, 3.11, 3.12, 3.13
+4. **Coverage**: Upload to Codecov
+
+All checks must pass before merging.
+
+## Contributing Guidelines
+
+- Write tests for all new features and bug fixes
+- Maintain or improve code coverage (target: **95%+**)
+- Follow the existing code style (enforced by ruff)
+- Add type hints for all functions (enforced by mypy strict mode)
+- Update documentation for user-facing changes
+- Keep commits atomic with clear messages (`feat:`, `fix:`, `docs:`, `chore:`)
