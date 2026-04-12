@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- Excel spreadsheet -->
+  <rect x="6" y="16" width="56" height="96" rx="6" fill="#217346" />
+  <rect x="12" y="26" width="44" height="76" rx="3" fill="#fff" />
+  <!-- Grid lines -->
+  <line x1="12" y1="43" x2="56" y2="43" stroke="#217346" stroke-width="1.2" opacity="0.3" />
+  <line x1="12" y1="59" x2="56" y2="59" stroke="#217346" stroke-width="1.2" opacity="0.3" />
+  <line x1="12" y1="75" x2="56" y2="75" stroke="#217346" stroke-width="1.2" opacity="0.3" />
+  <line x1="12" y1="91" x2="56" y2="91" stroke="#217346" stroke-width="1.2" opacity="0.3" />
+  <line x1="27" y1="26" x2="27" y2="102" stroke="#217346" stroke-width="1.2" opacity="0.3" />
+  <line x1="41" y1="26" x2="41" y2="102" stroke="#217346" stroke-width="1.2" opacity="0.3" />
+  <!-- DB cylinder -->
+  <ellipse cx="100" cy="46" rx="22" ry="10" fill="#3572A5" />
+  <rect x="78" y="46" width="44" height="44" fill="#3572A5" />
+  <ellipse cx="100" cy="90" rx="22" ry="10" fill="#2B5F8A" />
+  <ellipse cx="100" cy="46" rx="22" ry="10" fill="#4A90D9" />
+  <!-- DB horizontal lines -->
+  <path d="M78 60 Q100 70 122 60" fill="none" stroke="#fff" stroke-width="1.2" opacity="0.35" />
+  <path d="M78 74 Q100 84 122 74" fill="none" stroke="#fff" stroke-width="1.2" opacity="0.35" />
+  <!-- Connector -->
+  <line x1="62" y1="64" x2="78" y2="64" stroke="#555" stroke-width="2" stroke-linecap="round" stroke-dasharray="4 3" />
+  <circle cx="62" cy="64" r="3" fill="#217346" />
+  <circle cx="78" cy="64" r="3" fill="#3572A5" />
+</svg>

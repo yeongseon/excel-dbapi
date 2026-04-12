@@ -1,4 +1,7 @@
-# excel-dbapi
+<p align="left">
+  <img src="logo.svg" alt="excel-dbapi" width="48" height="48" align="middle" />
+  <strong style="font-size: 2em;">excel-dbapi</strong>
+</p>
 
 ![CI](https://github.com/yeongseon/excel-dbapi/actions/workflows/ci.yml/badge.svg)
 [![codecov](https://codecov.io/gh/yeongseon/excel-dbapi/branch/main/graph/badge.svg)](https://codecov.io/gh/yeongseon/excel-dbapi)
