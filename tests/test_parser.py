@@ -242,3 +242,21 @@ def test_aggregate_rejects_float_literal():
 def test_rejects_window_over():
     with pytest.raises(ValueError):
         parse_sql("SELECT COUNT(*) OVER () FROM users")
+
+
+def test_rejects_arithmetic_in_select():
+    with pytest.raises(ValueError, match="Unsupported column expression"):
+        parse_sql("SELECT age + 1 FROM users")
+
+
+def test_rejects_aggregate_arithmetic_in_select():
+    with pytest.raises(
+        ValueError,
+        match="Unsupported column expression|Unsupported aggregate",
+    ):
+        parse_sql("SELECT COUNT(*) + 1 FROM users")
+
+
+def test_rejects_aggregate_filter_in_select():
+    with pytest.raises(ValueError, match="Unsupported"):
+        parse_sql("SELECT COUNT(*) FILTER (WHERE id > 0) FROM users")

@@ -213,6 +213,11 @@ def _parse_columns(columns_token: str) -> List[Any]:
                 )
             columns.append({"type": "aggregate", "func": func, "arg": arg})
             continue
+        if column != "*" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column):
+            raise ValueError(
+                f"Unsupported column expression: {column}. "
+                "Only bare column names, *, and aggregate functions are supported"
+            )
         columns.append(column)
     if not columns:
         raise ValueError("Invalid column list")
