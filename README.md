@@ -10,8 +10,24 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/docs-GitHub-blue.svg)](https://github.com/yeongseon/excel-dbapi/tree/main/docs)
 
-A lightweight, Python DB-API 2.0 compliant connector for Excel files.
+A **local-first** Python DB-API 2.0 connector for Excel files.
 Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no database server required.
+
+## Limitations
+
+Before you begin, understand what excel-dbapi is **not**:
+
+- **No JOIN, GROUP BY, HAVING, DISTINCT, or subqueries** — single-table operations only
+- **No concurrent writes** — use a single-writer model
+- **Not for large datasets** — if your Excel file has 100k+ rows, use pandas directly or a database
+- **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL
+- **PandasEngine rewrites workbooks** — formatting, charts, images, and formulas are dropped
+
+If you need relational features, use SQLite or PostgreSQL.
+
+See the full [SQL Specification](docs/SQL_SPEC.md) for the exact SQL subset supported.
+
+---
 
 ## Who is this for?
 
@@ -19,28 +35,6 @@ Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no da
 - **Citizen developers** automating small workflows with familiar SQL syntax
 - **Educators** teaching SQL concepts without setting up a database
 - **Prototypers** building quick data pipelines before moving to a real database
-
-### Who is this NOT for?
-
-- If you need JOINs, GROUP BY, subqueries, or advanced SQL → use SQLite or PostgreSQL
-- If you need concurrent writes from multiple processes → use a real database
-- If your Excel file has 100k+ rows → use pandas directly or a database
-
----
-
-## Features
-
-- Python DB-API 2.0 compliant interface (PEP 249)
-- Query Excel files using SQL syntax
-- Supports SELECT, INSERT, UPDATE, DELETE
-- Basic DDL support (CREATE TABLE, DROP TABLE)
-- WHERE conditions with AND/OR and comparison operators
-- IN, BETWEEN, LIKE operators in WHERE clauses
-- ORDER BY and LIMIT for SELECT
-- Sheet-to-Table mapping
-- Pandas & Openpyxl engine selector
-- Formula injection defense (enabled by default)
-- Transaction simulation (commit/rollback)
 
 ---
 
@@ -226,36 +220,52 @@ The Pandas engine preserves Python types. If a column contains integers,
 
 ---
 
-## Limitations and Operational Guidance
+## Experimental: Remote Excel via Microsoft Graph API
 
-- `PandasEngine` rewrites workbooks and may drop formatting, charts, and formulas.
-- `OpenpyxlEngine` loads with `data_only=True`, so formulas are evaluated to values when reading.
-- Use a **single-writer model** for writes. Avoid writing to the same file from multiple processes.
-- Save is implemented with a temporary file + atomic replace (`os.replace`) for safer persistence.
-- No support for JOIN, GROUP BY, HAVING, or subqueries.
+> **Status**: Experimental — API may change in future releases.
 
-## Roadmap
+excel-dbapi can access remote Excel files on OneDrive/SharePoint via the Microsoft Graph API.
 
-- Remote file connection improvements
+```bash
+pip install excel-dbapi[graph]
+```
 
-See [Project Roadmap](docs/ROADMAP.md) for details.
+```python
+from excel_dbapi.connection import ExcelConnection
+
+conn = ExcelConnection(
+    "msgraph://drives/{drive_id}/items/{item_id}",
+    engine="graph",
+    credential=your_credential,
+    autocommit=True,
+)
+cursor = conn.cursor()
+cursor.execute("SELECT * FROM Sheet1")
+print(cursor.fetchall())
+conn.close()
+```
+
+The Graph backend is **read-only by default**. Write operations require explicit opt-in
+and a valid Azure credential with appropriate Graph API permissions.
+
+For details, see the [Usage Guide](docs/USAGE.md).
 
 ---
-
 
 ## Related Projects
 
 - [sqlalchemy-excel](https://github.com/yeongseon/sqlalchemy-excel) — SQLAlchemy dialect that uses excel-dbapi as its DB-API 2.0 driver. Use `create_engine("excel:///file.xlsx")` for full ORM support.
+
 ---
 
 ## Documentation
 
+- [SQL Specification](docs/SQL_SPEC.md)
 - [Usage Guide](docs/USAGE.md)
 - [Development Guide](docs/DEVELOPMENT.md)
 - [Project Roadmap](docs/ROADMAP.md)
 - [10-Minute Quickstart](docs/QUICKSTART_10_MIN.md)
 - [Operations Notes](docs/OPERATIONS.md)
-- [Public Roadmap](docs/PUBLIC_ROADMAP.md)
 
 ## Examples
 
