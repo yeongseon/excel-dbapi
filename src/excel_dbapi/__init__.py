@@ -26,7 +26,7 @@ from .reflection import (
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 
 def connect(
