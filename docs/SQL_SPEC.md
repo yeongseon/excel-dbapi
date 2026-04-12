@@ -240,8 +240,10 @@ Any other ordering raises `ValueError`.
 
 **Requirements**:
 - Table aliases are recommended (e.g., `FROM users a JOIN orders b ON ...`).
+- Each table reference (alias or bare table name) must be unique; duplicate refs raise `ValueError`.
 - All SELECT columns must use qualified names (`a.id`, not just `id`).
 - `SELECT *` is **not supported** with JOIN.
+- Subqueries (`WHERE ... IN (SELECT ...)`) are **not supported** with JOIN.
 - The ON clause requires at least one equality condition (e.g., `a.id = b.user_id`).
 - Multiple ON conditions are joined with `AND`.
 - `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET` work with JOIN queries.

@@ -760,6 +760,15 @@ def _parse_select(
                 }
             )
 
+            # Reject duplicate/colliding source references
+            left_ref = str(from_entry["ref"])
+            right_ref = str(join_source["ref"])
+            if left_ref == right_ref:
+                raise ValueError(
+                    f"Duplicate table reference '{left_ref}' in JOIN; "
+                    f"use distinct aliases for each table"
+                )
+
     clause_tokens = tokens[token_index:]
 
     for idx, token in enumerate(clause_tokens):

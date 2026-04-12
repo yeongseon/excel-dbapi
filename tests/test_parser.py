@@ -550,3 +550,15 @@ def test_parse_left_outer_join_with_as():
     )
     assert result["joins"][0]["type"] == "LEFT"
     assert result["joins"][0]["source"]["alias"] == "b"
+
+
+def test_parse_join_rejects_duplicate_alias():
+    """Duplicate table refs in JOIN should be rejected."""
+    with pytest.raises(ValueError, match="Duplicate table reference"):
+        parse_sql("SELECT a.id FROM t1 a JOIN t2 a ON a.id = a.id")
+
+
+def test_parse_join_rejects_duplicate_bare_table():
+    """Self-join without distinct aliases should be rejected."""
+    with pytest.raises(ValueError, match="Duplicate table reference"):
+        parse_sql("SELECT users.id FROM users JOIN users ON users.id = users.id")
