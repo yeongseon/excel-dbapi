@@ -21,6 +21,74 @@ def _split_csv(text: str) -> List[str]:
     return items
 
 
+def _tokenize(text: str) -> List[str]:
+    tokens: List[str] = []
+    current: List[str] = []
+    in_single = False
+    in_double = False
+    index = 0
+
+    while index < len(text):
+        char = text[index]
+
+        if in_single:
+            current.append(char)
+            if char == "'":
+                if index + 1 < len(text) and text[index + 1] == "'":
+                    current.append(text[index + 1])
+                    index += 1
+                else:
+                    in_single = False
+            index += 1
+            continue
+
+        if in_double:
+            current.append(char)
+            if char == '"':
+                if index + 1 < len(text) and text[index + 1] == '"':
+                    current.append(text[index + 1])
+                    index += 1
+                else:
+                    in_double = False
+            index += 1
+            continue
+
+        if char.isspace():
+            if current:
+                tokens.append("".join(current))
+                current = []
+            index += 1
+            continue
+
+        if char == "'":
+            current.append(char)
+            in_single = True
+            index += 1
+            continue
+
+        if char == '"':
+            current.append(char)
+            in_double = True
+            index += 1
+            continue
+
+        if char in {"(", ")"}:
+            if current:
+                tokens.append("".join(current))
+                current = []
+            tokens.append(char)
+            index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    if current:
+        tokens.append("".join(current))
+
+    return tokens
+
+
 def _parse_value(token: str) -> Any:
     token = token.strip()
     if token.upper() == "NULL":
@@ -104,7 +172,13 @@ def _parse_where_expression(
     params: Optional[tuple[Any, ...]],
     bind_params: bool = True,
 ) -> Dict[str, Any]:
-    tokens = where_part.strip().split()
+    tokens = _tokenize(where_part.strip())
+    for token_index, token in enumerate(tokens):
+        if token.startswith("("):
+            if token_index == 0 or tokens[token_index - 1].upper() != "IN":
+                raise ValueError(
+                    "Unsupported SQL grammar: parenthesized expressions in WHERE clause"
+                )
     if len(tokens) < 3:
         raise ValueError("Invalid WHERE clause format")
     conditions: List[Dict[str, Any]] = []
@@ -224,7 +298,7 @@ def _parse_where_expression(
 
 
 def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, Any]:
-    tokens = query.strip().split()
+    tokens = _tokenize(query.strip())
     try:
         from_index = tokens.index("FROM")
     except ValueError:
@@ -391,10 +465,10 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
 
 def _parse_create(query: str) -> Dict[str, Any]:
-    tokens = query.strip().split(None, 2)
+    tokens = _tokenize(query.strip())
     if len(tokens) < 3 or tokens[0].upper() != "CREATE" or tokens[1].upper() != "TABLE":
         raise ValueError(f"Invalid CREATE TABLE format: {query}")
-    table_and_cols = tokens[2].strip()
+    table_and_cols = " ".join(tokens[2:]).strip()
     if "(" not in table_and_cols or not table_and_cols.endswith(")"):
         raise ValueError(f"Invalid CREATE TABLE format: {query}")
     table_name, cols_part = table_and_cols.split("(", 1)
@@ -416,7 +490,7 @@ def _parse_create(query: str) -> Dict[str, Any]:
 
 
 def _parse_drop(query: str) -> Dict[str, Any]:
-    tokens = query.strip().split()
+    tokens = _tokenize(query.strip())
     if len(tokens) != 3 or tokens[0].upper() != "DROP" or tokens[1].upper() != "TABLE":
         raise ValueError(f"Invalid DROP TABLE format: {query}")
     return {
@@ -456,7 +530,7 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     set_index = upper.index(" SET ")
     before_set = query[:set_index]
     after_set = query[set_index + len(" SET ") :]
-    before_tokens = before_set.strip().split()
+    before_tokens = _tokenize(before_set.strip())
     if len(before_tokens) < 2 or before_tokens[0].upper() != "UPDATE":
         raise ValueError(f"Invalid UPDATE format: {query}")
     table = before_tokens[1].strip()
@@ -502,7 +576,7 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
 
 def _parse_delete(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, Any]:
-    tokens = query.strip().split()
+    tokens = _tokenize(query.strip())
     if len(tokens) < 3 or tokens[0].upper() != "DELETE" or tokens[1].upper() != "FROM":
         raise ValueError(f"Invalid DELETE format: {query}")
     table = tokens[2]

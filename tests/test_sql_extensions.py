@@ -113,7 +113,9 @@ def test_execute_where_in_operator(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, name FROM Sheet1 WHERE name IN ('Alice', 'Bob') ORDER BY id")
+        cursor.execute(
+            "SELECT id, name FROM Sheet1 WHERE name IN ('Alice', 'Bob') ORDER BY id"
+        )
         assert cursor.fetchall() == [(1, "Alice"), (2, "Bob")]
 
         cursor.execute("SELECT id FROM Sheet1 WHERE name IN ('NonExistent')")
@@ -129,7 +131,9 @@ def test_execute_where_between_operator(tmp_path: Path) -> None:
         cursor.execute("SELECT id FROM Sheet1 WHERE score BETWEEN 5 AND 15 ORDER BY id")
         assert cursor.fetchall() == []
 
-        cursor.execute("SELECT id FROM Sheet1 WHERE score BETWEEN 70 AND 90 ORDER BY id")
+        cursor.execute(
+            "SELECT id FROM Sheet1 WHERE score BETWEEN 70 AND 90 ORDER BY id"
+        )
         assert cursor.fetchall() == [(1,), (2,), (4,)]
 
         cursor.execute("SELECT id FROM Sheet1 WHERE score BETWEEN 100 AND 200")
@@ -161,13 +165,17 @@ def test_execute_where_null_handling_for_new_operators(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM Sheet1 WHERE name IN ('Alice', 'Bob', 'Charlie', 'Diana')")
+        cursor.execute(
+            "SELECT id FROM Sheet1 WHERE name IN ('Alice', 'Bob', 'Charlie', 'Diana')"
+        )
         assert cursor.fetchall() == [(1,), (2,), (3,), (4,)]
 
         cursor.execute("SELECT id FROM Sheet1 WHERE name LIKE '%' ORDER BY id")
         assert cursor.fetchall() == [(1,), (2,), (3,), (4,)]
 
-        cursor.execute("SELECT id FROM Sheet1 WHERE score BETWEEN 50 AND 90 ORDER BY id")
+        cursor.execute(
+            "SELECT id FROM Sheet1 WHERE score BETWEEN 50 AND 90 ORDER BY id"
+        )
         assert cursor.fetchall() == [(1,), (2,), (4,), (5,)]
 
 
