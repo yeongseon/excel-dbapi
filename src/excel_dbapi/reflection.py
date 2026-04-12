@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any
+from typing import Any, cast
 
 from excel_dbapi.engines.base import TableData
 
@@ -12,7 +12,7 @@ METADATA_SHEET = "__excel_meta__"
 
 def list_tables(connection: Any, include_meta: bool = False) -> list[str]:
     """Return worksheet names, excluding metadata sheet by default."""
-    sheets = connection.engine.list_sheets()
+    sheets = cast(list[str], connection.engine.list_sheets())
     if not include_meta:
         sheets = [sheet for sheet in sheets if sheet != METADATA_SHEET]
     return sheets

@@ -1,7 +1,7 @@
 from io import BytesIO
 import os
 import tempfile
-from typing import Any
+from typing import Any, cast
 
 from openpyxl import load_workbook
 from openpyxl.workbook.workbook import Workbook
@@ -100,7 +100,7 @@ class OpenpyxlBackend(WorkbookBackend):
         if ws is None:
             raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
         ws.append(row)
-        return ws.max_row
+        return cast(int, ws.max_row)
 
     def create_sheet(self, name: str, headers: list[str]) -> None:
         if self.workbook is None:

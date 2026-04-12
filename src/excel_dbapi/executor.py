@@ -290,17 +290,17 @@ class SharedExecutor:
 
         left, right = self._coerce_for_compare(row_value, value)
         if operator in {"=", "=="}:
-            return left == right
+            return bool(left == right)
         if operator in {"!=", "<>"}:
-            return left != right
+            return bool(left != right)
         if operator == ">":
-            return left > right
+            return bool(left > right)
         if operator == ">=":
-            return left >= right
+            return bool(left >= right)
         if operator == "<":
-            return left < right
+            return bool(left < right)
         if operator == "<=":
-            return left <= right
+            return bool(left <= right)
         raise NotImplementedError(f"Unsupported operator: {operator}")
 
     def _coerce_for_compare(self, left: Any, right: Any) -> tuple[Any, Any]:

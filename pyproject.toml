@@ -52,7 +52,7 @@ packages = ["src/excel_dbapi"]
 
 [tool.mypy]
 ignore_missing_imports = true
-strict = false
+strict = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

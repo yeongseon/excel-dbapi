@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, cast
 
 
 class TokenProvider(Protocol):
@@ -47,7 +47,7 @@ class AzureIdentityTokenProvider:
 
     def get_token(self) -> str:
         token = self._credential.get_token(self._GRAPH_SCOPE)
-        return token.token
+        return cast(str, token.token)
 
 
 def _has_get_token_with_args(obj: Any) -> bool:
@@ -110,16 +110,16 @@ def normalize_token_provider(credential: Any) -> TokenProvider:
 
     # 4. Object with zero-arg get_token() (custom TokenProvider)
     if hasattr(credential, "get_token") and callable(credential.get_token):
-        return credential  # type: ignore[return-value]
+        return cast(TokenProvider, credential)
 
     # 5. Plain callable → callback provider
     if callable(credential):
-        return CallbackTokenProvider(credential)
+        return CallbackTokenProvider(cast(Callable[[], str], credential))
 
     # 6. None → try DefaultAzureCredential
     if credential is None:
         try:
-            from azure.identity import DefaultAzureCredential  # type: ignore[import-untyped]
+            from azure.identity import DefaultAzureCredential
         except ImportError as exc:
             raise ImportError(
                 "No credential provided and azure-identity is not installed. "

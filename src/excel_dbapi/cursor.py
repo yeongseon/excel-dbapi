@@ -1,18 +1,27 @@
-from typing import Any, List, Optional
+from collections.abc import Callable
+from functools import wraps
+from typing import Any, Concatenate, List, Optional, ParamSpec, TypeVar, cast
 
-from .engines.result import ExecutionResult
+from .engines.result import Description, ExecutionResult
 from .exceptions import InterfaceError, NotSupportedError, ProgrammingError
 
 
-def check_closed(func):
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def check_closed(
+    func: Callable[Concatenate["ExcelCursor", P], R],
+) -> Callable[Concatenate["ExcelCursor", P], R]:
     """Decorator to check if cursor is closed before executing method."""
 
-    def wrapper(self, *args, **kwargs):
+    @wraps(func)
+    def wrapper(self: "ExcelCursor", *args: P.args, **kwargs: P.kwargs) -> R:
         if self.closed:
             raise InterfaceError("Cursor is already closed")
         return func(self, *args, **kwargs)
 
-    return wrapper
+    return cast(Callable[Concatenate["ExcelCursor", P], R], wrapper)
 
 
 class ExcelCursor:
@@ -29,9 +38,9 @@ class ExcelCursor:
         self.closed: bool = False
         self._results: List[tuple[Any, ...]] = []
         self._index: int = 0
-        self.description = None
+        self.description: Description | None = None
         self.rowcount = -1
-        self.lastrowid = None
+        self.lastrowid: int | None = None
         self.arraysize = 1
 
     @check_closed

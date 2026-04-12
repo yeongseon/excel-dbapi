@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -372,7 +372,7 @@ class GraphBackend(WorkbookBackend):
             f"/worksheets/{ws_id}/usedRange(valuesOnly=true)?$select=values"
         )
         resp = self._session_aware_request("GET", path)
-        return resp.json().get("values", [])
+        return cast(list[list[Any]], resp.json().get("values", []))
 
     def close(self) -> None:
         """Close session and HTTP client."""

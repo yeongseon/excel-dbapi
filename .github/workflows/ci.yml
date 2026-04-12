@@ -24,3 +24,7 @@ jobs:
         run: pytest tests/ -v
       - name: Run ruff
         run: ruff check src/
+      - name: Run ruff format check
+        run: ruff format --check src/
+      - name: Run mypy strict
+        run: mypy --strict src/

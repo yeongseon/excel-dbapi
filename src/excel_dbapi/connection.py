@@ -1,6 +1,9 @@
 import os
+from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
-from typing import Any, Optional, Type
+from types import TracebackType
+from typing import Any, Concatenate, Optional, ParamSpec, Type, TypeVar, cast
 import warnings
 
 from .cursor import ExcelCursor
@@ -11,15 +14,22 @@ from .engines.result import ExecutionResult
 from .exceptions import InterfaceError, NotSupportedError, OperationalError
 
 
-def check_closed(func):
+P = ParamSpec("P")
+R = TypeVar("R")
+
+
+def check_closed(
+    func: Callable[Concatenate["ExcelConnection", P], R],
+) -> Callable[Concatenate["ExcelConnection", P], R]:
     """Decorator to check if connection is closed before executing method."""
 
-    def wrapper(self, *args, **kwargs):
+    @wraps(func)
+    def wrapper(self: "ExcelConnection", *args: P.args, **kwargs: P.kwargs) -> R:
         if self.closed:
             raise InterfaceError("Connection is already closed")
         return func(self, *args, **kwargs)
 
-    return wrapper
+    return cast(Callable[Concatenate["ExcelConnection", P], R], wrapper)
 
 
 def _resolve_engine_and_location(file_path: str, engine: str | None) -> tuple[str, str]:
@@ -173,6 +183,6 @@ class ExcelConnection:
         self,
         exc_type: Optional[Type[BaseException]],
         exc_val: Optional[BaseException],
-        exc_tb,
+        exc_tb: Optional[TracebackType],
     ) -> None:
         self.close()
