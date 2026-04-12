@@ -361,3 +361,17 @@ def test_subquery_with_where(tmp_path: Path):
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [(1, "Alice")]
+
+
+def test_subquery_reexecution_safe(tmp_path: Path):
+    file_path = tmp_path / "subquery_reexec.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT id, name FROM users WHERE id IN (SELECT id FROM admins)")
+    executor = SharedExecutor(engine)
+
+    result1 = executor.execute(parsed)
+    result2 = executor.execute(parsed)
+
+    assert result1.rows == result2.rows == [(1, "Alice"), (3, "Charlie")]

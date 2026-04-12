@@ -283,6 +283,7 @@ def _parse_where_expression(
     params: Optional[tuple[Any, ...]],
     bind_params: bool = True,
     allow_aggregates: bool = False,
+    allow_subqueries: bool = False,
 ) -> Dict[str, Any]:
     tokens = _collapse_aggregate_tokens(_tokenize(where_part.strip()))
     if not allow_aggregates and any(
@@ -381,7 +382,42 @@ def _parse_where_expression(
 
             raw_tokens = raw_values.split()
             if raw_tokens and raw_tokens[0].upper() == "SELECT":
+                if not allow_subqueries:
+                    raise ValueError("Subqueries are not supported in this context")
+
+                if "?" in _tokenize(raw_values):
+                    raise ValueError(
+                        "Parameterized subqueries are not supported; use literal values"
+                    )
+
                 subquery_parsed = _parse_select(raw_values, params=None)
+
+                subquery_columns = subquery_parsed["columns"]
+                if subquery_columns == ["*"] or len(subquery_columns) != 1:
+                    raise ValueError(
+                        "Subquery in WHERE ... IN must select exactly one column"
+                    )
+
+                if subquery_parsed.get("where"):
+                    for cond in subquery_parsed["where"]["conditions"]:
+                        col = str(cond.get("column", ""))
+                        val = cond.get("value")
+                        if "." in col:
+                            raise ValueError("Correlated subqueries are not supported")
+                        if isinstance(val, str) and re.fullmatch(
+                            r"[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*",
+                            val,
+                        ):
+                            raise ValueError("Correlated subqueries are not supported")
+                        if val == "?":
+                            raise ValueError(
+                                "Parameterized subqueries are not supported; use literal values"
+                            )
+                        if isinstance(val, tuple) and "?" in val:
+                            raise ValueError(
+                                "Parameterized subqueries are not supported; use literal values"
+                            )
+
                 conditions.append(
                     {
                         "column": column,
@@ -526,7 +562,12 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         ]
         where_end = min(where_end_candidates) if where_end_candidates else len(clause_tokens)
         where_part = " ".join(clause_tokens[where_start:where_end]).strip()
-        where = _parse_where_expression(where_part, params, bind_params=False)
+        where = _parse_where_expression(
+            where_part,
+            params,
+            bind_params=False,
+            allow_subqueries=True,
+        )
 
     if group_index >= 0:
         group_start = group_index + 2

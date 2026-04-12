@@ -1,3 +1,4 @@
+import copy
 import re
 from typing import Any
 
@@ -240,6 +241,7 @@ class SharedExecutor:
         columns = parsed["columns"]
         where = parsed.get("where")
         if where:
+            where = copy.deepcopy(where)
             self._resolve_subqueries(where)
             rows = [row for row in rows if self._matches_where(row, where)]
 

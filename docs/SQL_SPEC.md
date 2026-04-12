@@ -317,9 +317,12 @@ Example: `WHERE name LIKE 'A%'` matches "Alice", "Ann", "A".
 - Values must be parenthesized: `IN (1, 2, 3)` or `IN ('a', 'b')`
 - Empty IN list raises `ValueError`
 - Supports placeholder binding: `IN (?, ?, ?)`
-- Supports single-column subqueries: `IN (SELECT id FROM admins)`
-- Subquery form supports optional inner WHERE: `IN (SELECT id FROM admins WHERE role = 'admin')`
-- Subquery limits: single-column SELECT only, non-correlated only, no scalar subqueries, no FROM-subqueries
+- Subqueries are supported only in `SELECT ... WHERE ... IN (SELECT ...)`
+- Subqueries must select exactly one column (no `SELECT *`, no multi-column SELECT)
+- Subquery form supports optional inner WHERE with literal values: `IN (SELECT id FROM admins WHERE role = 'admin')`
+- Subqueries in `UPDATE ... WHERE` and `DELETE ... WHERE` are not supported
+- Correlated subqueries are not supported
+- Parameterized subqueries (inner `?` placeholders) are not supported
 
 #### 7.2.3 BETWEEN Clause
 

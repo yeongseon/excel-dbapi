@@ -111,6 +111,40 @@ def test_parse_subquery_preserves_literal_in():
     assert condition["value"] == (1, 2, 3)
 
 
+def test_parse_subquery_rejects_multi_column():
+    with pytest.raises(ValueError, match="exactly one column"):
+        parse_sql("SELECT * FROM users WHERE id IN (SELECT id, name FROM admins)")
+
+
+def test_parse_subquery_rejects_star():
+    with pytest.raises(ValueError, match="exactly one column"):
+        parse_sql("SELECT * FROM users WHERE id IN (SELECT * FROM admins)")
+
+
+def test_parse_subquery_rejected_in_update():
+    with pytest.raises(ValueError, match="not supported in this context"):
+        parse_sql("UPDATE users SET name = 'x' WHERE id IN (SELECT id FROM admins)")
+
+
+def test_parse_subquery_rejected_in_delete():
+    with pytest.raises(ValueError, match="not supported in this context"):
+        parse_sql("DELETE FROM users WHERE id IN (SELECT id FROM admins)")
+
+
+def test_parse_subquery_rejects_correlated():
+    with pytest.raises(ValueError, match="[Cc]orrelated"):
+        parse_sql(
+            "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE admins.user_id = users.id)"
+        )
+
+
+def test_parse_subquery_rejects_parameterized():
+    with pytest.raises(ValueError, match="[Pp]arameterized"):
+        parse_sql(
+            "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE role = ?)"
+        )
+
+
 def test_parse_update_with_or_where():
     parsed = parse_sql("UPDATE Sheet1 SET name = 'A' WHERE id = 1 OR id = 2")
     assert parsed["where"]["conjunctions"] == ["OR"]
