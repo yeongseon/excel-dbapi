@@ -194,6 +194,8 @@ def _parse_columns(columns_token: str) -> List[Any]:
         column = raw_column.strip()
         if not column:
             continue
+        if re.search(r"(?i)\bOVER\s*\(", column):
+            raise ValueError("Unsupported SQL syntax: OVER")
         match = re.fullmatch(
             r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([^\)]+?)\s*\)", column
         )
@@ -405,13 +407,13 @@ def _parse_where_expression(
 
 def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, Any]:
     tokens = _tokenize(query.strip())
-    try:
-        from_index = tokens.index("FROM")
-    except ValueError:
-        try:
-            from_index = tokens.index("from")
-        except ValueError as exc:
-            raise ValueError(f"Invalid SQL query format: {query}") from exc
+    from_index = -1
+    for i, token in enumerate(tokens):
+        if token.upper() == "FROM":
+            from_index = i
+            break
+    if from_index < 0:
+        raise ValueError(f"Invalid SQL query format: {query}")
 
     columns_token = " ".join(tokens[1:from_index]).strip()
     if not columns_token:
@@ -539,6 +541,10 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
             direction = order_tokens[1].upper()
         if direction not in {"ASC", "DESC"}:
             raise ValueError("Invalid ORDER BY direction")
+        if len(order_tokens) > 2:
+            raise ValueError(
+                f"Unsupported SQL syntax: {' '.join(order_tokens[2:])}"
+            )
         order_by = {"column": order_tokens[0], "direction": direction}
 
     if limit_index >= 0:
@@ -566,6 +572,63 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
             if offset_value != "?":
                 raise ValueError("OFFSET must be an integer")
         offset = offset_value
+
+    consumed_indices: set[int] = set()
+    for clause_name, clause_start_idx in clause_positions.items():
+        if clause_name in {"GROUP BY", "ORDER BY"}:
+            consumed_indices.add(clause_start_idx)
+            consumed_indices.add(clause_start_idx + 1)
+        else:
+            consumed_indices.add(clause_start_idx)
+
+    if where_index >= 0:
+        where_start = where_index + 1
+        where_end_candidates = [
+            idx
+            for idx in [group_index, having_index, order_index, limit_index, offset_index]
+            if idx >= 0 and idx > where_index
+        ]
+        where_end = min(where_end_candidates) if where_end_candidates else len(clause_tokens)
+        consumed_indices.update(range(where_start, where_end))
+
+    if group_index >= 0:
+        group_start = group_index + 2
+        group_end_candidates = [
+            idx
+            for idx in [having_index, order_index, limit_index, offset_index]
+            if idx >= 0 and idx > group_index
+        ]
+        group_end = min(group_end_candidates) if group_end_candidates else len(clause_tokens)
+        consumed_indices.update(range(group_start, group_end))
+
+    if having_index >= 0:
+        having_start = having_index + 1
+        having_end_candidates = [
+            idx for idx in [order_index, limit_index, offset_index] if idx >= 0 and idx > having_index
+        ]
+        having_end = min(having_end_candidates) if having_end_candidates else len(clause_tokens)
+        consumed_indices.update(range(having_start, having_end))
+
+    if order_index >= 0:
+        order_start = order_index + 2
+        order_end_candidates = [
+            idx for idx in [limit_index, offset_index] if idx >= 0 and idx > order_index
+        ]
+        order_end = min(order_end_candidates) if order_end_candidates else len(clause_tokens)
+        consumed_indices.update(range(order_start, order_end))
+
+    if limit_index >= 0:
+        limit_start = limit_index + 1
+        limit_end = offset_index if offset_index >= 0 and offset_index > limit_index else len(clause_tokens)
+        consumed_indices.update(range(limit_start, limit_end))
+
+    if offset_index >= 0:
+        consumed_indices.update(range(offset_index + 1, len(clause_tokens)))
+
+    unconsumed = [i for i in range(len(clause_tokens)) if i not in consumed_indices]
+    if unconsumed:
+        unconsumed_text = " ".join(clause_tokens[i] for i in unconsumed)
+        raise ValueError(f"Unsupported SQL syntax: {unconsumed_text}")
 
     if params is not None or (
         (where and any(value == "?" for value in _where_values_to_bind(where)))

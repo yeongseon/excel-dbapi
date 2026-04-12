@@ -9,6 +9,17 @@ def test_parse_valid_sql():
     assert parsed["columns"] == ["*"]
 
 
+def test_mixed_case_from():
+    result = parse_sql("select * FrOm users")
+    assert result["table"] == "users"
+
+
+def test_mixed_case_select_and_from():
+    result = parse_sql("SeLeCt COUNT(*) fRoM users")
+    assert result["columns"] == [{"type": "aggregate", "func": "COUNT", "arg": "*"}]
+    assert result["table"] == "users"
+
+
 def test_parse_invalid_sql():
     with pytest.raises(ValueError):
         parse_sql("INVALID SQL")
@@ -226,3 +237,8 @@ def test_aggregate_rejects_string_literal():
 def test_aggregate_rejects_float_literal():
     with pytest.raises(ValueError, match="Unsupported aggregate expression"):
         parse_sql("SELECT SUM(3.14) FROM users")
+
+
+def test_rejects_window_over():
+    with pytest.raises(ValueError):
+        parse_sql("SELECT COUNT(*) OVER () FROM users")
