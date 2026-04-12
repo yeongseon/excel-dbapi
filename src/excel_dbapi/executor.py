@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from .engines.base import WorkbookBackend
@@ -284,6 +285,30 @@ class SharedExecutor:
             return row_value is None
         if operator == "IS NOT" and value is None:
             return row_value is not None
+        if operator == "IN":
+            if row_value is None:
+                return False
+            for candidate in value:
+                left, right = self._coerce_for_compare(row_value, candidate)
+                if left == right:
+                    return True
+            return False
+        if operator == "BETWEEN":
+            if row_value is None:
+                return False
+            low, high = value
+            if low is None or high is None:
+                return False
+            left_low, right_low = self._coerce_for_compare(row_value, low)
+            left_high, right_high = self._coerce_for_compare(row_value, high)
+            return bool(left_low >= right_low and left_high <= right_high)
+        if operator == "LIKE":
+            if row_value is None:
+                return False
+            if not isinstance(value, str):
+                raise NotImplementedError("Unsupported LIKE pattern type")
+            regex = "^" + re.escape(value).replace(r"%", ".*").replace(r"_", ".") + "$"
+            return bool(re.match(regex, str(row_value)))
 
         if row_value is None or value is None:
             return False

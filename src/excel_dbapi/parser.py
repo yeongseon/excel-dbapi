@@ -51,6 +51,54 @@ def _parse_columns(columns_token: str) -> List[str]:
     return columns
 
 
+def _values_to_bind_from_condition(condition: Dict[str, Any]) -> List[Any]:
+    operator = str(condition["operator"]).upper()
+    if operator in {"IS", "IS NOT"}:
+        return []
+    if operator == "IN":
+        return list(condition["value"])
+    if operator == "BETWEEN":
+        low, high = condition["value"]
+        return [low, high]
+    return [condition["value"]]
+
+
+def _apply_bound_values_to_condition(
+    condition: Dict[str, Any], bound_values: List[Any], offset: int
+) -> int:
+    operator = str(condition["operator"]).upper()
+    if operator in {"IS", "IS NOT"}:
+        return 0
+    if operator == "IN":
+        size = len(condition["value"])
+        condition["value"] = tuple(bound_values[offset : offset + size])
+        return size
+    if operator == "BETWEEN":
+        condition["value"] = (bound_values[offset], bound_values[offset + 1])
+        return 2
+    condition["value"] = bound_values[offset]
+    return 1
+
+
+def _where_values_to_bind(where: Dict[str, Any]) -> List[Any]:
+    values: List[Any] = []
+    for condition in where["conditions"]:
+        values.extend(_values_to_bind_from_condition(condition))
+    return values
+
+
+def _bind_where_conditions(
+    where: Dict[str, Any], bound_values: List[Any], offset: int
+) -> int:
+    consumed = 0
+    for condition in where["conditions"]:
+        used = _apply_bound_values_to_condition(
+            condition, bound_values, offset + consumed
+        )
+        consumed += used
+    return consumed
+
+
 def _parse_where_expression(
     where_part: str,
     params: Optional[tuple[Any, ...]],
@@ -59,8 +107,8 @@ def _parse_where_expression(
     tokens = where_part.strip().split()
     if len(tokens) < 3:
         raise ValueError("Invalid WHERE clause format")
-    conditions = []
-    conjunctions = []
+    conditions: List[Dict[str, Any]] = []
+    conjunctions: List[str] = []
     index = 0
     while index < len(tokens):
         if index + 1 >= len(tokens):
@@ -87,6 +135,67 @@ def _parse_where_expression(
                 raise ValueError(
                     "Invalid WHERE clause format: expected NULL or NOT after IS"
                 )
+        elif operator == "BETWEEN":
+            if index + 4 >= len(tokens):
+                raise ValueError("Invalid WHERE clause format")
+            if tokens[index + 3].upper() != "AND":
+                raise ValueError(
+                    "Invalid WHERE clause format: expected AND in BETWEEN clause"
+                )
+            low_value = _parse_value(tokens[index + 2])
+            high_value = _parse_value(tokens[index + 4])
+            conditions.append(
+                {
+                    "column": column,
+                    "operator": "BETWEEN",
+                    "value": (low_value, high_value),
+                }
+            )
+            index += 5
+        elif operator == "IN":
+            if index + 2 >= len(tokens):
+                raise ValueError("Invalid WHERE clause format")
+            in_start = index + 2
+            in_end = in_start
+            while in_end < len(tokens) and ")" not in tokens[in_end]:
+                in_end += 1
+            if in_end >= len(tokens):
+                raise ValueError(
+                    "Invalid WHERE clause format: expected ')' in IN clause"
+                )
+
+            in_values_text = " ".join(tokens[in_start : in_end + 1]).strip()
+            if not in_values_text.startswith("(") or not in_values_text.endswith(")"):
+                raise ValueError("Invalid WHERE clause format: malformed IN clause")
+
+            raw_values = in_values_text[1:-1].strip()
+            if not raw_values:
+                raise ValueError(
+                    "Invalid WHERE clause format: IN clause cannot be empty"
+                )
+
+            parsed_values = tuple(
+                _parse_value(token) for token in _split_csv(raw_values)
+            )
+            if len(parsed_values) == 0:
+                raise ValueError(
+                    "Invalid WHERE clause format: IN clause cannot be empty"
+                )
+
+            conditions.append(
+                {
+                    "column": column,
+                    "operator": "IN",
+                    "value": parsed_values,
+                }
+            )
+            index = in_end + 1
+        elif operator == "LIKE":
+            if index + 2 >= len(tokens):
+                raise ValueError("Invalid WHERE clause format")
+            value = _parse_value(tokens[index + 2])
+            conditions.append({"column": column, "operator": "LIKE", "value": value})
+            index += 3
         else:
             if index + 2 >= len(tokens):
                 raise ValueError("Invalid WHERE clause format")
@@ -103,25 +212,15 @@ def _parse_where_expression(
             conjunctions.append(conj)
             index += 1
 
-    # Exclude IS/IS NOT conditions from binding (value is always None)
-    values_to_bind = [
-        condition["value"]
-        for condition in conditions
-        if condition["operator"] not in {"IS", "IS NOT"}
-    ]
-    bindable_indices = [
-        idx
-        for idx, condition in enumerate(conditions)
-        if condition["operator"] not in {"IS", "IS NOT"}
-    ]
+    where_expression = {"conditions": conditions, "conjunctions": conjunctions}
+    values_to_bind = _where_values_to_bind(where_expression)
     if bind_params and (
         params is not None or any(value == "?" for value in values_to_bind)
     ):
         bound = _bind_params(values_to_bind, params)
-        for i, idx in enumerate(bindable_indices):
-            conditions[idx]["value"] = bound[i]
+        _bind_where_conditions(where_expression, bound, 0)
 
-    return {"conditions": conditions, "conjunctions": conjunctions}
+    return where_expression
 
 
 def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, Any]:
@@ -201,22 +300,21 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         limit = limit_value
 
     if params is not None or (
-        (where and any(condition["value"] == "?" for condition in where["conditions"]))
+        (where and any(value == "?" for value in _where_values_to_bind(where)))
         or limit == "?"
     ):
         values_to_bind = []
         if where:
-            values_to_bind.extend(
-                [condition["value"] for condition in where["conditions"]]
-            )
+            values_to_bind.extend(_where_values_to_bind(where))
         if limit is not None:
             values_to_bind.append(limit)
         bound = _bind_params(values_to_bind, params)
         if where:
-            for idx, condition in enumerate(where["conditions"]):
-                condition["value"] = bound[idx]
+            consumed = _bind_where_conditions(where, bound, 0)
+        else:
+            consumed = 0
         if limit is not None:
-            limit = bound[-1]
+            limit = bound[consumed]
 
     if limit is not None and not isinstance(limit, int):
         raise ValueError("LIMIT must be an integer")
@@ -386,15 +484,14 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
     values_to_bind = [item["value"] for item in assignments]
     if where is not None:
-        values_to_bind.extend([condition["value"] for condition in where["conditions"]])
+        values_to_bind.extend(_where_values_to_bind(where))
     if params is not None or any(value == "?" for value in values_to_bind):
         bound = _bind_params(values_to_bind, params)
         for idx, item in enumerate(assignments):
             item["value"] = bound[idx]
         if where is not None:
             offset = len(assignments)
-            for idx, condition in enumerate(where["conditions"]):
-                condition["value"] = bound[offset + idx]
+            _bind_where_conditions(where, bound, offset)
 
     return {
         "action": "UPDATE",
