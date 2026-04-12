@@ -518,3 +518,35 @@ def test_parse_join_rejects_having():
 def test_parse_join_rejects_distinct():
     with pytest.raises(ValueError, match="DISTINCT is not supported with JOIN"):
         parse_sql("SELECT DISTINCT a.id FROM t1 a JOIN t2 b ON a.id = b.id")
+
+
+def test_parse_join_with_as_alias_from():
+    """FROM table AS alias should be accepted."""
+    result = parse_sql("SELECT a.id, b.id FROM t1 AS a JOIN t2 AS b ON a.id = b.id")
+    assert result["from"]["alias"] == "a"
+    assert result["from"]["ref"] == "a"
+    assert result["joins"][0]["source"]["alias"] == "b"
+    assert result["joins"][0]["source"]["ref"] == "b"
+
+
+def test_parse_join_with_as_alias_mixed():
+    """Mix of AS alias and bare alias should be accepted."""
+    result = parse_sql("SELECT a.id, b.id FROM t1 AS a JOIN t2 b ON a.id = b.id")
+    assert result["from"]["alias"] == "a"
+    assert result["joins"][0]["source"]["alias"] == "b"
+
+
+def test_parse_from_as_alias_single_table():
+    """FROM table AS alias without JOIN should be accepted."""
+    result = parse_sql("SELECT id FROM users AS u")
+    assert result["from"]["alias"] == "u"
+    assert result["from"]["ref"] == "u"
+
+
+def test_parse_left_outer_join_with_as():
+    """LEFT OUTER JOIN with AS alias should be accepted."""
+    result = parse_sql(
+        "SELECT a.id, b.id FROM t1 AS a LEFT OUTER JOIN t2 AS b ON a.id = b.id"
+    )
+    assert result["joins"][0]["type"] == "LEFT"
+    assert result["joins"][0]["source"]["alias"] == "b"

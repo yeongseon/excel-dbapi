@@ -542,3 +542,157 @@ def test_executor_join_missing_right_sheet(tmp_path: Path):
     )
     with pytest.raises(ValueError, match="not found"):
         SharedExecutor(engine).execute(parsed)
+
+
+def test_executor_join_null_keys_do_not_match(tmp_path: Path):
+    """NULL join keys must not match per SQL standard: NULL != NULL."""
+    file_path = tmp_path / "join_null_keys.xlsx"
+    workbook = Workbook()
+    left = workbook.active
+    assert left is not None
+    left.title = "left_t"
+    left.append(["id", "name"])
+    left.append([1, "Alice"])
+    left.append([None, "Bob"])  # NULL key
+    left.append([3, "Charlie"])
+
+    right = workbook.create_sheet("right_t")
+    right.append(["id", "role"])
+    right.append([1, "admin"])
+    right.append([None, "ghost"])  # NULL key
+    right.append([3, "editor"])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    # INNER JOIN: NULL keys should NOT match
+    parsed = parse_sql(
+        "SELECT a.id, a.name, b.role FROM left_t a INNER JOIN right_t b ON a.id = b.id"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+    # Bob should NOT appear — NULL != NULL
+    assert results.rows == [(1, "Alice", "admin"), (3, "Charlie", "editor")]
+
+
+def test_executor_left_join_null_keys_unmatched(tmp_path: Path):
+    """LEFT JOIN with NULL keys: left row with NULL key gets NULL-filled right columns."""
+    file_path = tmp_path / "left_join_null_keys.xlsx"
+    workbook = Workbook()
+    left = workbook.active
+    assert left is not None
+    left.title = "left_t"
+    left.append(["id", "name"])
+    left.append([1, "Alice"])
+    left.append([None, "Bob"])
+
+    right = workbook.create_sheet("right_t")
+    right.append(["id", "role"])
+    right.append([1, "admin"])
+    right.append([None, "ghost"])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, a.name, b.role FROM left_t a LEFT JOIN right_t b ON a.id = b.id"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+    # Bob (NULL key) has no match → right columns are None
+    assert results.rows == [(1, "Alice", "admin"), (None, "Bob", None)]
+
+
+def test_executor_join_numeric_string_coercion(tmp_path: Path):
+    """Join key '1' (string) should match 1 (int) via numeric coercion."""
+    file_path = tmp_path / "join_coercion.xlsx"
+    workbook = Workbook()
+    left = workbook.active
+    assert left is not None
+    left.title = "left_t"
+    left.append(["id", "name"])
+    left.append(["1", "Alice"])  # string '1'
+    left.append(["2", "Bob"])
+
+    right = workbook.create_sheet("right_t")
+    right.append(["id", "role"])
+    right.append([1, "admin"])  # int 1
+    right.append([2, "editor"])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, a.name, b.role FROM left_t a INNER JOIN right_t b ON a.id = b.id"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+    assert len(results.rows) == 2
+    assert results.rows[0][1] == "Alice"
+    assert results.rows[0][2] == "admin"
+
+
+def test_executor_join_unknown_select_column(tmp_path: Path):
+    """SELECT referencing non-existent column in JOIN query raises ValueError."""
+    file_path = tmp_path / "join_bad_col.xlsx"
+    workbook = Workbook()
+    left = workbook.active
+    assert left is not None
+    left.title = "users"
+    left.append(["id", "name"])
+    left.append([1, "Alice"])
+
+    right = workbook.create_sheet("admins")
+    right.append(["id", "role"])
+    right.append([1, "admin"])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    # a.nonexistent doesn't exist in users sheet
+    parsed = parse_sql(
+        "SELECT a.nonexistent FROM users a INNER JOIN admins b ON a.id = b.id"
+    )
+    with pytest.raises(ValueError, match="Unknown column"):
+        SharedExecutor(engine).execute(parsed)
+
+
+def test_executor_join_unknown_on_column(tmp_path: Path):
+    """ON referencing non-existent column raises ValueError."""
+    file_path = tmp_path / "join_bad_on.xlsx"
+    workbook = Workbook()
+    left = workbook.active
+    assert left is not None
+    left.title = "users"
+    left.append(["id", "name"])
+    left.append([1, "Alice"])
+
+    right = workbook.create_sheet("admins")
+    right.append(["id", "role"])
+    right.append([1, "admin"])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, b.id FROM users a INNER JOIN admins b ON a.id = b.nonexistent"
+    )
+    with pytest.raises(ValueError, match="Unknown column"):
+        SharedExecutor(engine).execute(parsed)
+
+
+def test_executor_join_with_as_alias(tmp_path: Path):
+    """JOIN with AS keyword in alias (SQLAlchemy compatibility)."""
+    file_path = tmp_path / "join_as_alias.xlsx"
+    workbook = Workbook()
+    left = workbook.active
+    assert left is not None
+    left.title = "users"
+    left.append(["id", "name"])
+    left.append([1, "Alice"])
+    left.append([2, "Bob"])
+
+    right = workbook.create_sheet("admins")
+    right.append(["id", "role"])
+    right.append([1, "admin"])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    # Use 'AS' keyword in both FROM and JOIN aliases
+    parsed = parse_sql(
+        "SELECT a.id, a.name, b.role FROM users AS a INNER JOIN admins AS b ON a.id = b.id"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+    assert results.rows == [(1, "Alice", "admin")]

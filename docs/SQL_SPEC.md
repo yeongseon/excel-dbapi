@@ -112,8 +112,8 @@ SELECT [DISTINCT] columns FROM table
 #### JOIN (two tables)
 
 ```
-SELECT qualified_columns FROM table [alias]
-  [INNER] JOIN table [alias] ON condition { AND condition }
+SELECT qualified_columns FROM table [ [AS] alias ]
+  [ INNER | LEFT [OUTER] ] JOIN table [ [AS] alias ] ON condition { AND condition }
   [WHERE conditions]
   [ORDER BY qualified_column [ASC|DESC]]
   [LIMIT n]
@@ -462,7 +462,7 @@ For UPDATE with WHERE:
 | Invalid LIMIT (non-integer) | `ValueError` | `LIMIT must be an integer` |
 | INSERT into headless sheet | `ValueError` | `Cannot insert into sheet without headers` |
 | Empty IN clause | `ValueError` | `IN clause cannot be empty` |
-| Unsupported JOIN variant | `ValueError` | `RIGHT JOIN is not supported...` |
+| Unsupported JOIN variant | `ValueError` | `Unsupported SQL syntax: {type} JOIN` |
 
 ---
 
@@ -500,9 +500,9 @@ column_list   = column { "," column } ;
 value_list    = value { "," value } ;
 column_def    = column [ type_name ] ;
 assignment    = column "=" value ;
-qualified_col  = [ table_or_alias "." ] column ;
-table_ref      = table [ alias ] ;
-join_clause    = [ "INNER" | "LEFT" ] "JOIN" table_ref "ON" join_cond { "AND" join_cond } ;
+qualified_col  = table_or_alias "." column ;
+table_ref      = table [ [ "AS" ] alias ] ;
+join_clause    = [ "INNER" | "LEFT" [ "OUTER" ] ] "JOIN" table_ref "ON" join_cond { "AND" join_cond } ;
 join_cond      = qualified_col "=" qualified_col ;
 alias          = identifier ;
 

@@ -308,6 +308,70 @@ class SharedExecutor:
         left_sources = {str(from_source["table"]), str(from_source["ref"])}
         on_clauses = join_spec["on"]["clauses"]
 
+        # --- Column existence validation ---
+        # Build a mapping: source_ref -> set of valid column names
+        left_ref = str(from_source["ref"])
+        left_table_name = str(from_source["table"])
+        right_ref = str(right_source["ref"])
+        right_table_name = str(right_source["table"])
+        source_headers: dict[str, set[str]] = {}
+        for src in (left_ref, left_table_name):
+            source_headers[src] = set(left_headers)
+        for src in (right_ref, right_table_name):
+            source_headers[src] = set(right_headers)
+
+        def _validate_column_ref(source: str, name: str, context: str) -> None:
+            valid = source_headers.get(source)
+            if valid is None:
+                raise ValueError(f"Unknown source reference: {source}")
+            if name not in valid:
+                raise ValueError(
+                    f"Unknown column: {source}.{name}. "
+                    f"Available columns in '{source}': {sorted(valid)}"
+                )
+
+        # Validate SELECT columns
+        for column in parsed["columns"]:
+            if isinstance(column, dict) and column.get("type") == "column":
+                _validate_column_ref(str(column["source"]), str(column["name"]), "SELECT")
+
+        # Validate ON columns
+        for clause in on_clauses:
+            for side in ("left", "right"):
+                col = clause[side]
+                _validate_column_ref(str(col["source"]), str(col["name"]), "ON")
+
+        # Validate WHERE columns
+        where_raw = parsed.get("where")
+        if where_raw:
+            for condition in where_raw.get("conditions", []):
+                col_ref = str(condition.get("column", ""))
+                if "." in col_ref:
+                    src, col_name = col_ref.split(".", 1)
+                    _validate_column_ref(src, col_name, "WHERE")
+
+        # Validate ORDER BY column
+        order_by_raw = parsed.get("order_by")
+        if order_by_raw:
+            col_ref = str(order_by_raw["column"])
+            if "." in col_ref:
+                src, col_name = col_ref.split(".", 1)
+                _validate_column_ref(src, col_name, "ORDER BY")
+
+        # Sentinel: each NULL key gets a unique object so NULL != NULL per SQL standard.
+        _null_sentinel_counter = 0
+
+        def _normalize_key_value(val: Any) -> Any:
+            """Coerce key values for consistent hash matching."""
+            if val is None:
+                nonlocal _null_sentinel_counter
+                _null_sentinel_counter += 1
+                return object()  # unique, never equals another
+            num = self._to_number(val)
+            if num is not None:
+                return num
+            return val
+
         def build_key(
             row_ns: dict[str, Any],
             is_left_side: bool,
@@ -318,7 +382,8 @@ class SharedExecutor:
                 right_col = clause["right"]
                 left_is_left = str(left_col["source"]) in left_sources
                 selected = left_col if left_is_left == is_left_side else right_col
-                key_parts.append(self._resolve_join_column(row_ns, selected))
+                raw_val = self._resolve_join_column(row_ns, selected)
+                key_parts.append(_normalize_key_value(raw_val))
             return tuple(key_parts)
 
         right_hash: dict[tuple[Any, ...], list[dict[str, Any]]] = {}

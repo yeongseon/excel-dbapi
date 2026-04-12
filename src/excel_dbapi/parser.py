@@ -683,6 +683,11 @@ def _parse_select(
     token_index = from_index + 2
     if token_index < len(tokens):
         maybe_alias = tokens[token_index]
+        if maybe_alias.upper() == "AS":
+            token_index += 1
+            if token_index >= len(tokens):
+                raise ValueError("Expected alias after AS")
+            maybe_alias = tokens[token_index]
         if not _is_reserved_select_token(maybe_alias):
             from_entry["alias"] = maybe_alias
             from_entry["ref"] = maybe_alias
@@ -724,6 +729,11 @@ def _parse_select(
             }
             if token_index < len(tokens):
                 maybe_alias = tokens[token_index]
+                if maybe_alias.upper() == "AS":
+                    token_index += 1
+                    if token_index >= len(tokens):
+                        raise ValueError("Expected alias after AS")
+                    maybe_alias = tokens[token_index]
                 if not _is_reserved_select_token(maybe_alias):
                     join_source["alias"] = maybe_alias
                     join_source["ref"] = maybe_alias
