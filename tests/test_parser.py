@@ -377,3 +377,144 @@ def test_rejects_aggregate_arithmetic_in_select():
 def test_rejects_aggregate_filter_in_select():
     with pytest.raises(ValueError, match="Unsupported"):
         parse_sql("SELECT COUNT(*) FILTER (WHERE id > 0) FROM users")
+
+
+def test_parse_inner_join_basic():
+    parsed = parse_sql(
+        "SELECT a.id, b.name FROM Sheet1 a INNER JOIN Sheet2 b ON a.id = b.id"
+    )
+    assert parsed["from"] == {"table": "Sheet1", "alias": "a", "ref": "a"}
+    assert parsed["joins"] == [
+        {
+            "type": "INNER",
+            "source": {"table": "Sheet2", "alias": "b", "ref": "b"},
+            "on": {
+                "type": "and",
+                "clauses": [
+                    {
+                        "type": "binary_op",
+                        "op": "=",
+                        "left": {"type": "column", "source": "a", "name": "id"},
+                        "right": {"type": "column", "source": "b", "name": "id"},
+                    }
+                ],
+            },
+        }
+    ]
+
+
+def test_parse_left_join_basic():
+    parsed = parse_sql(
+        "SELECT a.id, b.name FROM Sheet1 a LEFT JOIN Sheet2 b ON a.id = b.id"
+    )
+    assert parsed["joins"][0]["type"] == "LEFT"
+
+
+def test_parse_left_outer_join():
+    parsed = parse_sql(
+        "SELECT a.id, b.name FROM Sheet1 a LEFT OUTER JOIN Sheet2 b ON a.id = b.id"
+    )
+    assert parsed["joins"][0]["type"] == "LEFT"
+
+
+def test_parse_join_without_inner_keyword():
+    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"][0]["type"] == "INNER"
+
+
+def test_parse_join_with_where():
+    parsed = parse_sql(
+        "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id = 1"
+    )
+    assert parsed["joins"] is not None
+    assert parsed["where"] is not None
+
+
+def test_parse_join_with_order_by():
+    parsed = parse_sql(
+        "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id ORDER BY a.id DESC"
+    )
+    assert parsed["order_by"] == {"column": "a.id", "direction": "DESC"}
+
+
+def test_parse_join_with_limit_offset():
+    parsed = parse_sql(
+        "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id LIMIT 5 OFFSET 2"
+    )
+    assert parsed["limit"] == 5
+    assert parsed["offset"] == 2
+
+
+def test_parse_join_with_table_name_prefix():
+    parsed = parse_sql(
+        "SELECT Sheet1.id FROM Sheet1 INNER JOIN Sheet2 ON Sheet1.id = Sheet2.id"
+    )
+    assert parsed["columns"] == [{"type": "column", "source": "Sheet1", "name": "id"}]
+
+
+def test_parse_join_with_mixed_aliases():
+    parsed = parse_sql(
+        "SELECT a.id FROM Sheet1 a INNER JOIN Sheet2 b ON Sheet1.id = b.id"
+    )
+    clause = parsed["joins"][0]["on"]["clauses"][0]
+    assert clause["left"]["source"] == "Sheet1"
+    assert clause["right"]["source"] == "b"
+
+
+def test_parse_join_rejects_select_star():
+    with pytest.raises(ValueError, match="SELECT \* is not supported with JOIN"):
+        parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+
+
+def test_parse_join_rejects_multiple_joins():
+    with pytest.raises(ValueError, match="Only one JOIN clause is supported"):
+        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id JOIN t3 c ON a.id = c.id")
+
+
+def test_parse_join_rejects_unqualified_columns():
+    with pytest.raises(ValueError, match="qualified column"):
+        parse_sql("SELECT id FROM t1 a JOIN t2 b ON a.id = b.id")
+
+
+def test_parse_join_rejects_right_join():
+    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
+        parse_sql("SELECT a.id FROM t1 a RIGHT JOIN t2 b ON a.id = b.id")
+
+
+def test_parse_join_rejects_cross_join():
+    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
+        parse_sql("SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id")
+
+
+def test_parse_join_rejects_full_join():
+    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
+        parse_sql("SELECT a.id FROM t1 a FULL JOIN t2 b ON a.id = b.id")
+
+
+def test_parse_join_rejects_non_equality_on():
+    with pytest.raises(ValueError, match="supports only '='"):
+        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id > b.id")
+
+
+def test_parse_join_rejects_subquery_with_join():
+    with pytest.raises(ValueError, match="Subqueries are not supported with JOIN"):
+        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)")
+
+
+def test_parse_join_rejects_group_by():
+    with pytest.raises(ValueError, match="GROUP BY is not supported with JOIN"):
+        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id")
+
+
+def test_parse_join_rejects_having():
+    # HAVING requires GROUP BY, which is also rejected with JOIN.
+    # GROUP BY rejection fires first.
+    with pytest.raises(ValueError, match="GROUP BY is not supported with JOIN"):
+        parse_sql(
+            "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id HAVING COUNT(a.id) > 1"
+        )
+
+
+def test_parse_join_rejects_distinct():
+    with pytest.raises(ValueError, match="DISTINCT is not supported with JOIN"):
+        parse_sql("SELECT DISTINCT a.id FROM t1 a JOIN t2 b ON a.id = b.id")

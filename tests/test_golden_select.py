@@ -13,6 +13,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["*"],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": None,
             "group_by": None,
             "having": None,
@@ -29,6 +31,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["id", "name"],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": {
                 "conditions": [{"column": "id", "operator": "IN", "value": (1, 2, 3)}],
                 "conjunctions": [],
@@ -48,6 +52,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["id"],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": {
                 "conditions": [{"column": "name", "operator": "=", "value": "it's"}],
                 "conjunctions": [],
@@ -67,6 +73,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["id"],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": {
                 "conditions": [
                     {"column": "note", "operator": "=", "value": 'say "hello"'}
@@ -88,6 +96,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["id"],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": {
                 "conditions": [
                     {"column": "score", "operator": "BETWEEN", "value": (1, 9)},
@@ -110,6 +120,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["id", "name"],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": None,
             "group_by": None,
             "having": None,
@@ -126,6 +138,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["id"],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": None,
             "group_by": None,
             "having": None,
@@ -142,6 +156,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["id"],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": {
                 "conditions": [{"column": "score", "operator": ">=", "value": 50}],
                 "conjunctions": [],
@@ -161,6 +177,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": [{"type": "aggregate", "func": "COUNT", "arg": "*"}],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": None,
             "group_by": None,
             "having": None,
@@ -177,6 +195,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "SELECT",
             "columns": ["name", {"type": "aggregate", "func": "COUNT", "arg": "*"}],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": None,
             "group_by": ["name"],
             "having": None,
@@ -196,6 +216,8 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
                 {"type": "aggregate", "func": "SUM", "arg": "score"},
             ],
             "table": "Users",
+            "from": {"table": "Users", "alias": None, "ref": "Users"},
+            "joins": None,
             "where": None,
             "group_by": ["name"],
             "having": {

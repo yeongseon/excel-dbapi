@@ -47,6 +47,8 @@ class SharedExecutor:
                 if available:
                     msg += f" Available sheets: {available}"
                 raise ValueError(msg)
+            if parsed.get("joins") is not None:
+                return self._execute_join_select(action, parsed, resolved_table)
             data = self.backend.read_sheet(resolved_table)
             if not data.headers:
                 return ExecutionResult(
@@ -230,6 +232,165 @@ class SharedExecutor:
             return any(results)
 
         return self._evaluate_condition(row, where)
+
+    def _row_from_values(self, headers: list[str], row_values: list[Any]) -> dict[str, Any]:
+        return {
+            headers[col_index]: row_values[col_index]
+            if col_index < len(row_values)
+            else None
+            for col_index in range(len(headers))
+        }
+
+    def _build_source_row(
+        self,
+        source: dict[str, Any],
+        headers: list[str],
+        row_values: list[Any],
+    ) -> dict[str, dict[str, Any]]:
+        row_map = self._row_from_values(headers, row_values)
+        source_row = {str(source["table"]): row_map}
+        ref = str(source["ref"])
+        if ref != str(source["table"]):
+            source_row[ref] = row_map
+        return source_row
+
+    def _resolve_join_column(self, row: dict[str, Any], col_spec: dict[str, Any]) -> Any:
+        source = str(col_spec.get("source", ""))
+        column = str(col_spec.get("name", ""))
+        source_row = row.get(source)
+        if not isinstance(source_row, dict):
+            raise ValueError(f"Unknown source reference: {source}")
+        return source_row.get(column)
+
+    def _flatten_join_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        flattened: dict[str, Any] = {}
+        for source, source_row in row.items():
+            if not isinstance(source_row, dict):
+                continue
+            for column, value in source_row.items():
+                flattened[f"{source}.{column}"] = value
+        return flattened
+
+    def _execute_join_select(
+        self,
+        action: str,
+        parsed: dict[str, Any],
+        resolved_left_table: str,
+    ) -> ExecutionResult:
+        joins = parsed.get("joins") or []
+        if len(joins) != 1:
+            raise ValueError("Only one JOIN clause is supported")
+
+        from_source = parsed["from"]
+        join_spec = joins[0]
+        right_source = join_spec["source"]
+        resolved_right_table = self._resolve_sheet_name(str(right_source["table"]))
+        if resolved_right_table is None:
+            available = self.backend.list_sheets()
+            msg = f"Sheet '{right_source['table']}' not found in Excel."
+            if available:
+                msg += f" Available sheets: {available}"
+            raise ValueError(msg)
+
+        left_data = self.backend.read_sheet(resolved_left_table)
+        right_data = self.backend.read_sheet(resolved_right_table)
+        if not left_data.headers or not right_data.headers:
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=0,
+                lastrowid=None,
+            )
+
+        left_headers = list(left_data.headers)
+        right_headers = list(right_data.headers)
+        left_sources = {str(from_source["table"]), str(from_source["ref"])}
+        on_clauses = join_spec["on"]["clauses"]
+
+        def build_key(
+            row_ns: dict[str, Any],
+            is_left_side: bool,
+        ) -> tuple[Any, ...]:
+            key_parts: list[Any] = []
+            for clause in on_clauses:
+                left_col = clause["left"]
+                right_col = clause["right"]
+                left_is_left = str(left_col["source"]) in left_sources
+                selected = left_col if left_is_left == is_left_side else right_col
+                key_parts.append(self._resolve_join_column(row_ns, selected))
+            return tuple(key_parts)
+
+        right_hash: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for right_row_values in right_data.rows:
+            right_ns = self._build_source_row(right_source, right_headers, right_row_values)
+            key = build_key(right_ns, False)
+            right_hash.setdefault(key, []).append(right_ns)
+
+        joined_rows_flat: list[dict[str, Any]] = []
+        right_null_values = [None for _ in right_headers]
+        right_null_ns = self._build_source_row(right_source, right_headers, right_null_values)
+
+        for left_row_values in left_data.rows:
+            left_ns = self._build_source_row(from_source, left_headers, left_row_values)
+            key = build_key(left_ns, True)
+            matches = right_hash.get(key, [])
+            if matches:
+                for right_ns in matches:
+                    combined: dict[str, Any] = {}
+                    combined.update(left_ns)
+                    combined.update(right_ns)
+                    joined_rows_flat.append(self._flatten_join_row(combined))
+            elif str(join_spec["type"]).upper() == "LEFT":
+                combined = {}
+                combined.update(left_ns)
+                combined.update(right_null_ns)
+                joined_rows_flat.append(self._flatten_join_row(combined))
+
+        where = parsed.get("where")
+        if where:
+            joined_rows_flat = [
+                row for row in joined_rows_flat if self._matches_where(row, where)
+            ]
+
+        order_by = parsed.get("order_by")
+        if order_by:
+            order_col = str(order_by["column"])
+            reverse = order_by["direction"] == "DESC"
+            joined_rows_flat = sorted(
+                joined_rows_flat,
+                key=lambda r: self._sort_key(r.get(order_col)),
+                reverse=reverse,
+            )
+
+        offset = parsed.get("offset") or 0
+        limit = parsed.get("limit")
+        if offset:
+            joined_rows_flat = joined_rows_flat[offset:]
+        if limit is not None:
+            joined_rows_flat = joined_rows_flat[:limit]
+
+        selected_columns: list[str] = []
+        for column in parsed["columns"]:
+            source = str(column["source"])
+            name = str(column["name"])
+            selected_columns.append(f"{source}.{name}")
+
+        rows_out = [
+            tuple(row.get(column_name) for column_name in selected_columns)
+            for row in joined_rows_flat
+        ]
+        description: Description = [
+            (column_name, None, None, None, None, None, None)
+            for column_name in selected_columns
+        ]
+        return ExecutionResult(
+            action=action,
+            rows=rows_out,
+            description=description,
+            rowcount=len(rows_out),
+            lastrowid=None,
+        )
 
     def _execute_select(
         self,

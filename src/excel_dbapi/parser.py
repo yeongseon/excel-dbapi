@@ -119,6 +119,10 @@ def _parse_value(token: str) -> Any:
 
 
 _AGGREGATE_FUNCTIONS = frozenset({"COUNT", "SUM", "AVG", "MIN", "MAX"})
+_IDENTIFIER_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
+_QUALIFIED_IDENTIFIER_PATTERN = (
+    rf"{_IDENTIFIER_PATTERN}\.{_IDENTIFIER_PATTERN}"
+)
 
 
 def _collapse_aggregate_tokens(tokens: List[str]) -> List[str]:
@@ -229,19 +233,27 @@ def _parse_columns(columns_token: str) -> List[Any]:
                 raise ValueError("Invalid aggregate expression")
             if arg == "*" and func != "COUNT":
                 raise ValueError(f"{func} does not support *")
-            if arg != "*" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arg):
+            if arg != "*" and not re.fullmatch(
+                rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", arg
+            ):
                 raise ValueError(
                     f"Unsupported aggregate expression: {func}({arg}). "
                     "Only bare column names and * are supported"
                 )
             columns.append({"type": "aggregate", "func": func, "arg": arg})
             continue
-        if column != "*" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", column):
+        if column != "*" and not re.fullmatch(
+            rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", column
+        ):
             raise ValueError(
                 f"Unsupported column expression: {column}. "
                 "Only bare column names, *, and aggregate functions are supported"
             )
-        columns.append(column)
+        if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, column):
+            source, name = column.split(".", 1)
+            columns.append({"type": "column", "source": source, "name": name})
+        else:
+            columns.append(column)
     if not columns:
         raise ValueError("Invalid column list")
     return columns
@@ -511,6 +523,133 @@ def _parse_where_expression(
     return where_expression
 
 
+def _is_select_clause_token(token: str) -> bool:
+    return token.upper() in {
+        "WHERE",
+        "GROUP",
+        "HAVING",
+        "ORDER",
+        "LIMIT",
+        "OFFSET",
+        "JOIN",
+        "INNER",
+        "LEFT",
+        "RIGHT",
+        "FULL",
+        "CROSS",
+    }
+
+
+def _is_reserved_select_token(token: str) -> bool:
+    return token.upper() in {
+        "WHERE",
+        "GROUP",
+        "HAVING",
+        "ORDER",
+        "LIMIT",
+        "OFFSET",
+        "ON",
+        "JOIN",
+        "INNER",
+        "LEFT",
+        "OUTER",
+        "RIGHT",
+        "FULL",
+        "CROSS",
+    }
+
+
+def _parse_qualified_column_reference(token: str) -> Dict[str, str]:
+    if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, token):
+        raise ValueError(
+            f"Invalid column reference in JOIN clause: {token}. "
+            "Expected source.column"
+        )
+    source, name = token.split(".", 1)
+    return {"type": "column", "source": source, "name": name}
+
+
+def _parse_join_on_condition(
+    on_tokens: List[str],
+    left_sources: set[str],
+    right_sources: set[str],
+) -> Dict[str, Any]:
+    if not on_tokens:
+        raise ValueError("JOIN requires ON condition")
+
+    clauses: List[Dict[str, Any]] = []
+    start = 0
+    index = 0
+    while index <= len(on_tokens):
+        at_end = index == len(on_tokens)
+        if not at_end and on_tokens[index].upper() != "AND":
+            index += 1
+            continue
+
+        comparison_tokens = on_tokens[start:index]
+        if len(comparison_tokens) != 3:
+            raise ValueError(
+                "JOIN ON supports only AND-combined equality comparisons"
+            )
+
+        left_token, operator, right_token = comparison_tokens
+        if operator != "=":
+            raise ValueError("JOIN ON supports only '=' comparisons")
+
+        left_column = _parse_qualified_column_reference(left_token)
+        right_column = _parse_qualified_column_reference(right_token)
+
+        left_source = str(left_column["source"])
+        right_source = str(right_column["source"])
+        left_on_left = left_source in left_sources
+        left_on_right = left_source in right_sources
+        right_on_left = right_source in left_sources
+        right_on_right = right_source in right_sources
+
+        if (left_on_left and right_on_right) or (left_on_right and right_on_left):
+            clauses.append(
+                {
+                    "type": "binary_op",
+                    "op": "=",
+                    "left": left_column,
+                    "right": right_column,
+                }
+            )
+        else:
+            raise ValueError(
+                "JOIN ON references must compare columns from the two joined sources"
+            )
+
+        start = index + 1
+        index += 1
+
+    if not clauses:
+        raise ValueError("JOIN requires at least one ON equality condition")
+
+    return {"type": "and", "clauses": clauses}
+
+
+def _validate_join_column_reference(
+    column: Any,
+    allowed_sources: set[str],
+    context: str,
+) -> None:
+    if not isinstance(column, dict) or column.get("type") != "column":
+        raise ValueError(f"{context} requires qualified column names in JOIN queries")
+    source = str(column.get("source", ""))
+    name = str(column.get("name", ""))
+    if source not in allowed_sources or not name:
+        raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
+
+
+def _is_subquery_condition(where: Dict[str, Any]) -> bool:
+    for condition in where.get("conditions", []):
+        value = condition.get("value")
+        if isinstance(value, dict) and value.get("type") == "subquery":
+            return True
+    return False
+
+
 def _parse_select(
     query: str,
     params: Optional[tuple[Any, ...]],
@@ -540,13 +679,99 @@ def _parse_select(
     if len(tokens) <= from_index + 1:
         raise ValueError(f"Invalid SQL query format: {query}")
     table = tokens[from_index + 1]
+    from_entry: Dict[str, Any] = {"table": table, "alias": None, "ref": table}
+    token_index = from_index + 2
+    if token_index < len(tokens):
+        maybe_alias = tokens[token_index]
+        if not _is_reserved_select_token(maybe_alias):
+            from_entry["alias"] = maybe_alias
+            from_entry["ref"] = maybe_alias
+            token_index += 1
 
-    clause_tokens = tokens[from_index + 2 :]
-    for token in clause_tokens:
+    joins: List[Dict[str, Any]] = []
+    if token_index < len(tokens):
+        join_token = tokens[token_index].upper()
+        join_type: Optional[str] = None
+        if join_token == "JOIN":
+            join_type = "INNER"
+            token_index += 1
+        elif join_token == "INNER":
+            if token_index + 1 >= len(tokens) or tokens[token_index + 1].upper() != "JOIN":
+                raise ValueError("Unsupported SQL syntax: INNER")
+            join_type = "INNER"
+            token_index += 2
+        elif join_token == "LEFT":
+            token_index += 1
+            if token_index < len(tokens) and tokens[token_index].upper() == "OUTER":
+                token_index += 1
+            if token_index >= len(tokens) or tokens[token_index].upper() != "JOIN":
+                raise ValueError("Unsupported SQL syntax: LEFT")
+            join_type = "LEFT"
+            token_index += 1
+        elif join_token in {"RIGHT", "FULL", "CROSS"}:
+            raise ValueError(f"Unsupported SQL syntax: {join_token} JOIN")
+
+        if join_type is not None:
+            if token_index >= len(tokens):
+                raise ValueError("Invalid JOIN clause: missing table")
+            join_table = tokens[token_index]
+            token_index += 1
+
+            join_source: Dict[str, Any] = {
+                "table": join_table,
+                "alias": None,
+                "ref": join_table,
+            }
+            if token_index < len(tokens):
+                maybe_alias = tokens[token_index]
+                if not _is_reserved_select_token(maybe_alias):
+                    join_source["alias"] = maybe_alias
+                    join_source["ref"] = maybe_alias
+                    token_index += 1
+
+            if token_index >= len(tokens) or tokens[token_index].upper() != "ON":
+                raise ValueError("JOIN requires ON condition")
+            token_index += 1
+
+            on_start = token_index
+            while token_index < len(tokens):
+                if _is_select_clause_token(tokens[token_index]):
+                    break
+                token_index += 1
+            on_tokens = tokens[on_start:token_index]
+
+            left_sources = {str(from_entry["table"]), str(from_entry["ref"])}
+            right_sources = {str(join_source["table"]), str(join_source["ref"])}
+            joins.append(
+                {
+                    "type": join_type,
+                    "source": join_source,
+                    "on": _parse_join_on_condition(on_tokens, left_sources, right_sources),
+                }
+            )
+
+    clause_tokens = tokens[token_index:]
+
+    for idx, token in enumerate(clause_tokens):
         if _is_quoted_token(token):
             continue
-        if token.upper() == "JOIN":
-            raise ValueError("Unsupported SQL grammar:JOIN")
+        upper = token.upper()
+        if upper in {"JOIN", "INNER", "LEFT"}:
+            raise ValueError("Only one JOIN clause is supported")
+        if upper in {"RIGHT", "FULL", "CROSS"}:
+            next_token = (
+                clause_tokens[idx + 1].upper()
+                if idx + 1 < len(clause_tokens)
+                else ""
+            )
+            if next_token == "OUTER":
+                next_token = (
+                    clause_tokens[idx + 2].upper()
+                    if idx + 2 < len(clause_tokens)
+                    else ""
+                )
+            if next_token == "JOIN":
+                raise ValueError(f"Unsupported SQL syntax: {upper} JOIN")
     where = None
     group_by = None
     having = None
@@ -778,10 +1003,47 @@ def _parse_select(
     if offset is not None and not isinstance(offset, int):
         raise ValueError("OFFSET must be an integer")
 
+    joins_value: Optional[List[Dict[str, Any]]] = joins if joins else None
+    if joins_value is not None:
+        if columns == ["*"]:
+            raise ValueError("SELECT * is not supported with JOIN")
+        if distinct:
+            raise ValueError("DISTINCT is not supported with JOIN")
+        if group_by is not None:
+            raise ValueError("GROUP BY is not supported with JOIN")
+        if having is not None:
+            raise ValueError("HAVING is not supported with JOIN")
+        if where is not None and _is_subquery_condition(where):
+            raise ValueError("Subqueries are not supported with JOIN")
+
+        join_sources = {
+            str(from_entry["table"]),
+            str(from_entry["ref"]),
+            str(joins_value[0]["source"]["table"]),
+            str(joins_value[0]["source"]["ref"]),
+        }
+
+        for column in columns:
+            if isinstance(column, dict) and column.get("type") == "aggregate":
+                raise ValueError("Aggregate functions are not supported with JOIN")
+            _validate_join_column_reference(column, join_sources, "SELECT")
+
+        if where is not None:
+            for condition in where.get("conditions", []):
+                column_ref = str(condition.get("column", ""))
+                parsed_column = _parse_qualified_column_reference(column_ref)
+                _validate_join_column_reference(parsed_column, join_sources, "WHERE")
+
+        if order_by is not None:
+            parsed_order_column = _parse_qualified_column_reference(str(order_by["column"]))
+            _validate_join_column_reference(parsed_order_column, join_sources, "ORDER BY")
+
     return {
         "action": "SELECT",
         "columns": columns,
         "table": table,
+        "from": from_entry,
+        "joins": joins_value,
         "where": where,
         "group_by": group_by,
         "having": having,
@@ -835,6 +1097,11 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         table = table_name.strip()
         cols_part = cols_part.rsplit(")", 1)[0]
         columns = _parse_columns(cols_part)
+        invalid_columns = [col for col in columns if not isinstance(col, str) or col == "*"]
+        if invalid_columns:
+            raise ValueError(
+                "INSERT column list supports only bare column names"
+            )
     else:
         table = table_and_cols.strip()
 

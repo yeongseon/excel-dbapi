@@ -375,3 +375,170 @@ def test_subquery_reexecution_safe(tmp_path: Path):
     result2 = executor.execute(parsed)
 
     assert result1.rows == result2.rows == [(1, "Alice"), (3, "Charlie")]
+
+
+# --- JOIN executor tests ---
+
+
+def test_executor_inner_join(tmp_path: Path):
+    file_path = tmp_path / "inner_join.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, a.name, b.role FROM users a INNER JOIN admins b ON a.id = b.id"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(1, "Alice", "admin"), (3, "Charlie", "editor")]
+    assert len(results.description) == 3
+    assert results.description[0][0] == "a.id"
+    assert results.description[1][0] == "a.name"
+    assert results.description[2][0] == "b.role"
+
+
+def test_executor_left_join(tmp_path: Path):
+    file_path = tmp_path / "left_join.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, a.name, b.role FROM users a LEFT JOIN admins b ON a.id = b.id"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [
+        (1, "Alice", "admin"),
+        (2, "Bob", None),
+        (3, "Charlie", "editor"),
+    ]
+
+
+def test_executor_join_with_where(tmp_path: Path):
+    file_path = tmp_path / "join_where.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, a.name, b.role FROM users a INNER JOIN admins b ON a.id = b.id WHERE b.role = 'admin'"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(1, "Alice", "admin")]
+
+
+def test_executor_join_with_order_by(tmp_path: Path):
+    file_path = tmp_path / "join_order.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, b.role FROM users a INNER JOIN admins b ON a.id = b.id ORDER BY a.id DESC"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(3, "editor"), (1, "admin")]
+
+
+def test_executor_join_with_limit_offset(tmp_path: Path):
+    file_path = tmp_path / "join_limit.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, a.name FROM users a LEFT JOIN admins b ON a.id = b.id LIMIT 2 OFFSET 1"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(2, "Bob"), (3, "Charlie")]
+
+
+def test_executor_left_join_no_match(tmp_path: Path):
+    """LEFT JOIN where right side has no matches at all -> all right columns None."""
+    file_path = tmp_path / "left_join_no_match.xlsx"
+    workbook = Workbook()
+    users = workbook.active
+    assert users is not None
+    users.title = "users"
+    users.append(["id", "name"])
+    users.append([10, "Xander"])
+    users.append([20, "Yara"])
+
+    admins = workbook.create_sheet("admins")
+    admins.append(["id", "role"])
+    admins.append([1, "admin"])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, a.name, b.role FROM users a LEFT JOIN admins b ON a.id = b.id"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(10, "Xander", None), (20, "Yara", None)]
+
+
+def test_executor_join_multi_condition_on(tmp_path: Path):
+    """ON with AND (two equality conditions)."""
+    file_path = tmp_path / "join_multi_on.xlsx"
+    workbook = Workbook()
+    left = workbook.active
+    assert left is not None
+    left.title = "employees"
+    left.append(["dept", "grade", "name"])
+    left.append(["eng", "senior", "Alice"])
+    left.append(["eng", "junior", "Bob"])
+    left.append(["hr", "senior", "Charlie"])
+
+    right = workbook.create_sheet("salaries")
+    right.append(["dept", "grade", "salary"])
+    right.append(["eng", "senior", 150])
+    right.append(["eng", "junior", 100])
+    right.append(["hr", "senior", 120])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.name, b.salary FROM employees a INNER JOIN salaries b "
+        "ON a.dept = b.dept AND a.grade = b.grade ORDER BY b.salary DESC"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [
+        ("Alice", 150),
+        ("Charlie", 120),
+        ("Bob", 100),
+    ]
+
+
+def test_executor_join_table_name_qualifiers(tmp_path: Path):
+    """Use table names (not aliases) as qualifiers."""
+    file_path = tmp_path / "join_table_names.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT users.id, admins.role FROM users INNER JOIN admins ON users.id = admins.id"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(1, "admin"), (3, "editor")]
+
+
+def test_executor_join_missing_right_sheet(tmp_path: Path):
+    """Joining a non-existent sheet raises ValueError."""
+    file_path = tmp_path / "join_missing.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "users"
+    sheet.append(["id"])
+    sheet.append([1])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT a.id, b.id FROM users a INNER JOIN nonexistent b ON a.id = b.id"
+    )
+    with pytest.raises(ValueError, match="not found"):
+        SharedExecutor(engine).execute(parsed)
