@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-04-12
+
+### Added
+- Formal SQL subset specification (`docs/SQL_SPEC.md`) with EBNF grammar
+- Parser golden tests for all statement families (SELECT, INSERT, UPDATE, DELETE, DDL)
+- Reflection helpers unit tests
+- Comprehensive low-coverage module tests (executor, backends, graph engine)
+
+### Changed
+- README restructured: limitations-first layout, Graph API moved to experimental section
+- Test coverage: 84% → 98% (397 tests)
+
+### Fixed
+- Parser tokenizer: quoted strings with embedded spaces now handled correctly
+- Parser: escaped quotes (`''`, `""`) parsed correctly in all contexts
+
 ## [0.2.1] - 2026-04-12
 
 ### Added
