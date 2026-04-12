@@ -145,6 +145,13 @@ def test_parse_subquery_rejects_parameterized():
         )
 
 
+def test_parse_subquery_rejects_nested() -> None:
+    with pytest.raises(ValueError, match="not supported in this context"):
+        parse_sql(
+            "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE dept_id IN (SELECT id FROM depts))"
+        )
+
+
 def test_parse_update_with_or_where():
     parsed = parse_sql("UPDATE Sheet1 SET name = 'A' WHERE id = 1 OR id = 2")
     assert parsed["where"]["conjunctions"] == ["OR"]

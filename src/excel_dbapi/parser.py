@@ -390,7 +390,11 @@ def _parse_where_expression(
                         "Parameterized subqueries are not supported; use literal values"
                     )
 
-                subquery_parsed = _parse_select(raw_values, params=None)
+                subquery_parsed = _parse_select(
+                    raw_values,
+                    params=None,
+                    _allow_subqueries=False,
+                )
 
                 subquery_columns = subquery_parsed["columns"]
                 if subquery_columns == ["*"] or len(subquery_columns) != 1:
@@ -475,7 +479,12 @@ def _parse_where_expression(
     return where_expression
 
 
-def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, Any]:
+def _parse_select(
+    query: str,
+    params: Optional[tuple[Any, ...]],
+    *,
+    _allow_subqueries: bool = True,
+) -> Dict[str, Any]:
     tokens = _tokenize(query.strip())
     from_index = -1
     for i, token in enumerate(tokens):
@@ -566,7 +575,7 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
             where_part,
             params,
             bind_params=False,
-            allow_subqueries=True,
+            allow_subqueries=_allow_subqueries,
         )
 
     if group_index >= 0:
