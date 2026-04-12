@@ -5,8 +5,10 @@
 
 ![CI](https://github.com/yeongseon/excel-dbapi/actions/workflows/ci.yml/badge.svg)
 [![codecov](https://codecov.io/gh/yeongseon/excel-dbapi/branch/main/graph/badge.svg)](https://codecov.io/gh/yeongseon/excel-dbapi)
+[![PyPI](https://img.shields.io/pypi/v/excel-dbapi.svg)](https://pypi.org/project/excel-dbapi/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![Docs](https://img.shields.io/badge/docs-GitHub-blue.svg)](https://github.com/yeongseon/excel-dbapi/tree/main/docs)
 
 A lightweight, Python DB-API 2.0 compliant connector for Excel files.
 Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no database server required.
