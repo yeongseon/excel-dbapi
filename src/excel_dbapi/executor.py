@@ -372,6 +372,16 @@ class SharedExecutor:
                     )
                 required_aggregates[ref] = (func, arg)
 
+        if having is not None:
+            for condition in having["conditions"]:
+                column = str(condition["column"])
+                if self._aggregate_spec_from_label(column) is not None:
+                    continue
+                if group_by is None or column not in group_by:
+                    raise ValueError(
+                        f"Column '{column}' in HAVING must be a GROUP BY column or aggregate function"
+                    )
+
         grouped_rows: list[dict[str, Any]] = []
         if group_by:
             groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}

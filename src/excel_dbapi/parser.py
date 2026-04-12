@@ -217,8 +217,16 @@ def _parse_where_expression(
     where_part: str,
     params: Optional[tuple[Any, ...]],
     bind_params: bool = True,
+    allow_aggregates: bool = False,
 ) -> Dict[str, Any]:
     tokens = _collapse_aggregate_tokens(_tokenize(where_part.strip()))
+    if not allow_aggregates and any(
+        re.fullmatch(r"(?i)(COUNT|SUM|AVG|MIN|MAX)\([^\)]+\)", token)
+        for token in tokens
+    ):
+        raise ValueError(
+            "Aggregate functions are not allowed in WHERE clause; use HAVING instead"
+        )
     for token_index, token in enumerate(tokens):
         if token.startswith("("):
             if token_index == 0 or tokens[token_index - 1].upper() != "IN":
@@ -458,7 +466,12 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         if not having_part:
             raise ValueError("Invalid HAVING clause format")
         having_part = _normalize_aggregate_expressions(having_part)
-        having = _parse_where_expression(having_part, params, bind_params=False)
+        having = _parse_where_expression(
+            having_part,
+            params,
+            bind_params=False,
+            allow_aggregates=True,
+        )
 
     if order_index >= 0:
         order_start = order_index + len("ORDER BY ")

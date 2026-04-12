@@ -163,3 +163,27 @@ def test_parse_select_all_aggregate_functions():
 def test_parse_select_group_by_before_where_raises():
     with pytest.raises(ValueError):
         parse_sql("SELECT name, COUNT(*) FROM Sheet1 GROUP BY name WHERE name = 'A'")
+
+
+def test_where_rejects_aggregate_count():
+    with pytest.raises(
+        ValueError,
+        match="Aggregate functions are not allowed in WHERE",
+    ):
+        parse_sql("SELECT name FROM users WHERE COUNT(*) > 1")
+
+
+def test_where_rejects_aggregate_sum():
+    with pytest.raises(
+        ValueError,
+        match="Aggregate functions are not allowed in WHERE",
+    ):
+        parse_sql("SELECT name FROM users WHERE SUM(score) > 100")
+
+
+def test_where_rejects_aggregate_avg():
+    with pytest.raises(
+        ValueError,
+        match="Aggregate functions are not allowed in WHERE",
+    ):
+        parse_sql("SELECT name FROM users WHERE AVG(score) > 50")

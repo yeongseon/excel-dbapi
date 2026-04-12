@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
@@ -257,6 +258,20 @@ def test_executor_group_by_having_group_column_not_in_select(tmp_path: Path):
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [(2,)]
+
+
+def test_having_rejects_non_grouped_column(tmp_path: Path):
+    file_path = tmp_path / "users_having_non_grouped_column.xlsx"
+    _create_users_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT COUNT(*) FROM users GROUP BY name HAVING age > 30")
+
+    with pytest.raises(
+        ValueError,
+        match="in HAVING must be a GROUP BY column or aggregate function",
+    ):
+        SharedExecutor(engine).execute(parsed)
 
 
 def test_executor_group_by_order_by_group_key_not_in_select(tmp_path: Path):
