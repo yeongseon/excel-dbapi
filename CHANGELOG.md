@@ -11,11 +11,14 @@ All notable changes to this project will be documented in this file.
 - LEFT JOIN: NULL fill for unmatched right-table rows
 - WHERE, ORDER BY, LIMIT, OFFSET work with JOIN queries
 - 34 new JOIN tests (20 parser, 9 executor, 5 boundary)
+- Multi-row INSERT support: `INSERT INTO t VALUES (1, 'a'), (2, 'b')`
+- INSERT...SELECT support: `INSERT INTO t2 SELECT col1, col2 FROM t1 WHERE ...`
+- Parameter binding across multiple VALUE tuples
 - SQL_SPEC.md updated with JOIN syntax, grammar, and constraints
 
 ### Changed
 - Parser now always emits `from` and `joins` keys in SELECT AST
-- Test count: 397 → 506
+- Test count: 397 → 546
 - Version bumped to 0.4.0
 
 ### Rejected (by design)

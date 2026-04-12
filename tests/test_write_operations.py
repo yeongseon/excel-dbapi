@@ -173,3 +173,213 @@ def test_select_order_limit_with_where_pandas(tmp_path: Path) -> None:
         )
         results = cursor.fetchall()
         assert results == [(3, "Cara")]
+
+
+
+# ── Multi-row INSERT & INSERT...SELECT tests ──
+
+
+def test_multi_row_insert_two_rows(tmp_path: Path) -> None:
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name"])
+    ws.append([1, "Alice"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO Sheet1 VALUES (2, 'Bob'), (3, 'Carol')")
+        assert cursor.rowcount == 2
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert len(rows) == 4  # header + 3 data rows
+    assert rows[2] == (2, "Bob")
+    assert rows[3] == (3, "Carol")
+
+
+def test_multi_row_insert_five_rows(tmp_path: Path) -> None:
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Sheet1 VALUES "
+            "(1, 'A'), (2, 'B'), (3, 'C'), (4, 'D'), (5, 'E')"
+        )
+        assert cursor.rowcount == 5
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert len(rows) == 6  # header + 5 data rows
+    assert rows[5] == (5, "E")
+
+
+def test_multi_row_insert_with_columns(tmp_path: Path) -> None:
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name", "extra"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Sheet1 (id, name) VALUES (1, 'Alice'), (2, 'Bob')"
+        )
+        assert cursor.rowcount == 2
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert len(rows) == 3  # header + 2 data rows
+    assert rows[1] == (1, "Alice", None)
+    assert rows[2] == (2, "Bob", None)
+
+
+def test_multi_row_insert_with_params(tmp_path: Path) -> None:
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Sheet1 VALUES (?, ?), (?, ?)",
+            (1, "Alice", 2, "Bob"),
+        )
+        assert cursor.rowcount == 2
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert rows[1] == (1, "Alice")
+    assert rows[2] == (2, "Bob")
+
+
+def test_insert_select_cross_sheet(tmp_path: Path) -> None:
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Source"
+    ws.append(["id", "name"])
+    ws.append([1, "Alice"])
+    ws.append([2, "Bob"])
+    ws2 = wb.create_sheet("Target")
+    ws2.append(["id", "name"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO Target SELECT id, name FROM Source")
+        assert cursor.rowcount == 2
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Target"].iter_rows(values_only=True))
+    assert len(rows) == 3  # header + 2 data rows
+    assert rows[1] == (1, "Alice")
+    assert rows[2] == (2, "Bob")
+
+
+def test_insert_select_with_where(tmp_path: Path) -> None:
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Source"
+    ws.append(["id", "name"])
+    ws.append([1, "Alice"])
+    ws.append([2, "Bob"])
+    ws.append([3, "Carol"])
+    ws2 = wb.create_sheet("Target")
+    ws2.append(["id", "name"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Target SELECT id, name FROM Source WHERE id >= 2"
+        )
+        assert cursor.rowcount == 2
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Target"].iter_rows(values_only=True))
+    assert len(rows) == 3  # header + 2 data rows
+    assert rows[1] == (2, "Bob")
+    assert rows[2] == (3, "Carol")
+
+
+def test_insert_select_empty_result(tmp_path: Path) -> None:
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Source"
+    ws.append(["id", "name"])
+    ws.append([1, "Alice"])
+    ws2 = wb.create_sheet("Target")
+    ws2.append(["id", "name"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO Target SELECT id, name FROM Source WHERE id > 999"
+        )
+        assert cursor.rowcount == 0
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Target"].iter_rows(values_only=True))
+    assert len(rows) == 1  # header only
+
+
+def test_multi_row_insert_column_count_mismatch(tmp_path: Path) -> None:
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        with pytest.raises(Exception, match="count"):
+            cursor.execute("INSERT INTO Sheet1 VALUES (1, 'Alice'), (2)")
+
+
+def test_insert_select_same_sheet(tmp_path: Path) -> None:
+    """INSERT...SELECT from the same sheet duplicates rows."""
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name"])
+    ws.append([1, "Alice"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO Sheet1 SELECT id, name FROM Sheet1 WHERE id = 1")
+        assert cursor.rowcount == 1
+
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert len(rows) == 3  # header + original + duplicate
+    assert rows[1] == (1, "Alice")
+    assert rows[2] == (1, "Alice")

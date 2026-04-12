@@ -143,7 +143,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
                 "action": "INSERT",
                 "table": "Missing",
                 "columns": None,
-                "values": [1],
+                "values": [[1]],
             }
         )
 
@@ -153,7 +153,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
                 "action": "INSERT",
                 "table": "Empty",
                 "columns": None,
-                "values": [1],
+                "values": [[1]],
             }
         )
 
@@ -163,7 +163,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
                 "action": "INSERT",
                 "table": "Users",
                 "columns": None,
-                "values": [1],
+                "values": [[1]],
             }
         )
 
@@ -173,7 +173,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
                 "action": "INSERT",
                 "table": "Users",
                 "columns": ["missing"],
-                "values": [1],
+                "values": [[1]],
             }
         )
 

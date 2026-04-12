@@ -17,7 +17,7 @@ Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no da
 
 Before you begin, understand what excel-dbapi is **not**:
 
-- **No JOIN, GROUP BY, HAVING, DISTINCT, or subqueries** — single-table operations only
+- **No RIGHT JOIN, FULL OUTER JOIN, or chained JOINs** — INNER and LEFT JOIN on two tables only
 - **No concurrent writes** — use a single-writer model
 - **Not for large datasets** — if your Excel file has 100k+ rows, use pandas directly or a database
 - **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL
@@ -74,6 +74,19 @@ with ExcelConnection("sample.xlsx") as conn:
 
     # Delete
     cursor.execute("DELETE FROM Sheet1 WHERE id = 2")
+```
+
+### Multi-row Insert
+
+```python
+with ExcelConnection("sample.xlsx") as conn:
+    cursor = conn.cursor()
+
+    # Insert multiple rows at once
+    cursor.execute("INSERT INTO Sheet1 VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Carol')")
+
+    # INSERT...SELECT: copy rows from another sheet
+    cursor.execute("INSERT INTO Sheet2 (id, name) SELECT id, name FROM Sheet1 WHERE id > 1")
 ```
 
 ### Create and Drop Sheets

@@ -1114,42 +1114,151 @@ def _bind_params(values: List[Any], params: Optional[tuple[Any, ...]]) -> List[A
 
 
 def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, Any]:
-    upper = query.upper()
-    if " VALUES " not in upper:
+    stripped = query.strip()
+    upper = stripped.upper()
+    insert_prefix = "INSERT INTO "
+    if not upper.startswith(insert_prefix):
         raise ValueError(f"Invalid INSERT format: {query}")
-    values_index = upper.index(" VALUES ")
-    before_values = query[:values_index]
-    values_part = query[values_index + len(" VALUES ") :]
-    before_tokens = before_values.strip().split()
-    if (
-        len(before_tokens) < 3
-        or before_tokens[0].upper() != "INSERT"
-        or before_tokens[1].upper() != "INTO"
-    ):
+
+    remainder = stripped[len(insert_prefix) :].strip()
+    if not remainder:
         raise ValueError(f"Invalid INSERT format: {query}")
-    prefix_len = len(before_tokens[0]) + 1 + len(before_tokens[1])
-    table_and_cols = before_values.strip()[prefix_len:].strip()
+
+    split_index = 0
+    while split_index < len(remainder) and not remainder[split_index].isspace() and remainder[split_index] != "(":
+        split_index += 1
+    table = remainder[:split_index].strip()
+    if not table:
+        raise ValueError(f"Invalid INSERT format: {query}")
+    remainder = remainder[split_index:].strip()
 
     columns = None
-    if "(" in table_and_cols:
-        table_name, cols_part = table_and_cols.split("(", 1)
-        table = table_name.strip()
-        cols_part = cols_part.rsplit(")", 1)[0]
+    if remainder.startswith("("):
+        depth = 0
+        close_index = -1
+        for idx, char in enumerate(remainder):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    close_index = idx
+                    break
+            if depth < 0:
+                break
+        if close_index < 0:
+            raise ValueError(f"Invalid INSERT format: {query}")
+        cols_part = remainder[1:close_index]
         columns = _parse_columns(cols_part)
         invalid_columns = [col for col in columns if not isinstance(col, str) or col == "*"]
         if invalid_columns:
             raise ValueError(
                 "INSERT column list supports only bare column names"
             )
-    else:
-        table = table_and_cols.strip()
+        remainder = remainder[close_index + 1 :].strip()
 
-    values_part = values_part.strip()
-    if not values_part.startswith("(") or not values_part.endswith(")"):
+    if not remainder:
         raise ValueError(f"Invalid INSERT format: {query}")
-    raw_values = values_part[1:-1].strip()
-    values = [_parse_value(token) for token in _split_csv(raw_values)]
-    values = _bind_params(values, params)
+
+    remainder_upper = remainder.upper()
+    if remainder_upper.startswith("SELECT"):
+        subquery = _parse_select(remainder, params)
+        values: Any = {"type": "subquery", "query": subquery}
+    elif remainder_upper.startswith("VALUES"):
+        values_part = remainder[len("VALUES") :].strip()
+        if not values_part:
+            raise ValueError(f"Invalid INSERT format: {query}")
+
+        raw_rows: List[str] = []
+        depth = 0
+        row_start = -1
+        expect_separator = False
+        in_single = False
+        in_double = False
+        index = 0
+        while index < len(values_part):
+            char = values_part[index]
+            if in_single:
+                if char == "'":
+                    if index + 1 < len(values_part) and values_part[index + 1] == "'":
+                        index += 1
+                    else:
+                        in_single = False
+                index += 1
+                continue
+            if in_double:
+                if char == '"':
+                    if index + 1 < len(values_part) and values_part[index + 1] == '"':
+                        index += 1
+                    else:
+                        in_double = False
+                index += 1
+                continue
+
+            if char == "'":
+                in_single = True
+                index += 1
+                continue
+            if char == '"':
+                in_double = True
+                index += 1
+                continue
+
+            if char.isspace() and depth == 0:
+                index += 1
+                continue
+
+            if depth == 0:
+                if expect_separator:
+                    if char == ",":
+                        expect_separator = False
+                        index += 1
+                        continue
+                    raise ValueError(f"Invalid INSERT format: {query}")
+                if char != "(":
+                    raise ValueError(f"Invalid INSERT format: {query}")
+                row_start = index + 1
+                depth = 1
+                index += 1
+                continue
+
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if depth == 0:
+                    if row_start < 0:
+                        raise ValueError(f"Invalid INSERT format: {query}")
+                    raw_rows.append(values_part[row_start:index])
+                    expect_separator = True
+
+            if depth < 0:
+                raise ValueError(f"Invalid INSERT format: {query}")
+            index += 1
+
+        if depth != 0 or in_single or in_double or not raw_rows or not expect_separator:
+            raise ValueError(f"Invalid INSERT format: {query}")
+
+        if params is None:
+            values = [
+                _bind_params([_parse_value(token) for token in _split_csv(raw_row)], None)
+                for raw_row in raw_rows
+            ]
+        else:
+            bound_rows: List[List[Any]] = []
+            param_index = 0
+            for raw_row in raw_rows:
+                parsed_row = [_parse_value(token) for token in _split_csv(raw_row)]
+                placeholders = [value for value in parsed_row if _is_placeholder(value)]
+                needed = len(placeholders)
+                row_params = params[param_index : param_index + needed]
+                bound_rows.append(_bind_params(parsed_row, row_params))
+                param_index += needed
+            if param_index < len(params):
+                raise ValueError("Too many parameters for placeholders")
+            values = bound_rows
+    else:
+        raise ValueError(f"Invalid INSERT format: {query}")
 
     return {
         "action": "INSERT",

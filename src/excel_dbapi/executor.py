@@ -164,31 +164,48 @@ class SharedExecutor:
 
             values = parsed["values"]
             insert_columns = parsed.get("columns")
-            if insert_columns is None:
-                if len(values) != len(headers):
-                    raise ValueError("INSERT values count does not match header count")
-                row_values = list(values)
-            else:
+
+            if insert_columns is not None:
                 missing = [col for col in insert_columns if col not in headers]
                 if missing:
                     raise ValueError(
                         f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}"
                     )
-                if len(values) != len(insert_columns):
-                    raise ValueError("INSERT values count does not match column count")
-                row_values = [None for _ in headers]
-                for col, value in zip(insert_columns, values):
-                    row_values[headers.index(col)] = value
 
-            sanitized_row = (
-                sanitize_row(row_values) if self.sanitize_formulas else row_values
-            )
-            last_row = self.backend.append_row(resolved_table, sanitized_row)
+            rows_to_insert: list[list[Any]]
+            if isinstance(values, dict):
+                if values.get("type") != "subquery" or "query" not in values:
+                    raise ValueError("Invalid INSERT subquery format")
+                subquery_result = self.execute(values["query"])
+                rows_to_insert = [list(row) for row in subquery_result.rows]
+            elif isinstance(values, list):
+                rows_to_insert = [list(row) for row in values]
+            else:
+                raise ValueError("Invalid INSERT values format")
+
+            last_row = None
+            for values_row in rows_to_insert:
+                if insert_columns is None:
+                    if len(values_row) != len(headers):
+                        raise ValueError("INSERT values count does not match header count")
+                    row_values = list(values_row)
+                else:
+                    if len(values_row) != len(insert_columns):
+                        raise ValueError("INSERT values count does not match column count")
+                    row_values = [None for _ in headers]
+                    for col, value in zip(insert_columns, values_row):
+                        row_values[headers.index(col)] = value
+
+                sanitized_row = (
+                    sanitize_row(row_values) if self.sanitize_formulas else row_values
+                )
+                last_row = self.backend.append_row(resolved_table, sanitized_row)
+
             return ExecutionResult(
                 action=action,
                 rows=[],
                 description=[],
-                rowcount=1,
+                rowcount=len(rows_to_insert),
                 lastrowid=last_row,
             )
 

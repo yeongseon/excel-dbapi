@@ -37,7 +37,7 @@ def test_parse_insert_with_columns_and_values():
     assert parsed["action"] == "INSERT"
     assert parsed["table"] == "Sheet1"
     assert parsed["columns"] == ["id", "name"]
-    assert parsed["values"] == [1, "Alice"]
+    assert parsed["values"] == [[1, "Alice"]]
 
 
 def test_parse_insert_with_params():
@@ -45,7 +45,7 @@ def test_parse_insert_with_params():
         "INSERT INTO Sheet1 (id, name) VALUES (?, ?)",
         (2, "Bob"),
     )
-    assert parsed["values"] == [2, "Bob"]
+    assert parsed["values"] == [[2, "Bob"]]
 
 
 def test_parse_create_and_drop():
@@ -593,3 +593,60 @@ def test_parse_join_rejects_subquery_containing_join():
             "SELECT id FROM t1 WHERE id IN "
             "(SELECT a.id FROM t2 a JOIN t3 b ON a.id = b.id)"
         )
+
+
+
+# ── Multi-row INSERT & INSERT...SELECT tests ──
+
+
+def test_parse_multi_row_insert():
+    parsed = parse_sql("INSERT INTO Sheet1 VALUES (1, 'Alice'), (2, 'Bob')")
+    assert parsed["action"] == "INSERT"
+    assert parsed["table"] == "Sheet1"
+    assert parsed["columns"] is None
+    assert parsed["values"] == [[1, "Alice"], [2, "Bob"]]
+
+
+def test_parse_multi_row_insert_three_rows():
+    parsed = parse_sql("INSERT INTO Sheet1 VALUES (1, 'A'), (2, 'B'), (3, 'C')")
+    assert len(parsed["values"]) == 3
+    assert parsed["values"][0] == [1, "A"]
+    assert parsed["values"][1] == [2, "B"]
+    assert parsed["values"][2] == [3, "C"]
+
+
+def test_parse_multi_row_insert_with_params():
+    parsed = parse_sql(
+        "INSERT INTO Sheet1 (id, name) VALUES (?, ?), (?, ?)",
+        (10, "X", 20, "Y"),
+    )
+    assert parsed["values"] == [[10, "X"], [20, "Y"]]
+
+
+def test_parse_multi_row_insert_with_columns():
+    parsed = parse_sql("INSERT INTO Sheet1 (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
+    assert parsed["columns"] == ["id", "name"]
+    assert parsed["values"] == [[1, "Alice"], [2, "Bob"]]
+
+
+def test_parse_insert_select():
+    parsed = parse_sql("INSERT INTO Target SELECT id, name FROM Source")
+    assert parsed["action"] == "INSERT"
+    assert parsed["table"] == "Target"
+    assert parsed["columns"] is None
+    assert parsed["values"]["type"] == "subquery"
+    assert parsed["values"]["query"]["action"] == "SELECT"
+    assert parsed["values"]["query"]["table"] == "Source"
+
+
+def test_parse_insert_select_with_where():
+    parsed = parse_sql("INSERT INTO Target SELECT id, name FROM Source WHERE id > 5")
+    assert parsed["values"]["type"] == "subquery"
+    assert parsed["values"]["query"]["where"] is not None
+
+
+def test_parse_insert_select_with_columns():
+    parsed = parse_sql("INSERT INTO Target (id, name) SELECT id, name FROM Source")
+    assert parsed["columns"] == ["id", "name"]
+    assert parsed["values"]["type"] == "subquery"
+    assert parsed["values"]["query"]["table"] == "Source"

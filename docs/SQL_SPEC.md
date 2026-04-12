@@ -17,7 +17,7 @@ database engine.
 | Statement | Supported |
 |-----------|-----------|
 | `SELECT`  | ✅ Single-table with DISTINCT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT / OFFSET / Aggregates; INNER/LEFT JOIN on two tables |
-| `INSERT`  | ✅ Single-row with optional column list |
+| `INSERT`  | ✅ Single-row and multi-row VALUES with optional column list; INSERT...SELECT |
 | `UPDATE`  | ✅ With SET assignments and optional WHERE |
 | `DELETE`  | ✅ With optional WHERE |
 | `CREATE TABLE` | ✅ Creates a new worksheet with headers |
@@ -37,12 +37,9 @@ The following SQL features are **rejected at parse time** with `ValueError`:
 - Window functions (`OVER`, `PARTITION BY`)
 - `ALTER TABLE`
 - `CREATE INDEX` / `DROP INDEX`
-- `INSERT ... SELECT`
-- Multi-row `INSERT` (single VALUES tuple only)
 - `ALTER TABLE`
 - `CREATE INDEX` / `DROP INDEX`
-- `INSERT ... SELECT`
-- Multi-row `INSERT` (single VALUES tuple only)
+- `RETURNING`
 - `RETURNING`
 - `SELECT ... FOR UPDATE`
 
@@ -261,6 +258,8 @@ Any other ordering raises `ValueError`.
 
 ```
 INSERT INTO table [(columns)] VALUES (values)
+INSERT INTO table [(columns)] VALUES (v1, v2), (v3, v4), ...
+INSERT INTO table [(columns)] SELECT columns FROM source [WHERE ...]
 ```
 
 ### 4.2 Forms
@@ -276,8 +275,11 @@ INSERT INTO table [(columns)] VALUES (values)
 - Column count must match value count.
 - If columns are omitted, value count must match header count.
 - Columns must exist in the worksheet header.
-- Only single-row INSERT is supported (no multi-row VALUES).
-- INSERT ... SELECT is **not supported**.
+- Multi-row INSERT is supported: each value tuple is inserted as a separate row.
+- INSERT...SELECT is supported: rows from a SELECT query are inserted into the target table.
+- For INSERT...SELECT, column count of the SELECT result must match the target column count.
+- If SELECT returns zero rows, no rows are inserted and `rowcount` is 0.
+- Parameter binding in multi-row VALUES works across all tuples: `VALUES (?, ?), (?, ?)` with 4 params.
 - Formula injection defense: values starting with `=`, `+`, `-`, `@`, `\t`, `\r`
   are prefixed with `'` by default (configurable via `sanitize_formulas=False`).
 
@@ -483,7 +485,10 @@ select        = "SELECT" [ "DISTINCT" ] select_columns "FROM" table_ref
                 [ "OFFSET" integer ] ;
 
 insert        = "INSERT" "INTO" table [ "(" column_list ")" ]
-                "VALUES" "(" value_list ")" ;
+                ( "VALUES" value_tuple { "," value_tuple }
+                | select ) ;
+
+value_tuple   = "(" value_list ")" ;
 
 update        = "UPDATE" table "SET" assignment { "," assignment }
                 [ "WHERE" where_expr ] ;
