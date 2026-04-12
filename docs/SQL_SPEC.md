@@ -1,8 +1,8 @@
 # excel-dbapi SQL Specification
 
-> Version: 0.2  
+> Version: 0.4  
 > Status: **Normative** — this document defines the SQL subset that excel-dbapi supports.  
-> Last updated: 2026-04-12
+> Last updated: 2026-04-13
 
 ---
 
@@ -16,7 +16,7 @@ database engine.
 
 | Statement | Supported |
 |-----------|-----------|
-| `SELECT`  | ✅ Single-table, with DISTINCT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT / OFFSET / Aggregates |
+| `SELECT`  | ✅ Single-table with DISTINCT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT / OFFSET / Aggregates; INNER/LEFT JOIN on two tables |
 | `INSERT`  | ✅ Single-row with optional column list |
 | `UPDATE`  | ✅ With SET assignments and optional WHERE |
 | `DELETE`  | ✅ With optional WHERE |
@@ -27,7 +27,10 @@ database engine.
 
 The following SQL features are **rejected at parse time** with `ValueError`:
 
-- `JOIN` (any variant: INNER, LEFT, RIGHT, CROSS, NATURAL)
+- `RIGHT JOIN`, `FULL OUTER JOIN`, `CROSS JOIN`, `NATURAL JOIN` (only INNER and LEFT JOIN supported)
+- Multiple JOINs in one query (max one JOIN clause)
+- `SELECT *` with JOIN (columns must be explicitly listed with table qualifiers)
+- `GROUP BY`, `HAVING`, aggregates in JOIN queries
 - Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])`
 - Common Table Expressions (CTEs / `WITH`)
 - `UNION` / `INTERSECT` / `EXCEPT`
@@ -94,12 +97,25 @@ The SQL string is tokenized with the following rules:
 
 ### 3.1 Syntax
 
+#### Single-table
+
 ```
 SELECT [DISTINCT] columns FROM table
   [WHERE conditions]
   [GROUP BY column { "," column }]
   [HAVING conditions]
   [ORDER BY column [ASC|DESC]]
+  [LIMIT n]
+  [OFFSET n]
+```
+
+#### JOIN (two tables)
+
+```
+SELECT qualified_columns FROM table [alias]
+  [INNER] JOIN table [alias] ON condition { AND condition }
+  [WHERE conditions]
+  [ORDER BY qualified_column [ASC|DESC]]
   [LIMIT n]
   [OFFSET n]
 ```
@@ -112,6 +128,7 @@ SELECT [DISTINCT] columns FROM table
 | Named | `SELECT id, name FROM Sheet1` | Specific columns (must exist in header) |
 | Aggregate | `SELECT COUNT(*) FROM Sheet1` | Aggregate function call |
 | Mixed | `SELECT name, COUNT(*) FROM Sheet1 GROUP BY name` | Plain + aggregate columns |
+| Qualified | `SELECT a.id, b.name FROM Sheet1 a JOIN Sheet2 b ON a.id = b.id` | Table-qualified columns (required in JOIN) |
 
 - Column aliases (`AS`) are **not supported**.
 - Arithmetic expressions in SELECT list are **not supported** (no `col + 1`, no `UPPER(name)`).
@@ -209,6 +226,31 @@ See [Section 7: WHERE Clause](#7-where-clause).
 Clauses must appear in this order: `WHERE` → `GROUP BY` → `HAVING` → `ORDER BY` → `LIMIT` → `OFFSET`.
 Any other ordering raises `ValueError`.
 
+### 3.11 JOIN
+
+| Feature | Supported | Example |
+|---------|-----------|---------|
+| INNER JOIN | ✅ | `SELECT a.id, b.name FROM t1 a JOIN t2 b ON a.id = b.id` |
+| LEFT JOIN | ✅ | `SELECT a.id, b.name FROM t1 a LEFT JOIN t2 b ON a.id = b.id` |
+| RIGHT JOIN | ❌ | Not supported |
+| FULL OUTER JOIN | ❌ | Not supported |
+| CROSS JOIN | ❌ | Not supported |
+| NATURAL JOIN | ❌ | Not supported |
+| Multiple JOINs | ❌ | Only one JOIN clause per query |
+
+**Requirements**:
+- Table aliases are recommended (e.g., `FROM users a JOIN orders b ON ...`).
+- All SELECT columns must use qualified names (`a.id`, not just `id`).
+- `SELECT *` is **not supported** with JOIN.
+- The ON clause requires at least one equality condition (e.g., `a.id = b.user_id`).
+- Multiple ON conditions are joined with `AND`.
+- `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET` work with JOIN queries.
+- `GROUP BY`, `HAVING`, and aggregates are **not supported** in JOIN queries.
+
+**Execution**:
+- INNER JOIN returns only rows where the ON condition matches in both tables.
+- LEFT JOIN returns all rows from the left table, with NULL values for unmatched right-table columns.
+- The join algorithm uses hash matching for efficient lookups.
 ---
 
 ## 4. INSERT
@@ -412,7 +454,7 @@ For UPDATE with WHERE:
 | Column not found | `ValueError` | `Unknown column(s): ...` |
 | Sheet already exists (CREATE) | `ValueError` | `Sheet '{name}' already exists` |
 | Param count mismatch | `ValueError` | `Not enough / Too many parameters` |
-| Unsupported grammar (JOIN, etc.) | `ValueError` | `Unsupported SQL grammar: {feature}` |
+| Unsupported grammar | `ValueError` | `Unsupported SQL grammar: {feature}` |
 | Parenthesized WHERE | `ValueError` | `Unsupported SQL grammar: parenthesized expressions` |
 | Aggregate in WHERE clause | `ValueError` | `Aggregate functions are not allowed in WHERE clause; use HAVING instead` |
 | Invalid HAVING column reference | `ValueError` | `HAVING column '{column}' must be a GROUP BY column or aggregate` |
@@ -420,6 +462,7 @@ For UPDATE with WHERE:
 | Invalid LIMIT (non-integer) | `ValueError` | `LIMIT must be an integer` |
 | INSERT into headless sheet | `ValueError` | `Cannot insert into sheet without headers` |
 | Empty IN clause | `ValueError` | `IN clause cannot be empty` |
+| Unsupported JOIN variant | `ValueError` | `RIGHT JOIN is not supported...` |
 
 ---
 
@@ -428,11 +471,12 @@ For UPDATE with WHERE:
 ```ebnf
 statement     = select | insert | update | delete | create | drop ;
 
-select        = "SELECT" [ "DISTINCT" ] select_columns "FROM" table
+select        = "SELECT" [ "DISTINCT" ] select_columns "FROM" table_ref
+                [ join_clause ]
                 [ "WHERE" where_expr ]
                 [ "GROUP" "BY" column { "," column } ]
                 [ "HAVING" where_expr ]
-                [ "ORDER" "BY" column [ direction ] ]
+                [ "ORDER" "BY" qualified_column [ direction ] ]
                 [ "LIMIT" integer ]
                 [ "OFFSET" integer ] ;
 
@@ -456,6 +500,11 @@ column_list   = column { "," column } ;
 value_list    = value { "," value } ;
 column_def    = column [ type_name ] ;
 assignment    = column "=" value ;
+qualified_col  = [ table_or_alias "." ] column ;
+table_ref      = table [ alias ] ;
+join_clause    = [ "INNER" | "LEFT" ] "JOIN" table_ref "ON" join_cond { "AND" join_cond } ;
+join_cond      = qualified_col "=" qualified_col ;
+alias          = identifier ;
 
 where_expr    = condition { ("AND" | "OR") condition } ;
 condition     = column operator value

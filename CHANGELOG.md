@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-04-13
+
+### Added
+- Multi-sheet JOIN support: INNER JOIN and LEFT JOIN with alias syntax
+- JOIN parser: qualified column references (`a.id`), ON condition parsing, alias support
+- JOIN executor: hash join algorithm with namespaced row flattening
+- LEFT JOIN: NULL fill for unmatched right-table rows
+- WHERE, ORDER BY, LIMIT, OFFSET work with JOIN queries
+- 34 new JOIN tests (20 parser, 9 executor, 5 boundary)
+- SQL_SPEC.md updated with JOIN syntax, grammar, and constraints
+
+### Changed
+- Parser now always emits `from` and `joins` keys in SELECT AST
+- Test count: 397 → 506
+- Version bumped to 0.4.0
+
+### Rejected (by design)
+- RIGHT JOIN, FULL OUTER JOIN, CROSS JOIN, multiple JOINs
+- SELECT *, GROUP BY, HAVING, aggregates in JOIN queries
+
 ## [0.3.0] - 2026-04-12
 
 ### Added
