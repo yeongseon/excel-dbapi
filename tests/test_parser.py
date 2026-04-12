@@ -145,6 +145,51 @@ def test_parse_subquery_rejects_parameterized():
         )
 
 
+def test_parse_subquery_allows_quoted_dotted_value():
+    result = parse_sql(
+        "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE role = 'corp.admin')"
+    )
+    subquery = result["where"]["conditions"][0]["value"]["query"]
+    assert subquery["where"]["conditions"][0]["value"] == "corp.admin"
+
+
+def test_parse_subquery_allows_quoted_question_mark():
+    result = parse_sql(
+        "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE symbol = '?')"
+    )
+    subquery = result["where"]["conditions"][0]["value"]["query"]
+    assert subquery["where"]["conditions"][0]["value"] == "?"
+
+
+def test_parse_subquery_rejects_group_by():
+    with pytest.raises(ValueError, match="GROUP BY is not supported in subqueries"):
+        parse_sql("SELECT * FROM users WHERE id IN (SELECT id FROM admins GROUP BY id)")
+
+
+def test_parse_subquery_rejects_order_by():
+    with pytest.raises(ValueError, match="ORDER BY is not supported in subqueries"):
+        parse_sql("SELECT * FROM users WHERE id IN (SELECT id FROM admins ORDER BY id)")
+
+
+def test_parse_subquery_rejects_limit():
+    with pytest.raises(ValueError, match="LIMIT is not supported in subqueries"):
+        parse_sql("SELECT * FROM users WHERE id IN (SELECT id FROM admins LIMIT 10)")
+
+
+def test_parse_subquery_rejects_having():
+    with pytest.raises(ValueError, match="HAVING is not supported in subqueries"):
+        parse_sql(
+            "SELECT * FROM users WHERE id IN (SELECT id FROM admins GROUP BY id HAVING COUNT(id) > 1)"
+        )
+
+
+def test_parse_subquery_rejects_offset():
+    with pytest.raises(ValueError, match="OFFSET is not supported in subqueries"):
+        parse_sql(
+            "SELECT * FROM users WHERE id IN (SELECT id FROM admins LIMIT 10 OFFSET 5)"
+        )
+
+
 def test_parse_subquery_rejects_nested() -> None:
     with pytest.raises(ValueError, match="not supported in this context"):
         parse_sql(

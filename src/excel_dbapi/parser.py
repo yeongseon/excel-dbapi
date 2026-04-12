@@ -2,6 +2,14 @@ import re
 from typing import Any, Dict, List, Optional
 
 
+class _QuotedString(str):
+    pass
+
+
+def _is_placeholder(value: Any) -> bool:
+    return value == "?" and not isinstance(value, _QuotedString)
+
+
 def _split_csv(text: str) -> List[str]:
     items: List[str] = []
     current: List[str] = []
@@ -96,10 +104,10 @@ def _parse_value(token: str) -> Any:
         return None
     if token.startswith("'") and token.endswith("'") and len(token) >= 2:
         # Unescape doubled single quotes: 'it''s' -> it's
-        return token[1:-1].replace("''", "'")
+        return _QuotedString(token[1:-1].replace("''", "'"))
     if token.startswith('"') and token.endswith('"') and len(token) >= 2:
         # Unescape doubled double quotes: "say ""hello""" -> say "hello"
-        return token[1:-1].replace('""', '"')
+        return _QuotedString(token[1:-1].replace('""', '"'))
     try:
         return int(token)
     except ValueError:
@@ -148,9 +156,24 @@ def _is_quoted_token(token: str) -> bool:
 def _find_clause_positions(tokens: List[str]) -> Dict[str, int]:
     positions: Dict[str, int] = {}
     index = 0
+    paren_depth = 0
     while index < len(tokens):
         token = tokens[index]
         if _is_quoted_token(token):
+            index += 1
+            continue
+
+        if token == "(":
+            paren_depth += 1
+            index += 1
+            continue
+        if token == ")":
+            if paren_depth > 0:
+                paren_depth -= 1
+            index += 1
+            continue
+
+        if paren_depth > 0:
             index += 1
             continue
 
@@ -286,13 +309,22 @@ def _parse_where_expression(
     allow_subqueries: bool = False,
 ) -> Dict[str, Any]:
     tokens = _collapse_aggregate_tokens(_tokenize(where_part.strip()))
-    if not allow_aggregates and any(
-        re.fullmatch(r"(?i)(COUNT|SUM|AVG|MIN|MAX)\([^\)]+\)", token)
-        for token in tokens
-    ):
-        raise ValueError(
-            "Aggregate functions are not allowed in WHERE clause; use HAVING instead"
-        )
+    if not allow_aggregates:
+        paren_depth = 0
+        for token in tokens:
+            if token == "(":
+                paren_depth += 1
+                continue
+            if token == ")":
+                if paren_depth > 0:
+                    paren_depth -= 1
+                continue
+            if paren_depth > 0:
+                continue
+            if re.fullmatch(r"(?i)(COUNT|SUM|AVG|MIN|MAX)\([^\)]+\)", token):
+                raise ValueError(
+                    "Aggregate functions are not allowed in WHERE clause; use HAVING instead"
+                )
     for token_index, token in enumerate(tokens):
         if token.startswith("("):
             if token_index == 0 or tokens[token_index - 1].upper() != "IN":
@@ -390,37 +422,37 @@ def _parse_where_expression(
                         "Parameterized subqueries are not supported; use literal values"
                     )
 
+                for raw_token in _tokenize(raw_values):
+                    if raw_token.startswith("'") or raw_token.startswith('"'):
+                        continue
+                    if re.fullmatch(
+                        r"[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*",
+                        raw_token,
+                    ):
+                        raise ValueError("Correlated subqueries are not supported")
+
                 subquery_parsed = _parse_select(
                     raw_values,
                     params=None,
                     _allow_subqueries=False,
                 )
 
+                if subquery_parsed.get("having") is not None:
+                    raise ValueError("HAVING is not supported in subqueries")
+                if subquery_parsed.get("order_by") is not None:
+                    raise ValueError("ORDER BY is not supported in subqueries")
+                if subquery_parsed.get("offset") is not None:
+                    raise ValueError("OFFSET is not supported in subqueries")
+                if subquery_parsed.get("group_by") is not None:
+                    raise ValueError("GROUP BY is not supported in subqueries")
+                if subquery_parsed.get("limit") is not None:
+                    raise ValueError("LIMIT is not supported in subqueries")
+
                 subquery_columns = subquery_parsed["columns"]
                 if subquery_columns == ["*"] or len(subquery_columns) != 1:
                     raise ValueError(
                         "Subquery in WHERE ... IN must select exactly one column"
                     )
-
-                if subquery_parsed.get("where"):
-                    for cond in subquery_parsed["where"]["conditions"]:
-                        col = str(cond.get("column", ""))
-                        val = cond.get("value")
-                        if "." in col:
-                            raise ValueError("Correlated subqueries are not supported")
-                        if isinstance(val, str) and re.fullmatch(
-                            r"[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*",
-                            val,
-                        ):
-                            raise ValueError("Correlated subqueries are not supported")
-                        if val == "?":
-                            raise ValueError(
-                                "Parameterized subqueries are not supported; use literal values"
-                            )
-                        if isinstance(val, tuple) and "?" in val:
-                            raise ValueError(
-                                "Parameterized subqueries are not supported; use literal values"
-                            )
 
                 conditions.append(
                     {
@@ -471,7 +503,7 @@ def _parse_where_expression(
     where_expression = {"conditions": conditions, "conjunctions": conjunctions}
     values_to_bind = _where_values_to_bind(where_expression)
     if bind_params and (
-        params is not None or any(value == "?" for value in values_to_bind)
+        params is not None or any(_is_placeholder(value) for value in values_to_bind)
     ):
         bound = _bind_params(values_to_bind, params)
         _bind_where_conditions(where_expression, bound, 0)
@@ -715,10 +747,10 @@ def _parse_select(
         raise ValueError(f"Unsupported SQL syntax: {unconsumed_text}")
 
     if params is not None or (
-        (where and any(value == "?" for value in _where_values_to_bind(where)))
-        or (having and any(value == "?" for value in _where_values_to_bind(having)))
-        or limit == "?"
-        or offset == "?"
+        (where and any(_is_placeholder(value) for value in _where_values_to_bind(where)))
+        or (having and any(_is_placeholder(value) for value in _where_values_to_bind(having)))
+        or _is_placeholder(limit)
+        or _is_placeholder(offset)
     ):
         values_to_bind = []
         if where:
@@ -762,13 +794,13 @@ def _parse_select(
 
 def _bind_params(values: List[Any], params: Optional[tuple[Any, ...]]) -> List[Any]:
     if params is None:
-        if any(value == "?" for value in values):
+        if any(_is_placeholder(value) for value in values):
             raise ValueError("Missing parameters for placeholders")
         return values
     bound: List[Any] = []
     param_index = 0
     for value in values:
-        if value == "?":
+        if _is_placeholder(value):
             if param_index >= len(params):
                 raise ValueError("Not enough parameters for placeholders")
             bound.append(params[param_index])
@@ -916,7 +948,7 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     values_to_bind = [item["value"] for item in assignments]
     if where is not None:
         values_to_bind.extend(_where_values_to_bind(where))
-    if params is not None or any(value == "?" for value in values_to_bind):
+    if params is not None or any(_is_placeholder(value) for value in values_to_bind):
         bound = _bind_params(values_to_bind, params)
         for idx, item in enumerate(assignments):
             item["value"] = bound[idx]
