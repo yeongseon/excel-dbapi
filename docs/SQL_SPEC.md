@@ -16,7 +16,7 @@ database engine.
 
 | Statement | Supported |
 |-----------|-----------|
-| `SELECT`  | ✅ Single-table, with DISTINCT / WHERE / ORDER BY / LIMIT / OFFSET |
+| `SELECT`  | ✅ Single-table, with DISTINCT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT / OFFSET / Aggregates |
 | `INSERT`  | ✅ Single-row with optional column list |
 | `UPDATE`  | ✅ With SET assignments and optional WHERE |
 | `DELETE`  | ✅ With optional WHERE |
@@ -28,12 +28,14 @@ database engine.
 The following SQL features are **rejected at parse time** with `ValueError`:
 
 - `JOIN` (any variant: INNER, LEFT, RIGHT, CROSS, NATURAL)
-- `GROUP BY` / `HAVING`
 - Subqueries (scalar, correlated, or in FROM)
 - Common Table Expressions (CTEs / `WITH`)
 - `UNION` / `INTERSECT` / `EXCEPT`
 - Window functions (`OVER`, `PARTITION BY`)
-- Aggregate functions (`COUNT`, `SUM`, `AVG`, `MIN`, `MAX`)
+- `ALTER TABLE`
+- `CREATE INDEX` / `DROP INDEX`
+- `INSERT ... SELECT`
+- Multi-row `INSERT` (single VALUES tuple only)
 - `ALTER TABLE`
 - `CREATE INDEX` / `DROP INDEX`
 - `INSERT ... SELECT`
@@ -95,6 +97,8 @@ The SQL string is tokenized with the following rules:
 ```
 SELECT [DISTINCT] columns FROM table
   [WHERE conditions]
+  [GROUP BY column { "," column }]
+  [HAVING conditions]
   [ORDER BY column [ASC|DESC]]
   [LIMIT n]
   [OFFSET n]
@@ -106,9 +110,32 @@ SELECT [DISTINCT] columns FROM table
 |------|---------|-------------|
 | Wildcard | `SELECT * FROM Sheet1` | All columns in header order |
 | Named | `SELECT id, name FROM Sheet1` | Specific columns (must exist in header) |
+| Aggregate | `SELECT COUNT(*) FROM Sheet1` | Aggregate function call |
+| Mixed | `SELECT name, COUNT(*) FROM Sheet1 GROUP BY name` | Plain + aggregate columns |
 
 - Column aliases (`AS`) are **not supported**.
-- Expressions in SELECT list are **not supported** (no `col + 1`, no `UPPER(name)`).
+- Arithmetic expressions in SELECT list are **not supported** (no `col + 1`, no `UPPER(name)`).
+
+#### 3.2.1 Aggregate Functions
+
+| Function | Example | Description |
+|----------|---------|-------------|
+| `COUNT(*)` | `SELECT COUNT(*) FROM Sheet1` | Count all rows |
+| `COUNT(col)` | `SELECT COUNT(score) FROM Sheet1` | Count non-NULL values |
+| `SUM(col)` | `SELECT SUM(score) FROM Sheet1` | Sum of numeric values |
+| `AVG(col)` | `SELECT AVG(score) FROM Sheet1` | Average of numeric values |
+| `MIN(col)` | `SELECT MIN(score) FROM Sheet1` | Minimum numeric value |
+| `MAX(col)` | `SELECT MAX(score) FROM Sheet1` | Maximum numeric value |
+
+**NULL handling**:
+- `COUNT(*)` on empty set → `0`
+- `COUNT(col)` excludes NULL values
+- `SUM/AVG/MIN/MAX` on empty set or all-NULL → `None`
+- Non-numeric values are ignored by `SUM/AVG/MIN/MAX`
+
+**Implicit grouping**: Without `GROUP BY`, aggregates treat the entire result set as one group and return a single row.
+
+**Mixed columns**: When non-aggregate columns appear alongside aggregates, `GROUP BY` is required. Non-aggregate columns must appear in `GROUP BY`.
 
 ### 3.3 WHERE Clause
 
@@ -148,9 +175,32 @@ See [Section 7: WHERE Clause](#7-where-clause).
 - `DISTINCT` is supported immediately after `SELECT`.
 - Deduplication is applied after projection and preserves first-seen row order.
 
-### 3.8 Clause Ordering
+### 3.8 GROUP BY
 
-Clauses must appear in this order: `WHERE` → `ORDER BY` → `LIMIT` → `OFFSET`.
+| Feature | Supported | Example |
+|---------|-----------|---------|
+| Single column | ✅ | `GROUP BY name` |
+| Multiple columns | ✅ | `GROUP BY dept, name` |
+
+- Partitions rows into groups by the specified column(s).
+- Columns in the SELECT list must either be aggregate functions or appear in GROUP BY.
+- Groups preserve insertion order (dict key order).
+
+### 3.9 HAVING
+
+| Feature | Supported | Example |
+|---------|-----------|---------|
+| Aggregate condition | ✅ | `HAVING COUNT(*) > 1` |
+| Comparison | ✅ | `HAVING SUM(score) >= 100` |
+| Multiple conditions | ✅ | `HAVING COUNT(*) > 1 AND SUM(score) > 50` |
+
+- Requires `GROUP BY` — `HAVING` without `GROUP BY` raises `ValueError`.
+- Filters groups after aggregation (contrast with `WHERE` which filters rows before grouping).
+- Conditions reference aggregate labels, e.g., `SUM(score)` as the column name.
+
+### 3.10 Clause Ordering
+
+Clauses must appear in this order: `WHERE` → `GROUP BY` → `HAVING` → `ORDER BY` → `LIMIT` → `OFFSET`.
 Any other ordering raises `ValueError`.
 
 ---
@@ -363,8 +413,10 @@ For UPDATE with WHERE:
 ```ebnf
 statement     = select | insert | update | delete | create | drop ;
 
-select        = "SELECT" [ "DISTINCT" ] columns "FROM" table
+select        = "SELECT" [ "DISTINCT" ] select_columns "FROM" table
                 [ "WHERE" where_expr ]
+                [ "GROUP" "BY" column { "," column } ]
+                [ "HAVING" where_expr ]
                 [ "ORDER" "BY" column [ direction ] ]
                 [ "LIMIT" integer ]
                 [ "OFFSET" integer ] ;
@@ -380,6 +432,10 @@ delete        = "DELETE" "FROM" table [ "WHERE" where_expr ] ;
 create        = "CREATE" "TABLE" table "(" column_def { "," column_def } ")" ;
 drop          = "DROP" "TABLE" table ;
 
+select_columns = "*" | select_item { "," select_item } ;
+select_item    = column | aggregate ;
+aggregate      = aggregate_func "(" ( "*" | column ) ")" ;
+aggregate_func = "COUNT" | "SUM" | "AVG" | "MIN" | "MAX" ;
 columns       = "*" | column { "," column } ;
 column_list   = column { "," column } ;
 value_list    = value { "," value } ;

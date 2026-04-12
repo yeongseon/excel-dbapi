@@ -110,3 +110,49 @@ def test_parse_select_limit_offset_param_binding_order():
     assert parsed["where"]["conditions"][0]["value"] == 1
     assert parsed["limit"] == 10
     assert parsed["offset"] == 5
+
+
+def test_parse_select_count_star_column():
+    parsed = parse_sql("SELECT COUNT(*) FROM Sheet1")
+    assert parsed["columns"] == [{"type": "aggregate", "func": "COUNT", "arg": "*"}]
+    assert parsed["group_by"] is None
+    assert parsed["having"] is None
+
+
+def test_parse_select_with_group_by_and_count():
+    parsed = parse_sql("SELECT name, COUNT(*) FROM Sheet1 GROUP BY name")
+    assert parsed["columns"] == [
+        "name",
+        {"type": "aggregate", "func": "COUNT", "arg": "*"},
+    ]
+    assert parsed["group_by"] == ["name"]
+
+
+def test_parse_select_with_having_aggregate_expression():
+    parsed = parse_sql(
+        "SELECT name, SUM(score) FROM Sheet1 GROUP BY name HAVING SUM(score) > 100"
+    )
+    assert parsed["group_by"] == ["name"]
+    assert parsed["having"] == {
+        "conditions": [{"column": "SUM(score)", "operator": ">", "value": 100}],
+        "conjunctions": [],
+    }
+
+
+def test_parse_select_all_aggregate_functions():
+    parsed = parse_sql(
+        "SELECT COUNT(*), COUNT(score), SUM(score), AVG(score), MIN(score), MAX(score) FROM Sheet1"
+    )
+    assert parsed["columns"] == [
+        {"type": "aggregate", "func": "COUNT", "arg": "*"},
+        {"type": "aggregate", "func": "COUNT", "arg": "score"},
+        {"type": "aggregate", "func": "SUM", "arg": "score"},
+        {"type": "aggregate", "func": "AVG", "arg": "score"},
+        {"type": "aggregate", "func": "MIN", "arg": "score"},
+        {"type": "aggregate", "func": "MAX", "arg": "score"},
+    ]
+
+
+def test_parse_select_group_by_before_where_raises():
+    with pytest.raises(ValueError):
+        parse_sql("SELECT name, COUNT(*) FROM Sheet1 GROUP BY name WHERE name = 'A'")

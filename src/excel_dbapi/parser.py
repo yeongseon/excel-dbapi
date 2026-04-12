@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Optional
 
 
@@ -109,11 +110,56 @@ def _parse_value(token: str) -> Any:
         return token
 
 
-def _parse_columns(columns_token: str) -> List[str]:
+_AGGREGATE_FUNCTIONS = frozenset({"COUNT", "SUM", "AVG", "MIN", "MAX"})
+
+
+def _collapse_aggregate_tokens(tokens: List[str]) -> List[str]:
+    collapsed: List[str] = []
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        upper = token.upper()
+        if (
+            upper in _AGGREGATE_FUNCTIONS
+            and index + 3 < len(tokens)
+            and tokens[index + 1] == "("
+            and tokens[index + 3] == ")"
+        ):
+            arg = tokens[index + 2].strip()
+            collapsed.append(f"{upper}({arg})")
+            index += 4
+            continue
+        collapsed.append(token)
+        index += 1
+    return collapsed
+
+
+def _normalize_aggregate_expressions(text: str) -> str:
+    return " ".join(_collapse_aggregate_tokens(_tokenize(text)))
+
+
+def _parse_columns(columns_token: str) -> List[Any]:
     columns_token = columns_token.strip()
     if columns_token == "*":
         return ["*"]
-    columns = [col.strip() for col in columns_token.split(",") if col.strip()]
+    columns: List[Any] = []
+    for raw_column in _split_csv(columns_token):
+        column = raw_column.strip()
+        if not column:
+            continue
+        match = re.fullmatch(
+            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([^\)]+?)\s*\)", column
+        )
+        if match:
+            func = match.group(1).upper()
+            arg = match.group(2).strip()
+            if not arg:
+                raise ValueError("Invalid aggregate expression")
+            if arg == "*" and func != "COUNT":
+                raise ValueError(f"{func} does not support *")
+            columns.append({"type": "aggregate", "func": func, "arg": arg})
+            continue
+        columns.append(column)
     if not columns:
         raise ValueError("Invalid column list")
     return columns
@@ -172,7 +218,7 @@ def _parse_where_expression(
     params: Optional[tuple[Any, ...]],
     bind_params: bool = True,
 ) -> Dict[str, Any]:
-    tokens = _tokenize(where_part.strip())
+    tokens = _collapse_aggregate_tokens(_tokenize(where_part.strip()))
     for token_index, token in enumerate(tokens):
         if token.startswith("("):
             if token_index == 0 or tokens[token_index - 1].upper() != "IN":
@@ -324,18 +370,25 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
     remainder = " ".join(tokens[from_index + 2 :]).strip()
     remainder_upper = remainder.upper()
-    for unsupported in (" JOIN ", " GROUP BY ", " HAVING "):
+    for unsupported in (" JOIN ",):
         if unsupported in f" {remainder_upper} ":
             raise ValueError(f"Unsupported SQL grammar:{unsupported.strip()}")
     where = None
+    group_by = None
+    having = None
     order_by = None
     limit = None
     offset = None
 
     where_index = remainder_upper.find("WHERE ")
+    group_index = remainder_upper.find("GROUP BY ")
+    having_index = remainder_upper.find("HAVING ")
     order_index = remainder_upper.find("ORDER BY ")
     limit_index = remainder_upper.find("LIMIT ")
     offset_index = remainder_upper.find("OFFSET ")
+
+    if having_index >= 0 and group_index < 0:
+        raise ValueError("HAVING requires GROUP BY")
 
     if where_index >= 0 and order_index >= 0 and order_index < where_index:
         raise ValueError("ORDER BY cannot appear before WHERE")
@@ -343,6 +396,24 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         raise ValueError("LIMIT cannot appear before WHERE")
     if where_index >= 0 and offset_index >= 0 and offset_index < where_index:
         raise ValueError("OFFSET cannot appear before WHERE")
+    if where_index >= 0 and group_index >= 0 and group_index < where_index:
+        raise ValueError("GROUP BY cannot appear before WHERE")
+    if where_index >= 0 and having_index >= 0 and having_index < where_index:
+        raise ValueError("HAVING cannot appear before WHERE")
+    if group_index >= 0 and having_index >= 0 and having_index < group_index:
+        raise ValueError("HAVING cannot appear before GROUP BY")
+    if group_index >= 0 and order_index >= 0 and order_index < group_index:
+        raise ValueError("ORDER BY cannot appear before GROUP BY")
+    if group_index >= 0 and limit_index >= 0 and limit_index < group_index:
+        raise ValueError("LIMIT cannot appear before GROUP BY")
+    if group_index >= 0 and offset_index >= 0 and offset_index < group_index:
+        raise ValueError("OFFSET cannot appear before GROUP BY")
+    if having_index >= 0 and order_index >= 0 and order_index < having_index:
+        raise ValueError("ORDER BY cannot appear before HAVING")
+    if having_index >= 0 and limit_index >= 0 and limit_index < having_index:
+        raise ValueError("LIMIT cannot appear before HAVING")
+    if having_index >= 0 and offset_index >= 0 and offset_index < having_index:
+        raise ValueError("OFFSET cannot appear before HAVING")
     if order_index >= 0 and offset_index >= 0 and offset_index < order_index:
         raise ValueError("OFFSET cannot appear before ORDER BY")
     if limit_index >= 0 and offset_index >= 0 and offset_index < limit_index:
@@ -351,13 +422,43 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     if where_index >= 0:
         where_start = where_index + len("WHERE ")
         where_end_candidates = [
-            idx for idx in [order_index, limit_index, offset_index] if idx >= 0
+            idx
+            for idx in [group_index, having_index, order_index, limit_index, offset_index]
+            if idx >= 0 and idx > where_index
         ]
         where_end = (
             min(where_end_candidates) if where_end_candidates else len(remainder)
         )
         where_part = remainder[where_start:where_end].strip()
         where = _parse_where_expression(where_part, params, bind_params=False)
+
+    if group_index >= 0:
+        group_start = group_index + len("GROUP BY ")
+        group_end_candidates = [
+            idx for idx in [having_index, order_index, limit_index, offset_index] if idx >= 0 and idx > group_index
+        ]
+        group_end = (
+            min(group_end_candidates) if group_end_candidates else len(remainder)
+        )
+        group_part = remainder[group_start:group_end].strip()
+        group_columns = [col.strip() for col in _split_csv(group_part) if col.strip()]
+        if not group_columns:
+            raise ValueError("Invalid GROUP BY clause format")
+        group_by = group_columns
+
+    if having_index >= 0:
+        having_start = having_index + len("HAVING ")
+        having_end_candidates = [
+            idx for idx in [order_index, limit_index, offset_index] if idx >= 0 and idx > having_index
+        ]
+        having_end = (
+            min(having_end_candidates) if having_end_candidates else len(remainder)
+        )
+        having_part = remainder[having_start:having_end].strip()
+        if not having_part:
+            raise ValueError("Invalid HAVING clause format")
+        having_part = _normalize_aggregate_expressions(having_part)
+        having = _parse_where_expression(having_part, params, bind_params=False)
 
     if order_index >= 0:
         order_start = order_index + len("ORDER BY ")
@@ -406,21 +507,25 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
     if params is not None or (
         (where and any(value == "?" for value in _where_values_to_bind(where)))
+        or (having and any(value == "?" for value in _where_values_to_bind(having)))
         or limit == "?"
         or offset == "?"
     ):
         values_to_bind = []
         if where:
             values_to_bind.extend(_where_values_to_bind(where))
+        if having:
+            values_to_bind.extend(_where_values_to_bind(having))
         if limit is not None:
             values_to_bind.append(limit)
         if offset is not None:
             values_to_bind.append(offset)
         bound = _bind_params(values_to_bind, params)
+        consumed = 0
         if where:
-            consumed = _bind_where_conditions(where, bound, 0)
-        else:
-            consumed = 0
+            consumed += _bind_where_conditions(where, bound, consumed)
+        if having:
+            consumed += _bind_where_conditions(having, bound, consumed)
         if limit is not None:
             limit = bound[consumed]
             consumed += 1
@@ -437,6 +542,8 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         "columns": columns,
         "table": table,
         "where": where,
+        "group_by": group_by,
+        "having": having,
         "order_by": order_by,
         "limit": limit,
         "offset": offset,

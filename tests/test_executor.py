@@ -39,6 +39,15 @@ def _create_select_workbook(path: Path) -> None:
     workbook.save(path)
 
 
+def _create_empty_select_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(["id", "name", "score"])
+    workbook.save(path)
+
+
 def test_executor_distinct_removes_duplicates_and_preserves_order(tmp_path: Path):
     file_path = tmp_path / "distinct_order.xlsx"
     _create_select_workbook(file_path)
@@ -116,3 +125,100 @@ def test_executor_offset_with_where_and_distinct_limit(tmp_path: Path):
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [("B",), ("C",)]
+
+
+def test_executor_aggregate_count_star(tmp_path: Path):
+    file_path = tmp_path / "aggregate_count.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT COUNT(*) FROM Sheet1")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(5,)]
+    assert results.description[0][0] == "COUNT(*)"
+
+
+def test_executor_aggregate_sum_avg_min_max(tmp_path: Path):
+    file_path = tmp_path / "aggregate_numeric.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT SUM(score), AVG(score), MIN(score), MAX(score) FROM Sheet1")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(50.0, 50.0 / 3.0, 10.0, 30.0)]
+
+
+def test_executor_group_by_count(tmp_path: Path):
+    file_path = tmp_path / "group_by_count.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT name, COUNT(*) FROM Sheet1 GROUP BY name ORDER BY name ASC")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [("A", 2), ("B", 2), ("C", 1)]
+
+
+def test_executor_group_by_having_sum(tmp_path: Path):
+    file_path = tmp_path / "group_by_having.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT name, SUM(score) FROM Sheet1 GROUP BY name HAVING SUM(score) > 15 ORDER BY name ASC"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [("A", 20.0), ("C", 30.0)]
+
+
+def test_executor_aggregate_empty_table(tmp_path: Path):
+    file_path = tmp_path / "aggregate_empty.xlsx"
+    _create_empty_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT COUNT(*), SUM(score), AVG(score), MIN(score), MAX(score) FROM Sheet1"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(0, None, None, None, None)]
+
+
+def test_executor_count_column_excludes_nulls(tmp_path: Path):
+    file_path = tmp_path / "aggregate_count_nulls.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT COUNT(*), COUNT(score) FROM Sheet1")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(5, 3)]
+
+
+def test_executor_group_by_with_order_limit_offset(tmp_path: Path):
+    file_path = tmp_path / "group_by_order_limit_offset.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT name, COUNT(*) FROM Sheet1 GROUP BY name ORDER BY name DESC LIMIT 1 OFFSET 1"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [("B", 2)]
+
+
+def test_executor_distinct_with_group_by(tmp_path: Path):
+    file_path = tmp_path / "group_by_distinct.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT DISTINCT name FROM Sheet1 GROUP BY name ORDER BY name ASC"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [("A",), ("B",), ("C",)]
