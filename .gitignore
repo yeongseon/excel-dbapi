@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.py[cod]
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Data files
+*.xlsx
+!tests/data/*.xlsx
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "excel-dbapi"
+version = "0.1.0"
+description = "PEP 249 compliant DB-API driver for Excel files"
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["excel", "db-api", "sql", "openpyxl", "pandas"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Education",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Database",
+  "Topic :: Software Development :: Libraries",
+]
+dependencies = ["openpyxl>=3.1.0,<4.0.0"]
+
+[[project.authors]]
+name = "Yeongseon Choe"
+email = "yeongseon.choe@gmail.com"
+
+[project.urls]
+Homepage = "https://github.com/yeongseon/excel-dbapi"
+Repository = "https://github.com/yeongseon/excel-dbapi"
+Issues = "https://github.com/yeongseon/excel-dbapi/issues"
+Changelog = "https://github.com/yeongseon/excel-dbapi/blob/main/CHANGELOG.md"
+
+[project.optional-dependencies]
+pandas = ["pandas>=2.0.0,<3.0.0"]
+graph = ["httpx>=0.27"]
+graph-azure = ["httpx>=0.27", "azure-identity>=1.15"]
+dev = [
+  "pytest>=8.0",
+  "pytest-cov>=4.0",
+  "ruff>=0.4",
+  "mypy>=1.10",
+  "httpx>=0.27",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/excel_dbapi"]
+
+[tool.mypy]
+ignore_missing_imports = true
+strict = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
