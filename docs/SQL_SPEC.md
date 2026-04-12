@@ -137,6 +137,8 @@ SELECT [DISTINCT] columns FROM table
 
 **Mixed columns**: When non-aggregate columns appear alongside aggregates, `GROUP BY` is required. Non-aggregate columns must appear in `GROUP BY`.
 
+**Aggregate arguments**: Aggregate calls accept only a bare column name (e.g., `SUM(score)`) or `*` for `COUNT(*)`. Expressions such as `COUNT(DISTINCT name)` and `SUM(score + 1)` are not supported.
+
 ### 3.3 WHERE Clause
 
 See [Section 7: WHERE Clause](#7-where-clause).
@@ -200,7 +202,7 @@ See [Section 7: WHERE Clause](#7-where-clause).
 
 - Requires `GROUP BY` — `HAVING` without `GROUP BY` raises `ValueError`.
 - Filters groups after aggregation (contrast with `WHERE` which filters rows before grouping).
-- Conditions reference aggregate labels, e.g., `SUM(score)` as the column name.
+- Conditions may reference aggregate expressions (e.g., `SUM(score)`) and `GROUP BY` columns.
 
 ### 3.10 Clause Ordering
 
@@ -405,6 +407,8 @@ For UPDATE with WHERE:
 | Param count mismatch | `ValueError` | `Not enough / Too many parameters` |
 | Unsupported grammar (JOIN, etc.) | `ValueError` | `Unsupported SQL grammar: {feature}` |
 | Parenthesized WHERE | `ValueError` | `Unsupported SQL grammar: parenthesized expressions` |
+| Aggregate in WHERE clause | `ValueError` | `Aggregate functions are not allowed in WHERE clause; use HAVING instead` |
+| Invalid HAVING column reference | `ValueError` | `HAVING column '{column}' must be a GROUP BY column or aggregate` |
 | Read-only backend mutation | `NotSupportedError` | `{action} is not supported by the read-only backend` |
 | Invalid LIMIT (non-integer) | `ValueError` | `LIMIT must be an integer` |
 | INSERT into headless sheet | `ValueError` | `Cannot insert into sheet without headers` |

@@ -138,6 +138,53 @@ def _normalize_aggregate_expressions(text: str) -> str:
     return " ".join(_collapse_aggregate_tokens(_tokenize(text)))
 
 
+def _is_quoted_token(token: str) -> bool:
+    return (
+        len(token) >= 2
+        and ((token.startswith("'") and token.endswith("'")) or (token.startswith('"') and token.endswith('"')))
+    )
+
+
+def _find_clause_positions(tokens: List[str]) -> Dict[str, int]:
+    positions: Dict[str, int] = {}
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if _is_quoted_token(token):
+            index += 1
+            continue
+
+        upper = token.upper()
+        if upper == "WHERE" and "WHERE" not in positions:
+            positions["WHERE"] = index
+        elif (
+            upper == "GROUP"
+            and index + 1 < len(tokens)
+            and tokens[index + 1].upper() == "BY"
+            and "GROUP BY" not in positions
+        ):
+            positions["GROUP BY"] = index
+            index += 1
+        elif upper == "HAVING" and "HAVING" not in positions:
+            positions["HAVING"] = index
+        elif (
+            upper == "ORDER"
+            and index + 1 < len(tokens)
+            and tokens[index + 1].upper() == "BY"
+            and "ORDER BY" not in positions
+        ):
+            positions["ORDER BY"] = index
+            index += 1
+        elif upper == "LIMIT" and "LIMIT" not in positions:
+            positions["LIMIT"] = index
+        elif upper == "OFFSET" and "OFFSET" not in positions:
+            positions["OFFSET"] = index
+
+        index += 1
+
+    return positions
+
+
 def _parse_columns(columns_token: str) -> List[Any]:
     columns_token = columns_token.strip()
     if columns_token == "*":
@@ -157,6 +204,17 @@ def _parse_columns(columns_token: str) -> List[Any]:
                 raise ValueError("Invalid aggregate expression")
             if arg == "*" and func != "COUNT":
                 raise ValueError(f"{func} does not support *")
+            if arg != "*" and (
+                " " in arg
+                or "+" in arg
+                or "-" in arg
+                or "/" in arg
+                or "(" in arg
+            ):
+                raise ValueError(
+                    f"Unsupported aggregate expression: {func}({arg}). "
+                    "Only bare column names and * are supported"
+                )
             columns.append({"type": "aggregate", "func": func, "arg": arg})
             continue
         columns.append(column)
@@ -376,11 +434,12 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         raise ValueError(f"Invalid SQL query format: {query}")
     table = tokens[from_index + 1]
 
-    remainder = " ".join(tokens[from_index + 2 :]).strip()
-    remainder_upper = remainder.upper()
-    for unsupported in (" JOIN ",):
-        if unsupported in f" {remainder_upper} ":
-            raise ValueError(f"Unsupported SQL grammar:{unsupported.strip()}")
+    clause_tokens = tokens[from_index + 2 :]
+    for token in clause_tokens:
+        if _is_quoted_token(token):
+            continue
+        if token.upper() == "JOIN":
+            raise ValueError("Unsupported SQL grammar:JOIN")
     where = None
     group_by = None
     having = None
@@ -388,12 +447,13 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     limit = None
     offset = None
 
-    where_index = remainder_upper.find("WHERE ")
-    group_index = remainder_upper.find("GROUP BY ")
-    having_index = remainder_upper.find("HAVING ")
-    order_index = remainder_upper.find("ORDER BY ")
-    limit_index = remainder_upper.find("LIMIT ")
-    offset_index = remainder_upper.find("OFFSET ")
+    clause_positions = _find_clause_positions(clause_tokens)
+    where_index = clause_positions.get("WHERE", -1)
+    group_index = clause_positions.get("GROUP BY", -1)
+    having_index = clause_positions.get("HAVING", -1)
+    order_index = clause_positions.get("ORDER BY", -1)
+    limit_index = clause_positions.get("LIMIT", -1)
+    offset_index = clause_positions.get("OFFSET", -1)
 
     if having_index >= 0 and group_index < 0:
         raise ValueError("HAVING requires GROUP BY")
@@ -428,41 +488,35 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         raise ValueError("OFFSET cannot appear before LIMIT")
 
     if where_index >= 0:
-        where_start = where_index + len("WHERE ")
+        where_start = where_index + 1
         where_end_candidates = [
             idx
             for idx in [group_index, having_index, order_index, limit_index, offset_index]
             if idx >= 0 and idx > where_index
         ]
-        where_end = (
-            min(where_end_candidates) if where_end_candidates else len(remainder)
-        )
-        where_part = remainder[where_start:where_end].strip()
+        where_end = min(where_end_candidates) if where_end_candidates else len(clause_tokens)
+        where_part = " ".join(clause_tokens[where_start:where_end]).strip()
         where = _parse_where_expression(where_part, params, bind_params=False)
 
     if group_index >= 0:
-        group_start = group_index + len("GROUP BY ")
+        group_start = group_index + 2
         group_end_candidates = [
             idx for idx in [having_index, order_index, limit_index, offset_index] if idx >= 0 and idx > group_index
         ]
-        group_end = (
-            min(group_end_candidates) if group_end_candidates else len(remainder)
-        )
-        group_part = remainder[group_start:group_end].strip()
+        group_end = min(group_end_candidates) if group_end_candidates else len(clause_tokens)
+        group_part = " ".join(clause_tokens[group_start:group_end]).strip()
         group_columns = [col.strip() for col in _split_csv(group_part) if col.strip()]
         if not group_columns:
             raise ValueError("Invalid GROUP BY clause format")
         group_by = group_columns
 
     if having_index >= 0:
-        having_start = having_index + len("HAVING ")
+        having_start = having_index + 1
         having_end_candidates = [
             idx for idx in [order_index, limit_index, offset_index] if idx >= 0 and idx > having_index
         ]
-        having_end = (
-            min(having_end_candidates) if having_end_candidates else len(remainder)
-        )
-        having_part = remainder[having_start:having_end].strip()
+        having_end = min(having_end_candidates) if having_end_candidates else len(clause_tokens)
+        having_part = " ".join(clause_tokens[having_start:having_end]).strip()
         if not having_part:
             raise ValueError("Invalid HAVING clause format")
         having_part = _normalize_aggregate_expressions(having_part)
@@ -474,14 +528,14 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         )
 
     if order_index >= 0:
-        order_start = order_index + len("ORDER BY ")
+        order_start = order_index + 2
         order_end_candidates = [
             idx
             for idx in [limit_index, offset_index]
             if idx >= 0 and idx > order_index
         ]
-        order_end = min(order_end_candidates) if order_end_candidates else len(remainder)
-        order_part = remainder[order_start:order_end].strip()
+        order_end = min(order_end_candidates) if order_end_candidates else len(clause_tokens)
+        order_part = " ".join(clause_tokens[order_start:order_end]).strip()
         order_part = _normalize_aggregate_expressions(order_part)
         order_tokens = order_part.split()
         if not order_tokens:
@@ -494,13 +548,13 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         order_by = {"column": order_tokens[0], "direction": direction}
 
     if limit_index >= 0:
-        limit_start = limit_index + len("LIMIT ")
+        limit_start = limit_index + 1
         limit_end = (
             offset_index
             if offset_index >= 0 and offset_index > limit_index
-            else len(remainder)
+            else len(clause_tokens)
         )
-        limit_part = remainder[limit_start:limit_end].strip()
+        limit_part = " ".join(clause_tokens[limit_start:limit_end]).strip()
         if not limit_part:
             raise ValueError("Invalid LIMIT clause format")
         limit_value = _parse_value(limit_part)
@@ -510,7 +564,7 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         limit = limit_value
 
     if offset_index >= 0:
-        offset_part = remainder[offset_index + len("OFFSET ") :].strip()
+        offset_part = " ".join(clause_tokens[offset_index + 1 :]).strip()
         if not offset_part:
             raise ValueError("Invalid OFFSET clause format")
         offset_value = _parse_value(offset_part)

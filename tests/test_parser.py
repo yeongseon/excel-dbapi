@@ -187,3 +187,27 @@ def test_where_rejects_aggregate_avg():
         match="Aggregate functions are not allowed in WHERE",
     ):
         parse_sql("SELECT name FROM users WHERE AVG(score) > 50")
+
+
+def test_where_with_quoted_group_by_keyword():
+    result = parse_sql("SELECT * FROM users WHERE note = 'x GROUP BY y'")
+    assert result["action"] == "SELECT"
+    assert result["where"] is not None
+    assert result["group_by"] is None
+
+
+def test_where_with_quoted_order_by_keyword():
+    result = parse_sql("SELECT * FROM users WHERE note = 'x ORDER BY y'")
+    assert result["action"] == "SELECT"
+    assert result["where"] is not None
+    assert result["order_by"] is None
+
+
+def test_aggregate_rejects_distinct():
+    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+        parse_sql("SELECT COUNT(DISTINCT name) FROM users")
+
+
+def test_aggregate_rejects_expression():
+    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+        parse_sql("SELECT SUM(age + 1) FROM users")
