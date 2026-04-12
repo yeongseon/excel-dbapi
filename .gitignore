@@ -22,6 +22,13 @@ build/
 dist/
 *.egg-info/
 
+# Docs
+site/
+
+# Review
+.venv-review/
+.venv-review-cli/
+
 # Data files
 *.xlsx
 !tests/data/*.xlsx
