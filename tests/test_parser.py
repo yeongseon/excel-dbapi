@@ -72,3 +72,41 @@ def test_parse_select_with_order_limit_and_conditions():
 def test_parse_update_with_or_where():
     parsed = parse_sql("UPDATE Sheet1 SET name = 'A' WHERE id = 1 OR id = 2")
     assert parsed["where"]["conjunctions"] == ["OR"]
+
+
+def test_parse_select_distinct_variants():
+    parsed = parse_sql("SELECT DISTINCT col1 FROM t")
+    assert parsed["distinct"] is True
+    assert parsed["columns"] == ["col1"]
+
+    parsed = parse_sql("SELECT DISTINCT col1, col2 FROM t")
+    assert parsed["distinct"] is True
+    assert parsed["columns"] == ["col1", "col2"]
+
+    parsed = parse_sql("SELECT DISTINCT * FROM t")
+    assert parsed["distinct"] is True
+    assert parsed["columns"] == ["*"]
+
+    parsed = parse_sql("SELECT col1 FROM t")
+    assert parsed["distinct"] is False
+
+
+def test_parse_select_limit_offset_variants():
+    parsed = parse_sql("SELECT * FROM t LIMIT 10 OFFSET 5")
+    assert parsed["limit"] == 10
+    assert parsed["offset"] == 5
+
+    parsed = parse_sql("SELECT * FROM t OFFSET 5")
+    assert parsed["limit"] is None
+    assert parsed["offset"] == 5
+
+
+def test_parse_select_limit_offset_param_binding_order():
+    parsed = parse_sql("SELECT * FROM t LIMIT ? OFFSET ?", (10, 5))
+    assert parsed["limit"] == 10
+    assert parsed["offset"] == 5
+
+    parsed = parse_sql("SELECT * FROM t WHERE x = ? LIMIT ? OFFSET ?", (1, 10, 5))
+    assert parsed["where"]["conditions"][0]["value"] == 1
+    assert parsed["limit"] == 10
+    assert parsed["offset"] == 5

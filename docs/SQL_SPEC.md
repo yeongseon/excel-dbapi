@@ -16,7 +16,7 @@ database engine.
 
 | Statement | Supported |
 |-----------|-----------|
-| `SELECT`  | ✅ Single-table, with WHERE / ORDER BY / LIMIT |
+| `SELECT`  | ✅ Single-table, with DISTINCT / WHERE / ORDER BY / LIMIT / OFFSET |
 | `INSERT`  | ✅ Single-row with optional column list |
 | `UPDATE`  | ✅ With SET assignments and optional WHERE |
 | `DELETE`  | ✅ With optional WHERE |
@@ -29,8 +29,6 @@ The following SQL features are **rejected at parse time** with `ValueError`:
 
 - `JOIN` (any variant: INNER, LEFT, RIGHT, CROSS, NATURAL)
 - `GROUP BY` / `HAVING`
-- `DISTINCT`
-- `OFFSET`
 - Subqueries (scalar, correlated, or in FROM)
 - Common Table Expressions (CTEs / `WITH`)
 - `UNION` / `INTERSECT` / `EXCEPT`
@@ -95,10 +93,11 @@ The SQL string is tokenized with the following rules:
 ### 3.1 Syntax
 
 ```
-SELECT columns FROM table
+SELECT [DISTINCT] columns FROM table
   [WHERE conditions]
   [ORDER BY column [ASC|DESC]]
   [LIMIT n]
+  [OFFSET n]
 ```
 
 ### 3.2 Columns
@@ -134,11 +133,24 @@ See [Section 7: WHERE Clause](#7-where-clause).
 |---------|-----------|---------|
 | Integer literal | ✅ | `LIMIT 10` |
 | Placeholder | ✅ | `LIMIT ?` |
-| OFFSET | ❌ | `LIMIT 10 OFFSET 5` — raises ValueError |
+| With OFFSET | ✅ | `LIMIT 10 OFFSET 5` |
 
-### 3.6 Clause Ordering
+### 3.6 OFFSET
 
-Clauses must appear in this order: `WHERE` → `ORDER BY` → `LIMIT`.
+| Feature | Supported | Example |
+|---------|-----------|---------|
+| Integer literal | ✅ | `OFFSET 5` |
+| Placeholder | ✅ | `OFFSET ?` |
+| Bare OFFSET (without LIMIT) | ✅ | `SELECT * FROM t OFFSET 5` |
+
+### 3.7 DISTINCT
+
+- `DISTINCT` is supported immediately after `SELECT`.
+- Deduplication is applied after projection and preserves first-seen row order.
+
+### 3.8 Clause Ordering
+
+Clauses must appear in this order: `WHERE` → `ORDER BY` → `LIMIT` → `OFFSET`.
 Any other ordering raises `ValueError`.
 
 ---
@@ -317,7 +329,7 @@ cursor.execute("INSERT INTO Sheet1 (id, name) VALUES (?, ?)", (1, "Alice"))
 - Each `?` in the query consumes one parameter from the `params` tuple, left to right.
 - Too few parameters → `ValueError: Not enough parameters for placeholders`
 - Too many parameters → `ValueError: Too many parameters for placeholders`
-- Parameters can appear in: WHERE values, SET values, VALUES list, LIMIT
+- Parameters can appear in: WHERE values, SET values, VALUES list, LIMIT, OFFSET
 
 ### 9.3 Binding Order
 
@@ -351,10 +363,11 @@ For UPDATE with WHERE:
 ```ebnf
 statement     = select | insert | update | delete | create | drop ;
 
-select        = "SELECT" columns "FROM" table
+select        = "SELECT" [ "DISTINCT" ] columns "FROM" table
                 [ "WHERE" where_expr ]
                 [ "ORDER" "BY" column [ direction ] ]
-                [ "LIMIT" integer ] ;
+                [ "LIMIT" integer ]
+                [ "OFFSET" integer ] ;
 
 insert        = "INSERT" "INTO" table [ "(" column_list ")" ]
                 "VALUES" "(" value_list ")" ;

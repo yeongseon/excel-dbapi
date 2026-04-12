@@ -310,8 +310,12 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     columns_token = " ".join(tokens[1:from_index]).strip()
     if not columns_token:
         raise ValueError(f"Invalid SQL query format: {query}")
+    distinct = False
     if columns_token.upper().startswith("DISTINCT "):
-        raise ValueError("Unsupported SQL grammar: DISTINCT")
+        distinct = True
+        columns_token = columns_token[len("DISTINCT ") :].strip()
+        if not columns_token:
+            raise ValueError("DISTINCT requires column list")
     columns = _parse_columns(columns_token)
 
     if len(tokens) <= from_index + 1:
@@ -326,19 +330,29 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     where = None
     order_by = None
     limit = None
+    offset = None
 
     where_index = remainder_upper.find("WHERE ")
     order_index = remainder_upper.find("ORDER BY ")
     limit_index = remainder_upper.find("LIMIT ")
+    offset_index = remainder_upper.find("OFFSET ")
 
     if where_index >= 0 and order_index >= 0 and order_index < where_index:
         raise ValueError("ORDER BY cannot appear before WHERE")
     if where_index >= 0 and limit_index >= 0 and limit_index < where_index:
         raise ValueError("LIMIT cannot appear before WHERE")
+    if where_index >= 0 and offset_index >= 0 and offset_index < where_index:
+        raise ValueError("OFFSET cannot appear before WHERE")
+    if order_index >= 0 and offset_index >= 0 and offset_index < order_index:
+        raise ValueError("OFFSET cannot appear before ORDER BY")
+    if limit_index >= 0 and offset_index >= 0 and offset_index < limit_index:
+        raise ValueError("OFFSET cannot appear before LIMIT")
 
     if where_index >= 0:
         where_start = where_index + len("WHERE ")
-        where_end_candidates = [idx for idx in [order_index, limit_index] if idx >= 0]
+        where_end_candidates = [
+            idx for idx in [order_index, limit_index, offset_index] if idx >= 0
+        ]
         where_end = (
             min(where_end_candidates) if where_end_candidates else len(remainder)
         )
@@ -347,11 +361,12 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
     if order_index >= 0:
         order_start = order_index + len("ORDER BY ")
-        order_end = (
-            limit_index
-            if limit_index >= 0 and limit_index > order_index
-            else len(remainder)
-        )
+        order_end_candidates = [
+            idx
+            for idx in [limit_index, offset_index]
+            if idx >= 0 and idx > order_index
+        ]
+        order_end = min(order_end_candidates) if order_end_candidates else len(remainder)
         order_part = remainder[order_start:order_end].strip()
         order_tokens = order_part.split()
         if not order_tokens:
@@ -364,7 +379,13 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         order_by = {"column": order_tokens[0], "direction": direction}
 
     if limit_index >= 0:
-        limit_part = remainder[limit_index + len("LIMIT ") :].strip()
+        limit_start = limit_index + len("LIMIT ")
+        limit_end = (
+            offset_index
+            if offset_index >= 0 and offset_index > limit_index
+            else len(remainder)
+        )
+        limit_part = remainder[limit_start:limit_end].strip()
         if not limit_part:
             raise ValueError("Invalid LIMIT clause format")
         limit_value = _parse_value(limit_part)
@@ -373,15 +394,28 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
                 raise ValueError("LIMIT must be an integer")
         limit = limit_value
 
+    if offset_index >= 0:
+        offset_part = remainder[offset_index + len("OFFSET ") :].strip()
+        if not offset_part:
+            raise ValueError("Invalid OFFSET clause format")
+        offset_value = _parse_value(offset_part)
+        if not isinstance(offset_value, int):
+            if offset_value != "?":
+                raise ValueError("OFFSET must be an integer")
+        offset = offset_value
+
     if params is not None or (
         (where and any(value == "?" for value in _where_values_to_bind(where)))
         or limit == "?"
+        or offset == "?"
     ):
         values_to_bind = []
         if where:
             values_to_bind.extend(_where_values_to_bind(where))
         if limit is not None:
             values_to_bind.append(limit)
+        if offset is not None:
+            values_to_bind.append(offset)
         bound = _bind_params(values_to_bind, params)
         if where:
             consumed = _bind_where_conditions(where, bound, 0)
@@ -389,9 +423,14 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
             consumed = 0
         if limit is not None:
             limit = bound[consumed]
+            consumed += 1
+        if offset is not None:
+            offset = bound[consumed]
 
     if limit is not None and not isinstance(limit, int):
         raise ValueError("LIMIT must be an integer")
+    if offset is not None and not isinstance(offset, int):
+        raise ValueError("OFFSET must be an integer")
 
     return {
         "action": "SELECT",
@@ -400,6 +439,8 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         "where": where,
         "order_by": order_by,
         "limit": limit,
+        "offset": offset,
+        "distinct": distinct,
     }
 
 

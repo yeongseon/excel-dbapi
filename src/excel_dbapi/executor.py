@@ -82,11 +82,26 @@ class SharedExecutor:
                     reverse=reverse,
                 )
 
+            offset = parsed.get("offset") or 0
             limit = parsed.get("limit")
+            if offset:
+                rows = rows[offset:]
             if limit is not None:
                 rows = rows[:limit]
 
             rows_out = [tuple(row.get(col) for col in selected_columns) for row in rows]
+
+            distinct = parsed.get("distinct", False)
+            if distinct:
+                seen: set[tuple[Any, ...]] = set()
+                unique_rows: list[tuple[Any, ...]] = []
+                for row in rows_out:
+                    hashable = tuple(tuple(v) if isinstance(v, list) else v for v in row)
+                    if hashable not in seen:
+                        seen.add(hashable)
+                        unique_rows.append(row)
+                rows_out = unique_rows
+
             description: Description = [
                 (col, None, None, None, None, None, None) for col in selected_columns
             ]
