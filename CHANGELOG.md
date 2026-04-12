@@ -2,6 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.1] - 2026-04-12
+
+### Added
+- Project logo (modern minimalist SVG)
+- Comprehensive README documentation (WHERE operators section, Related Projects)
+- Contributing guide, Code of Conduct, Security and Support policies
+- Development tooling: Makefile, .editorconfig, pre-commit-config, codecov.yml, git-cliff config
+- GitHub issue/PR templates and project management files
+- py.typed marker for PEP 561 compliance
+- twine check step in publish workflow
+
+### Changed
+- Classifier updated from Alpha to Beta
+- Homepage metadata updated
+- Version bumped to 0.2.1
+
+### Fixed
+- Oracle review findings: rollback docs, absolute logo URLs, metadata alignment
+
+## [0.2.0] - 2026-04-12
+
+### Added
+- IN, BETWEEN, LIKE operators for SQL parser and executor
+- Test coverage reporting with Codecov CI integration
+
+### Changed
+- Version bumped from 0.1.x to 0.2.0 (skipping reserved PyPI versions)
+
+### Fixed
+- All mypy strict errors resolved; strict mode enabled in CI
+- CI: install pandas extra for test suite
+
 ## [0.1.0] - 2026-04-12
 
 ### Added
