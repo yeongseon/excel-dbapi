@@ -469,6 +469,7 @@ def _parse_select(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         ]
         order_end = min(order_end_candidates) if order_end_candidates else len(remainder)
         order_part = remainder[order_start:order_end].strip()
+        order_part = _normalize_aggregate_expressions(order_part)
         order_tokens = order_part.split()
         if not order_tokens:
             raise ValueError("Invalid ORDER BY clause format")

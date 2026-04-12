@@ -48,6 +48,19 @@ def _create_empty_select_workbook(path: Path) -> None:
     workbook.save(path)
 
 
+def _create_users_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "users"
+    sheet.append(["id", "name", "age"])
+    sheet.append([1, "Alice", 30])
+    sheet.append([2, "Bob", 25])
+    sheet.append([3, "Alice", 35])
+    sheet.append([4, "Charlie", 40])
+    workbook.save(path)
+
+
 def test_executor_distinct_removes_duplicates_and_preserves_order(tmp_path: Path):
     file_path = tmp_path / "distinct_order.xlsx"
     _create_select_workbook(file_path)
@@ -222,3 +235,36 @@ def test_executor_distinct_with_group_by(tmp_path: Path):
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [("A",), ("B",), ("C",)]
+
+
+def test_executor_group_by_having_count_not_in_select(tmp_path: Path):
+    file_path = tmp_path / "users_having_count_not_selected.xlsx"
+    _create_users_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT name FROM users GROUP BY name HAVING COUNT(*) > 1")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [("Alice",)]
+
+
+def test_executor_group_by_having_group_column_not_in_select(tmp_path: Path):
+    file_path = tmp_path / "users_having_group_column_not_selected.xlsx"
+    _create_users_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT COUNT(*) FROM users GROUP BY name HAVING name = 'Alice'")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(2,)]
+
+
+def test_executor_group_by_order_by_group_key_not_in_select(tmp_path: Path):
+    file_path = tmp_path / "users_order_by_group_key_not_selected.xlsx"
+    _create_users_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT COUNT(*) FROM users GROUP BY name ORDER BY name")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(2,), (1,), (1,)]

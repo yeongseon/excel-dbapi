@@ -147,10 +147,14 @@ See [Section 7: WHERE Clause](#7-where-clause).
 |---------|-----------|---------|
 | Single column | ✅ | `ORDER BY name ASC` |
 | Direction | ✅ | `ASC` (default) or `DESC` |
-| Multi-column | ❌ | `ORDER BY name, age` — only first column used |
+| Multi-column | ❌ | `ORDER BY name, age` — not supported |
 | Expressions | ❌ | `ORDER BY UPPER(name)` — not supported |
 
-- Column must exist in the worksheet headers.
+- Non-aggregate queries: ORDER BY column must exist in worksheet headers.
+- Aggregate queries (`GROUP BY` and/or aggregate SELECT): ORDER BY may reference:
+  - projected output columns,
+  - GROUP BY columns (even if not projected),
+  - aggregate expressions (e.g., `COUNT(*)`, `SUM(score)`).
 - NULL values sort last (after all non-NULL values).
 - Numeric strings are compared numerically when both operands parse as numbers.
 

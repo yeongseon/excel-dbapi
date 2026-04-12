@@ -326,6 +326,7 @@ class SharedExecutor:
                 )
 
         output_columns: list[str] = []
+        required_aggregates: dict[str, tuple[str, str]] = {}
         for column in columns:
             if self._is_aggregate_column(column):
                 arg = str(column.get("arg"))
@@ -333,7 +334,9 @@ class SharedExecutor:
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
-                output_columns.append(self._aggregate_label(column))
+                label = self._aggregate_label(column)
+                required_aggregates[label] = (str(column.get("func")), arg)
+                output_columns.append(label)
                 continue
 
             column_name = str(column)
@@ -351,6 +354,24 @@ class SharedExecutor:
                 )
             output_columns.append(column_name)
 
+        for clause in (having, parsed.get("order_by")):
+            if clause is None:
+                continue
+            if "conditions" in clause:
+                refs = [str(condition["column"]) for condition in clause["conditions"]]
+            else:
+                refs = [str(clause["column"])]
+            for ref in refs:
+                aggregate_spec = self._aggregate_spec_from_label(ref)
+                if aggregate_spec is None:
+                    continue
+                func, arg = aggregate_spec
+                if arg != "*" and arg not in headers:
+                    raise ValueError(
+                        f"Unknown column: {arg}. Available columns: {headers}"
+                    )
+                required_aggregates[ref] = (func, arg)
+
         grouped_rows: list[dict[str, Any]] = []
         if group_by:
             groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
@@ -360,33 +381,18 @@ class SharedExecutor:
 
             for group_key, group_values in groups.items():
                 group_map = dict(zip(group_by, group_key))
-                output_row: dict[str, Any] = {}
-                for column in columns:
-                    if self._is_aggregate_column(column):
-                        label = self._aggregate_label(column)
-                        output_row[label] = self._compute_aggregate(
-                            str(column.get("func")),
-                            str(column.get("arg")),
-                            group_values,
-                        )
-                    else:
-                        col_name = str(column)
-                        output_row[col_name] = group_map.get(col_name)
-                if having and not self._matches_where(output_row, having):
+                context_row: dict[str, Any] = dict(group_map)
+                for label, (func, arg) in required_aggregates.items():
+                    context_row[label] = self._compute_aggregate(func, arg, group_values)
+                if having and not self._matches_where(context_row, having):
                     continue
-                grouped_rows.append(output_row)
+                grouped_rows.append(context_row)
         else:
-            output_row_single: dict[str, Any] = {}
-            for column in columns:
-                if self._is_aggregate_column(column):
-                    label = self._aggregate_label(column)
-                    output_row_single[label] = self._compute_aggregate(
-                        str(column.get("func")),
-                        str(column.get("arg")),
-                        rows,
-                    )
-            if not having or self._matches_where(output_row_single, having):
-                grouped_rows.append(output_row_single)
+            context_row_single: dict[str, Any] = {}
+            for label, (func, arg) in required_aggregates.items():
+                context_row_single[label] = self._compute_aggregate(func, arg, rows)
+            if not having or self._matches_where(context_row_single, having):
+                grouped_rows.append(context_row_single)
 
         distinct = parsed.get("distinct", False)
         if distinct:
@@ -402,9 +408,13 @@ class SharedExecutor:
         order_by = parsed.get("order_by")
         if order_by:
             order_column = str(order_by["column"])
-            if order_column not in output_columns:
+            available_order_columns = set(output_columns)
+            if group_by:
+                available_order_columns.update(group_by)
+            available_order_columns.update(required_aggregates.keys())
+            if order_column not in available_order_columns:
                 raise ValueError(
-                    f"Unknown column: {order_column}. Available columns: {output_columns}"
+                    f"Unknown column: {order_column}. Available columns: {sorted(available_order_columns)}"
                 )
             reverse = order_by["direction"] == "DESC"
             grouped_rows = sorted(
@@ -444,6 +454,16 @@ class SharedExecutor:
 
     def _aggregate_label(self, aggregate: dict[str, Any]) -> str:
         return f"{str(aggregate['func']).upper()}({aggregate['arg']})"
+
+    def _aggregate_spec_from_label(self, expression: str) -> tuple[str, str] | None:
+        match = re.fullmatch(r"(?i)(COUNT|SUM|AVG|MIN|MAX)\(([^\)]+)\)", expression.strip())
+        if not match:
+            return None
+        func = match.group(1).upper()
+        arg = match.group(2).strip()
+        if not arg:
+            return None
+        return func, arg
 
     def _compute_aggregate(
         self, func: str, arg: str, rows: list[dict[str, Any]]

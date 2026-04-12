@@ -139,6 +139,13 @@ def test_parse_select_with_having_aggregate_expression():
     }
 
 
+def test_parse_select_order_by_aggregate_expression():
+    parsed = parse_sql(
+        "SELECT name, COUNT(*) FROM Sheet1 GROUP BY name ORDER BY COUNT(*) DESC"
+    )
+    assert parsed["order_by"] == {"column": "COUNT(*)", "direction": "DESC"}
+
+
 def test_parse_select_all_aggregate_functions():
     parsed = parse_sql(
         "SELECT COUNT(*), COUNT(score), SUM(score), AVG(score), MIN(score), MAX(score) FROM Sheet1"
