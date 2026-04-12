@@ -554,11 +554,42 @@ def test_parse_left_outer_join_with_as():
 
 def test_parse_join_rejects_duplicate_alias():
     """Duplicate table refs in JOIN should be rejected."""
-    with pytest.raises(ValueError, match="Duplicate table reference"):
+    with pytest.raises(ValueError, match="Ambiguous table reference"):
         parse_sql("SELECT a.id FROM t1 a JOIN t2 a ON a.id = a.id")
 
 
 def test_parse_join_rejects_duplicate_bare_table():
     """Self-join without distinct aliases should be rejected."""
-    with pytest.raises(ValueError, match="Duplicate table reference"):
+    with pytest.raises(ValueError, match="Ambiguous table reference"):
         parse_sql("SELECT users.id FROM users JOIN users ON users.id = users.id")
+
+
+def test_parse_join_rejects_alias_vs_table_name_collision():
+    """Right alias colliding with left table name should be rejected.
+
+    e.g. FROM users u JOIN orders users  -- right alias 'users' == left table 'users'
+    """
+    with pytest.raises(ValueError, match="Ambiguous table reference 'users'"):
+        parse_sql(
+            "SELECT users.id FROM users u JOIN orders users ON u.id = users.id"
+        )
+
+
+def test_parse_join_rejects_left_alias_vs_right_table_collision():
+    """Left alias colliding with right table name should be rejected.
+
+    e.g. FROM users orders JOIN orders o  -- left alias 'orders' == right table 'orders'
+    """
+    with pytest.raises(ValueError, match="Ambiguous table reference 'orders'"):
+        parse_sql(
+            "SELECT orders.id FROM users orders JOIN orders o ON orders.id = o.id"
+        )
+
+
+def test_parse_join_rejects_subquery_containing_join():
+    """Subquery that itself contains a JOIN should be rejected."""
+    with pytest.raises(ValueError, match="JOIN is not supported in subqueries"):
+        parse_sql(
+            "SELECT id FROM t1 WHERE id IN "
+            "(SELECT a.id FROM t2 a JOIN t3 b ON a.id = b.id)"
+        )

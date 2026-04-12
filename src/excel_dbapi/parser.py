@@ -434,7 +434,15 @@ def _parse_where_expression(
                         "Parameterized subqueries are not supported; use literal values"
                     )
 
-                for raw_token in _tokenize(raw_values):
+                # Reject JOINs inside subqueries before other checks
+                subquery_tokens = _tokenize(raw_values)
+                for raw_token in subquery_tokens:
+                    if raw_token.startswith("'") or raw_token.startswith('"'):
+                        continue
+                    if raw_token.upper() == "JOIN":
+                        raise ValueError("JOIN is not supported in subqueries")
+
+                for raw_token in subquery_tokens:
                     if raw_token.startswith("'") or raw_token.startswith('"'):
                         continue
                     if re.fullmatch(
@@ -459,6 +467,8 @@ def _parse_where_expression(
                     raise ValueError("GROUP BY is not supported in subqueries")
                 if subquery_parsed.get("limit") is not None:
                     raise ValueError("LIMIT is not supported in subqueries")
+                if subquery_parsed.get("joins"):
+                    raise ValueError("JOIN is not supported in subqueries")
 
                 subquery_columns = subquery_parsed["columns"]
                 if subquery_columns == ["*"] or len(subquery_columns) != 1:
@@ -761,17 +771,27 @@ def _parse_select(
             )
 
             # Reject duplicate/colliding source references
-            left_ref = str(from_entry["ref"])
-            right_ref = str(join_source["ref"])
-            if left_ref == right_ref:
+            left_names = {str(from_entry["table"]), str(from_entry["ref"])}
+            right_names = {str(join_source["table"]), str(join_source["ref"])}
+            collision = left_names & right_names
+            if collision:
                 raise ValueError(
-                    f"Duplicate table reference '{left_ref}' in JOIN; "
+                    f"Ambiguous table reference '{collision.pop()}' in JOIN; "
                     f"use distinct aliases for each table"
                 )
 
     clause_tokens = tokens[token_index:]
 
+    paren_depth = 0
     for idx, token in enumerate(clause_tokens):
+        if token == "(":
+            paren_depth += 1
+            continue
+        if token == ")":
+            paren_depth -= 1
+            continue
+        if paren_depth > 0:
+            continue
         if _is_quoted_token(token):
             continue
         upper = token.upper()
