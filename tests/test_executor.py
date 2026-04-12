@@ -283,3 +283,25 @@ def test_executor_group_by_order_by_group_key_not_in_select(tmp_path: Path):
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [(2,), (1,), (1,)]
+
+
+def test_having_rejects_aggregate_with_expression_arg(tmp_path: Path):
+    file_path = tmp_path / "users_having_expression_aggregate.xlsx"
+    _create_users_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT COUNT(*) FROM users GROUP BY name HAVING SUM(age+1) > 1")
+
+    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+        SharedExecutor(engine).execute(parsed)
+
+
+def test_order_by_rejects_aggregate_with_expression_arg(tmp_path: Path):
+    file_path = tmp_path / "users_order_by_expression_aggregate.xlsx"
+    _create_users_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT name, COUNT(*) FROM users GROUP BY name ORDER BY SUM(age+1)")
+
+    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+        SharedExecutor(engine).execute(parsed)

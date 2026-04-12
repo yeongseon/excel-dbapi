@@ -473,6 +473,11 @@ class SharedExecutor:
         arg = match.group(2).strip()
         if not arg:
             return None
+        if arg != "*" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arg):
+            raise ValueError(
+                f"Unsupported aggregate expression: {func}({arg}). "
+                "Only bare column names and * are supported"
+            )
         return func, arg
 
     def _compute_aggregate(

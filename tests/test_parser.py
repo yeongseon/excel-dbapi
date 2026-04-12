@@ -211,3 +211,18 @@ def test_aggregate_rejects_distinct():
 def test_aggregate_rejects_expression():
     with pytest.raises(ValueError, match="Unsupported aggregate expression"):
         parse_sql("SELECT SUM(age + 1) FROM users")
+
+
+def test_aggregate_rejects_numeric_literal():
+    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+        parse_sql("SELECT COUNT(1) FROM users")
+
+
+def test_aggregate_rejects_string_literal():
+    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+        parse_sql("SELECT COUNT('x') FROM users")
+
+
+def test_aggregate_rejects_float_literal():
+    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+        parse_sql("SELECT SUM(3.14) FROM users")

@@ -204,13 +204,7 @@ def _parse_columns(columns_token: str) -> List[Any]:
                 raise ValueError("Invalid aggregate expression")
             if arg == "*" and func != "COUNT":
                 raise ValueError(f"{func} does not support *")
-            if arg != "*" and (
-                " " in arg
-                or "+" in arg
-                or "-" in arg
-                or "/" in arg
-                or "(" in arg
-            ):
+            if arg != "*" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arg):
                 raise ValueError(
                     f"Unsupported aggregate expression: {func}({arg}). "
                     "Only bare column names and * are supported"
