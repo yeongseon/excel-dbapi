@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "excel-dbapi"
-version = "0.1.1"
+version = "0.1.2"
 description = "PEP 249 compliant DB-API driver for Excel files"
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "MIT"
@@ -56,3 +56,15 @@ strict = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+
+[tool.coverage.run]
+source = ["excel_dbapi"]
+branch = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__",
+    "@overload",
+]
