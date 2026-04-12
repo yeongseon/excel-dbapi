@@ -1,5 +1,5 @@
 <p align="left">
-  <img src="logo.svg" alt="excel-dbapi" width="48" height="48" align="middle" />
+  <img src="https://raw.githubusercontent.com/yeongseon/excel-dbapi/main/logo.svg" alt="excel-dbapi" width="48" height="48" align="middle" />
   <strong style="font-size: 2em;">excel-dbapi</strong>
 </p>
 
