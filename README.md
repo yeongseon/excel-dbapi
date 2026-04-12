@@ -1,4 +1,3 @@
-
 # excel-dbapi
 
 ![CI](https://github.com/yeongseon/excel-dbapi/actions/workflows/ci.yml/badge.svg)
@@ -31,6 +30,7 @@ Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no da
 - Supports SELECT, INSERT, UPDATE, DELETE
 - Basic DDL support (CREATE TABLE, DROP TABLE)
 - WHERE conditions with AND/OR and comparison operators
+- IN, BETWEEN, LIKE operators in WHERE clauses
 - ORDER BY and LIMIT for SELECT
 - Sheet-to-Table mapping
 - Pandas & Openpyxl engine selector
@@ -96,6 +96,39 @@ with ExcelConnection("sample.xlsx") as conn:
 ```python
 conn = ExcelConnection("sample.xlsx", engine="openpyxl")  # default
 conn = ExcelConnection("sample.xlsx", engine="pandas")
+```
+
+### WHERE Operators
+
+| Operator | Example | Description |
+|----------|---------|-------------|
+| `=`, `!=`, `<>` | `WHERE id = 1` | Equality / inequality |
+| `>`, `>=`, `<`, `<=` | `WHERE score >= 80` | Comparison |
+| `IS NULL` / `IS NOT NULL` | `WHERE name IS NOT NULL` | NULL checks |
+| `IN` | `WHERE name IN ('Alice', 'Bob')` | Set membership |
+| `BETWEEN` | `WHERE score BETWEEN 70 AND 90` | Inclusive range |
+| `LIKE` | `WHERE name LIKE 'A%'` | Pattern matching |
+| `AND` / `OR` | `WHERE x = 1 AND y = 2` | Logical connectives |
+
+**LIKE patterns:** `%` matches any sequence of characters, `_` matches any single character.
+
+```python
+with ExcelConnection("sample.xlsx") as conn:
+    cursor = conn.cursor()
+
+    # IN operator
+    cursor.execute("SELECT * FROM Sheet1 WHERE name IN ('Alice', 'Bob')")
+
+    # BETWEEN operator
+    cursor.execute("SELECT * FROM Sheet1 WHERE score BETWEEN 70 AND 90")
+
+    # LIKE operator
+    cursor.execute("SELECT * FROM Sheet1 WHERE name LIKE 'A%'")
+
+    # All operators support parameter binding
+    cursor.execute("SELECT * FROM Sheet1 WHERE name IN (?, ?)", ("Alice", "Bob"))
+    cursor.execute("SELECT * FROM Sheet1 WHERE score BETWEEN ? AND ?", (70, 90))
+    cursor.execute("SELECT * FROM Sheet1 WHERE name LIKE ?", ("A%",))
 ```
 
 ---
@@ -207,13 +240,7 @@ See [Project Roadmap](docs/ROADMAP.md) for details.
 
 ## Related Projects
 
-### sqlalchemy-excel
-
-[sqlalchemy-excel](https://github.com/yeongseon/sqlalchemy-excel) is a higher-level toolkit that uses excel-dbapi as its core Excel I/O layer. It provides SQLAlchemy model-driven template generation, server-side validation, database import, and export.
-
-- **Which package should I use?** See the [decision guide](https://github.com/yeongseon/sqlalchemy-excel/blob/main/docs/which-package.md)
-- **Interface contract**: See the [compatibility documentation](https://github.com/yeongseon/sqlalchemy-excel/blob/main/docs/compatibility.md)
-
+- [sqlalchemy-excel](https://github.com/yeongseon/sqlalchemy-excel) — SQLAlchemy dialect that uses excel-dbapi as its DB-API 2.0 driver. Use `create_engine("excel:///file.xlsx")` for full ORM support.
 ---
 
 ## Documentation
