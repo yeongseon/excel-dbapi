@@ -240,6 +240,7 @@ class SharedExecutor:
         columns = parsed["columns"]
         where = parsed.get("where")
         if where:
+            self._resolve_subqueries(where)
             rows = [row for row in rows if self._matches_where(row, where)]
 
         group_by: list[str] | None = parsed.get("group_by")
@@ -306,6 +307,13 @@ class SharedExecutor:
             rowcount=len(rows_out),
             lastrowid=None,
         )
+
+    def _resolve_subqueries(self, where: dict[str, Any]) -> None:
+        for condition in where.get("conditions", []):
+            value = condition.get("value")
+            if isinstance(value, dict) and value.get("type") == "subquery":
+                subquery_result = self.execute(value["query"])
+                condition["value"] = tuple(row[0] for row in subquery_result.rows if row)
 
     def _execute_aggregate_select(
         self,

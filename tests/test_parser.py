@@ -80,6 +80,37 @@ def test_parse_select_with_order_limit_and_conditions():
     assert parsed["where"]["conditions"][0]["operator"] == ">="
 
 
+def test_parse_subquery_in_where():
+    result = parse_sql("SELECT * FROM users WHERE id IN (SELECT id FROM admins)")
+    condition = result["where"]["conditions"][0]
+    assert condition["operator"] == "IN"
+    assert condition["value"]["type"] == "subquery"
+    assert condition["value"]["query"]["action"] == "SELECT"
+    assert condition["value"]["query"]["table"] == "admins"
+
+
+def test_parse_subquery_with_where():
+    result = parse_sql(
+        "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE role = 'admin')"
+    )
+    subquery = result["where"]["conditions"][0]["value"]["query"]
+    assert subquery["where"] is not None
+
+
+def test_parse_subquery_with_nested_in_parentheses():
+    result = parse_sql(
+        "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE level IN (1, 2))"
+    )
+    subquery = result["where"]["conditions"][0]["value"]["query"]
+    assert subquery["where"] is not None
+
+
+def test_parse_subquery_preserves_literal_in():
+    result = parse_sql("SELECT * FROM users WHERE id IN (1, 2, 3)")
+    condition = result["where"]["conditions"][0]
+    assert condition["value"] == (1, 2, 3)
+
+
 def test_parse_update_with_or_where():
     parsed = parse_sql("UPDATE Sheet1 SET name = 'A' WHERE id = 1 OR id = 2")
     assert parsed["where"]["conjunctions"] == ["OR"]

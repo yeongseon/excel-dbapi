@@ -28,7 +28,7 @@ database engine.
 The following SQL features are **rejected at parse time** with `ValueError`:
 
 - `JOIN` (any variant: INNER, LEFT, RIGHT, CROSS, NATURAL)
-- Subqueries (scalar, correlated, or in FROM)
+- Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])`
 - Common Table Expressions (CTEs / `WITH`)
 - `UNION` / `INTERSECT` / `EXCEPT`
 - Window functions (`OVER`, `PARTITION BY`)
@@ -299,6 +299,7 @@ DELETE FROM table [WHERE conditions]
 | `IS NULL` | `WHERE name IS NULL` | NULL check |
 | `IS NOT NULL` | `WHERE name IS NOT NULL` | Non-NULL check |
 | `IN` | `WHERE name IN ('Alice', 'Bob')` | Set membership |
+| `IN` subquery | `WHERE id IN (SELECT id FROM admins WHERE role = 'admin')` | Set membership from subquery |
 | `BETWEEN` | `WHERE score BETWEEN 70 AND 90` | Inclusive range |
 | `LIKE` | `WHERE name LIKE 'A%'` | Pattern matching |
 
@@ -316,6 +317,9 @@ Example: `WHERE name LIKE 'A%'` matches "Alice", "Ann", "A".
 - Values must be parenthesized: `IN (1, 2, 3)` or `IN ('a', 'b')`
 - Empty IN list raises `ValueError`
 - Supports placeholder binding: `IN (?, ?, ?)`
+- Supports single-column subqueries: `IN (SELECT id FROM admins)`
+- Subquery form supports optional inner WHERE: `IN (SELECT id FROM admins WHERE role = 'admin')`
+- Subquery limits: single-column SELECT only, non-correlated only, no scalar subqueries, no FROM-subqueries
 
 #### 7.2.3 BETWEEN Clause
 
@@ -334,7 +338,7 @@ Example: `WHERE name LIKE 'A%'` matches "Alice", "Ann", "A".
   - `a OR b AND c` = `a OR (b AND c)`
 - `NOT` operator is **not supported**.
 - Parenthesized expressions in WHERE (e.g., `WHERE (x = 1)`) are **not supported** 
-  and raise `ValueError`. Exception: parentheses in `IN (...)` are allowed.
+  and raise `ValueError`. Exceptions: parentheses in `IN (...)` literal lists and `IN (SELECT ...)` are allowed.
 
 ### 7.4 Type Coercion
 
@@ -454,8 +458,11 @@ where_expr    = condition { ("AND" | "OR") condition } ;
 condition     = column operator value
               | column "IS" [ "NOT" ] "NULL"
               | column "IN" "(" value_list ")"
+              | column "IN" "(" subquery_select ")"
               | column "BETWEEN" value "AND" value
               | column "LIKE" pattern ;
+
+subquery_select = "SELECT" column "FROM" table [ "WHERE" where_expr ] ;
 
 operator      = "=" | "==" | "!=" | "<>" | ">" | ">=" | "<" | "<=" ;
 direction     = "ASC" | "DESC" ;

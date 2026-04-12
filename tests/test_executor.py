@@ -62,6 +62,25 @@ def _create_users_workbook(path: Path) -> None:
     workbook.save(path)
 
 
+def _create_users_admins_workbook(path: Path) -> None:
+    workbook = Workbook()
+
+    users = workbook.active
+    assert users is not None
+    users.title = "users"
+    users.append(["id", "name"])
+    users.append([1, "Alice"])
+    users.append([2, "Bob"])
+    users.append([3, "Charlie"])
+
+    admins = workbook.create_sheet("admins")
+    admins.append(["id", "role"])
+    admins.append([1, "admin"])
+    admins.append([3, "editor"])
+
+    workbook.save(path)
+
+
 def test_executor_distinct_removes_duplicates_and_preserves_order(tmp_path: Path):
     file_path = tmp_path / "distinct_order.xlsx"
     _create_select_workbook(file_path)
@@ -305,3 +324,40 @@ def test_order_by_rejects_aggregate_with_expression_arg(tmp_path: Path):
 
     with pytest.raises(ValueError, match="Unsupported aggregate expression"):
         SharedExecutor(engine).execute(parsed)
+
+
+def test_subquery_in_where(tmp_path: Path):
+    file_path = tmp_path / "subquery_in_where.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT id, name FROM users WHERE id IN (SELECT id FROM admins)")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(1, "Alice"), (3, "Charlie")]
+
+
+def test_subquery_returns_empty(tmp_path: Path):
+    file_path = tmp_path / "subquery_empty.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT id, name FROM users WHERE id IN (SELECT id FROM admins WHERE role = 'root')"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == []
+
+
+def test_subquery_with_where(tmp_path: Path):
+    file_path = tmp_path / "subquery_with_where.xlsx"
+    _create_users_admins_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql(
+        "SELECT id, name FROM users WHERE id IN (SELECT id FROM admins WHERE role = 'admin')"
+    )
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(1, "Alice")]

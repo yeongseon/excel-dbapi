@@ -229,7 +229,10 @@ def _values_to_bind_from_condition(condition: Dict[str, Any]) -> List[Any]:
     if operator in {"IS", "IS NOT"}:
         return []
     if operator == "IN":
-        return list(condition["value"])
+        value = condition["value"]
+        if isinstance(value, dict) and value.get("type") == "subquery":
+            return []
+        return list(value)
     if operator == "BETWEEN":
         low, high = condition["value"]
         return [low, high]
@@ -243,7 +246,10 @@ def _apply_bound_values_to_condition(
     if operator in {"IS", "IS NOT"}:
         return 0
     if operator == "IN":
-        size = len(condition["value"])
+        value = condition["value"]
+        if isinstance(value, dict) and value.get("type") == "subquery":
+            return 0
+        size = len(value)
         condition["value"] = tuple(bound_values[offset : offset + size])
         return size
     if operator == "BETWEEN":
@@ -344,7 +350,19 @@ def _parse_where_expression(
                 raise ValueError("Invalid WHERE clause format")
             in_start = index + 2
             in_end = in_start
-            while in_end < len(tokens) and ")" not in tokens[in_end]:
+            paren_depth = 0
+            while in_end < len(tokens):
+                token = tokens[in_end]
+                if token == "(":
+                    paren_depth += 1
+                elif token == ")":
+                    if paren_depth == 0:
+                        raise ValueError(
+                            "Invalid WHERE clause format: malformed IN clause"
+                        )
+                    paren_depth -= 1
+                    if paren_depth == 0:
+                        break
                 in_end += 1
             if in_end >= len(tokens):
                 raise ValueError(
@@ -361,21 +379,32 @@ def _parse_where_expression(
                     "Invalid WHERE clause format: IN clause cannot be empty"
                 )
 
-            parsed_values = tuple(
-                _parse_value(token) for token in _split_csv(raw_values)
-            )
-            if len(parsed_values) == 0:
-                raise ValueError(
-                    "Invalid WHERE clause format: IN clause cannot be empty"
+            raw_tokens = raw_values.split()
+            if raw_tokens and raw_tokens[0].upper() == "SELECT":
+                subquery_parsed = _parse_select(raw_values, params=None)
+                conditions.append(
+                    {
+                        "column": column,
+                        "operator": "IN",
+                        "value": {"type": "subquery", "query": subquery_parsed},
+                    }
                 )
+            else:
+                parsed_values = tuple(
+                    _parse_value(token) for token in _split_csv(raw_values)
+                )
+                if len(parsed_values) == 0:
+                    raise ValueError(
+                        "Invalid WHERE clause format: IN clause cannot be empty"
+                    )
 
-            conditions.append(
-                {
-                    "column": column,
-                    "operator": "IN",
-                    "value": parsed_values,
-                }
-            )
+                conditions.append(
+                    {
+                        "column": column,
+                        "operator": "IN",
+                        "value": parsed_values,
+                    }
+                )
             index = in_end + 1
         elif operator == "LIKE":
             if index + 2 >= len(tokens):
