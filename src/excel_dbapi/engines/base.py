@@ -64,14 +64,53 @@ class WorkbookBackend(ABC):
         if not self._file_locking_enabled or self._lock_fd is not None:
             return
 
+        for _ in range(2):
+            try:
+                lock_fd = os.open(
+                    self._lock_path,
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                    0o600,
+                )
+                os.write(lock_fd, str(os.getpid()).encode("ascii", "strict"))
+                self._lock_fd = lock_fd
+                return
+            except OSError as exc:
+                if exc.errno != errno.EEXIST:
+                    raise OperationalError(str(exc)) from exc
+                if not self._clear_stale_lock():
+                    raise OperationalError("File is locked by another process") from exc
+
+    def _clear_stale_lock(self) -> bool:
         try:
-            lock_fd = os.open(self._lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.write(lock_fd, str(os.getpid()).encode("ascii", "strict"))
-            self._lock_fd = lock_fd
-        except OSError as exc:
-            if exc.errno == errno.EEXIST:
-                raise OperationalError("File is locked by another process") from exc
-            raise OperationalError(str(exc)) from exc
+            with open(self._lock_path, "r", encoding="ascii") as handle:
+                raw_pid = handle.read().strip()
+        except OSError:
+            return False
+
+        try:
+            lock_pid = int(raw_pid)
+        except ValueError:
+            lock_pid = -1
+
+        is_stale = lock_pid <= 0
+        if lock_pid > 0:
+            try:
+                os.kill(lock_pid, 0)
+            except OSError as exc:
+                is_stale = exc.errno == errno.ESRCH
+            else:
+                is_stale = False
+
+        if not is_stale:
+            return False
+
+        try:
+            os.unlink(self._lock_path)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        return True
 
     def _release_lock(self) -> None:
         if self._lock_fd is None:

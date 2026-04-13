@@ -249,6 +249,16 @@ class TestGraphBackendReadSheet:
         with pytest.raises(ValueError, match="not found"):
             backend.read_sheet("Missing")
 
+    def test_read_sheet_enforces_row_limit(self):
+        backend = _make_backend(max_rows=1)
+        with pytest.raises(Exception, match="max_rows"):
+            backend.read_sheet("Users")
+
+    def test_read_sheet_enforces_memory_limit(self):
+        backend = _make_backend(max_memory_mb=0.00001)
+        with pytest.raises(Exception, match="max_memory_mb"):
+            backend.read_sheet("Users")
+
 
 class TestGraphBackendReadOnly:
     def test_write_sheet_raises(self):

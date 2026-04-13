@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -58,3 +59,18 @@ def test_file_locking_can_be_disabled(tmp_path: Path) -> None:
 
     conn1.close()
     conn2.close()
+
+
+def test_stale_lock_file_is_recovered(tmp_path: Path) -> None:
+    file_path = tmp_path / "stale-lock.xlsx"
+    _create_workbook(file_path)
+    lock_path = Path(f"{file_path}.lock")
+    lock_path.write_text("999999", encoding="ascii")
+
+    conn = ExcelConnection(str(file_path), engine="openpyxl", autocommit=False)
+    try:
+        assert conn.closed is False
+        lock_pid = int(lock_path.read_text(encoding="ascii"))
+        assert lock_pid == os.getpid()
+    finally:
+        conn.close()

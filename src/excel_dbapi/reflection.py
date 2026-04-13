@@ -21,16 +21,25 @@ def list_tables(connection: Any, include_meta: bool = False) -> list[str]:
 
 def has_table(connection: Any, table_name: str) -> bool:
     """Check if a worksheet exists (case-insensitive)."""
-    return table_name.lower() in {
-        sheet.lower() for sheet in connection.engine.list_sheets()
-    }
+    return _resolve_sheet_name(connection, table_name) is not None
+
+
+def _resolve_sheet_name(connection: Any, table_name: str) -> str | None:
+    for sheet_name in cast(list[str], connection.engine.list_sheets()):
+        if sheet_name.lower() == table_name.lower():
+            return sheet_name
+    return None
 
 
 def get_columns(
     connection: Any, table_name: str, sample_size: int | None = 100
 ) -> list[dict[str, Any]]:
     """Return column metadata by sampling data rows."""
-    data = connection.engine.read_sheet(table_name)
+    resolved_table_name = _resolve_sheet_name(connection, table_name)
+    if resolved_table_name is None:
+        raise ValueError(f"Sheet '{table_name}' not found in Excel")
+
+    data = connection.engine.read_sheet(resolved_table_name)
     columns: list[dict[str, Any]] = []
     sampled_rows = data.rows if sample_size is None else data.rows[:sample_size]
     for index, header in enumerate(data.headers):
@@ -39,6 +48,7 @@ def get_columns(
         columns.append(
             {
                 "name": header,
+                "type_name": inferred["type"],
                 "type": inferred["type"],
                 "nullable": inferred["nullable"],
             }
@@ -111,12 +121,13 @@ def write_table_metadata(
     new_rows = [row for row in existing.rows if row[0] != table_name]
 
     for index, column in enumerate(columns):
+        type_name = column.get("type_name", column.get("type", "TEXT"))
         new_rows.append(
             [
                 table_name,
                 column["name"],
                 index + 1,
-                column.get("type_name", "TEXT"),
+                type_name,
                 str(column.get("nullable", True)),
                 str(column.get("primary_key", False)),
             ]

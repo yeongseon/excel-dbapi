@@ -400,3 +400,23 @@ class TestGraphConnectionResourceLeak:
         # (If close() was NOT called, the httpx client would remain open.)
         # Since we can't easily inspect client state, we verify the fix
         # exists in connection.py by checking the code path works without error.
+
+
+class TestGraphExecutemanySemantics:
+    def test_executemany_raises_non_atomic_error_without_restore(self):
+        conn, _ = _make_rw_connection()
+        cursor = conn.cursor()
+
+        def fail_if_restore_called(snapshot: Any) -> None:
+            raise AssertionError("restore() must not be called for graph executemany")
+
+        conn.engine.restore = fail_if_restore_called  # type: ignore[assignment]
+        with pytest.raises(
+            Exception,
+            match="partial writes may have occurred",
+        ):
+            cursor.executemany(
+                "INSERT INTO Employees (id, name, dept) VALUES (?, ?, ?)",
+                [(4, "Dan", "HR"), (5, "Eve")],
+            )
+        conn.close()

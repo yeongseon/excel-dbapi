@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any, cast
 
 import httpx
@@ -168,6 +169,12 @@ class GraphBackend(WorkbookBackend):
 
         headers = _normalize_headers(values[0])
         rows = [list(row) for row in values[1:]]
+        self._check_row_limit(sheet_name, len(rows))
+        approx_bytes = sys.getsizeof(headers)
+        for row in rows:
+            approx_bytes += sys.getsizeof(row)
+            approx_bytes += sum(sys.getsizeof(value) for value in row)
+        self._check_memory_limit(sheet_name, approx_bytes)
         return TableData(headers=headers, rows=rows)
 
     # -- Mutating operations -------------------------------------------------

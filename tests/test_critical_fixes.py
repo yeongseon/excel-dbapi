@@ -173,6 +173,28 @@ class TestDSNAutoEngineSelection:
                 "msgraph://drives/fake/items/fake", "openpyxl"
             )
 
+    @pytest.mark.parametrize(
+        ("dsn", "expected_location"),
+        [
+            (
+                "sharepoint://sites/team/drives/drive-1/items/item-1",
+                "sharepoint://sites/team/drives/drive-1/items/item-1",
+            ),
+            (
+                "onedrive://me/drive/items/item-2",
+                "onedrive://me/drive/items/item-2",
+            ),
+        ],
+    )
+    def test_extended_graph_schemes_auto_detected(
+        self, dsn: str, expected_location: str
+    ) -> None:
+        from excel_dbapi.connection import _resolve_engine_and_location
+
+        engine, location = _resolve_engine_and_location(dsn, None)
+        assert engine == "graph"
+        assert location == expected_location
+
 
 # ─── Fix 3: Package version (#56) ───────────────────────────────────────
 
@@ -188,19 +210,16 @@ class TestPackageVersion:
 
     def test_version_matches_pyproject(self) -> None:
         """__version__ matches the version in pyproject.toml."""
-        import sys
+        import importlib
 
-        if sys.version_info >= (3, 11):
-            import tomllib
-        else:
-            try:
-                import tomllib  # type: ignore[import-not-found,no-redef]
-            except ModuleNotFoundError:
-                import tomli as tomllib  # type: ignore[import-not-found,no-redef]
+        try:
+            toml_module = importlib.import_module("tomllib")
+        except ModuleNotFoundError:
+            toml_module = importlib.import_module("tomli")
 
         pyproject = Path(__file__).parent.parent / "pyproject.toml"
         with open(pyproject, "rb") as f:
-            data = tomllib.load(f)
+            data = toml_module.load(f)
         expected = data["project"]["version"]
 
         import excel_dbapi

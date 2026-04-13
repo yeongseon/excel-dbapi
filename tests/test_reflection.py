@@ -96,7 +96,9 @@ def test_get_columns_with_mixed_types(tmp_path: Path) -> None:
 
     by_name = {column["name"]: column for column in columns}
     assert by_name["id"]["type"] == "INTEGER"
+    assert by_name["id"]["type_name"] == "INTEGER"
     assert by_name["name"]["type"] == "TEXT"
+    assert by_name["name"]["type_name"] == "TEXT"
     assert by_name["active"]["type"] == "BOOLEAN"
     assert by_name["score"]["type"] == "FLOAT"
     assert by_name["created_date"]["type"] == "DATETIME"
@@ -202,3 +204,42 @@ def test_remove_table_metadata_missing_sheet(tmp_path: Path) -> None:
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         remove_table_metadata(conn, "People")
         assert list_tables(conn) == ["People"]
+
+
+def test_get_columns_case_insensitive_table_resolution(tmp_path: Path) -> None:
+    file_path = tmp_path / "reflection-case-insensitive.xlsx"
+    _make_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        columns = get_columns(conn, "people")
+
+    assert [column["name"] for column in columns][:3] == ["id", "name", "active"]
+
+
+def test_write_metadata_accepts_legacy_type_key(tmp_path: Path) -> None:
+    file_path = tmp_path / "reflection-type-key.xlsx"
+    _make_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        write_table_metadata(
+            conn,
+            "People",
+            [
+                {
+                    "name": "id",
+                    "type": "INTEGER",
+                    "nullable": False,
+                    "primary_key": True,
+                }
+            ],
+        )
+        metadata = read_table_metadata(conn, "People")
+
+    assert metadata == [
+        {
+            "name": "id",
+            "type_name": "INTEGER",
+            "nullable": False,
+            "primary_key": True,
+        }
+    ]

@@ -58,4 +58,4 @@ def _load_graph() -> type[WorkbookBackend]:
     return GraphBackend
 
 
-register_engine("graph", _load_graph, schemes=("msgraph",))
+register_engine("graph", _load_graph, schemes=("msgraph", "sharepoint", "onedrive"))

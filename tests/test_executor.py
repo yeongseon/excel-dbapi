@@ -1,3 +1,4 @@
+import datetime
 from pathlib import Path
 
 import pytest
@@ -86,7 +87,7 @@ def test_executor_distinct_removes_duplicates_and_preserves_order(tmp_path: Path
     _create_select_workbook(file_path)
 
     engine = OpenpyxlBackend(str(file_path))
-    parsed = parse_sql("SELECT DISTINCT name, score FROM Sheet1 ORDER BY id ASC")
+    parsed = parse_sql("SELECT DISTINCT name, score FROM Sheet1 ORDER BY name ASC")
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [("A", 10), ("B", None), ("C", 30)]
@@ -98,7 +99,7 @@ def test_executor_distinct_with_where_order_by_and_limit(tmp_path: Path):
 
     engine = OpenpyxlBackend(str(file_path))
     parsed = parse_sql(
-        "SELECT DISTINCT name FROM Sheet1 WHERE score IS NULL ORDER BY id ASC LIMIT 1"
+        "SELECT DISTINCT name FROM Sheet1 WHERE score IS NULL ORDER BY name ASC LIMIT 1"
     )
     results = SharedExecutor(engine).execute(parsed)
 
@@ -153,11 +154,35 @@ def test_executor_offset_with_where_and_distinct_limit(tmp_path: Path):
 
     engine = OpenpyxlBackend(str(file_path))
     parsed = parse_sql(
-        "SELECT DISTINCT name FROM Sheet1 WHERE id >= 2 ORDER BY id ASC LIMIT 2 OFFSET 1"
+        "SELECT DISTINCT name FROM Sheet1 WHERE id >= 2 ORDER BY name ASC LIMIT 2 OFFSET 1"
     )
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [("B",), ("C",)]
+
+
+def test_executor_distinct_applied_before_limit(tmp_path: Path):
+    file_path = tmp_path / "distinct_before_limit.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT DISTINCT name FROM Sheet1 ORDER BY name ASC LIMIT 2")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [("A",), ("B",)]
+
+
+def test_executor_distinct_rejects_order_by_non_selected_column(tmp_path: Path):
+    file_path = tmp_path / "distinct_order_by_non_selected.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT DISTINCT name FROM Sheet1 ORDER BY id ASC")
+    with pytest.raises(
+        ValueError,
+        match="ORDER BY columns must appear in SELECT list when using DISTINCT",
+    ):
+        SharedExecutor(engine).execute(parsed)
 
 
 def test_executor_aggregate_count_star(tmp_path: Path):
@@ -181,6 +206,41 @@ def test_executor_aggregate_sum_avg_min_max(tmp_path: Path):
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [(50.0, 50.0 / 3.0, 10.0, 30.0)]
+
+
+def test_executor_aggregate_min_max_text_values(tmp_path: Path):
+    file_path = tmp_path / "aggregate_text_min_max.xlsx"
+    _create_select_workbook(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT MIN(name), MAX(name) FROM Sheet1")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [(
+        "A",
+        "C",
+    )]
+
+
+def test_executor_aggregate_min_max_date_values(tmp_path: Path):
+    file_path = tmp_path / "aggregate_date_min_max.xlsx"
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(["id", "event_date"])
+    sheet.append([1, datetime.date(2024, 2, 1)])
+    sheet.append([2, datetime.date(2024, 1, 15)])
+    sheet.append([3, datetime.date(2024, 3, 10)])
+    workbook.save(file_path)
+
+    engine = OpenpyxlBackend(str(file_path))
+    parsed = parse_sql("SELECT MIN(event_date), MAX(event_date) FROM Sheet1")
+    results = SharedExecutor(engine).execute(parsed)
+
+    assert results.rows == [
+        (datetime.datetime(2024, 1, 15, 0, 0), datetime.datetime(2024, 3, 10, 0, 0))
+    ]
 
 
 def test_executor_group_by_count(tmp_path: Path):

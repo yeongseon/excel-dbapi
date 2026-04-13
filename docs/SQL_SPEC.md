@@ -1,6 +1,6 @@
 # excel-dbapi SQL Specification
 
-> Version: 0.6.1
+> Version: 0.4.1
 > Status: **Normative** - this document defines the SQL subset supported by `excel-dbapi`.
 > Last updated: 2026-04-14
 
@@ -9,7 +9,8 @@
 ## 1. Scope
 
 `excel-dbapi` implements a practical SQL subset for worksheet-backed workloads. It supports
-single-table CRUD, DDL, set operations, joins, aggregation, upsert, and parameter binding.
+single-table CRUD, DDL, set operations, joins, aggregation, upsert, parameter binding,
+and selected advanced query constructs (CTEs, window functions).
 
 The parser is strict: unsupported grammar is rejected with `ValueError`.
 
@@ -24,7 +25,9 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `SELECT` | Projection (`*`, named columns) | ✅ | `*` and explicit column lists supported |
 | `SELECT` | Expressions in select list | ✅ | Arithmetic (`+ - * /`), literals, CASE |
 | `SELECT` | Column aliases | ✅ | `AS alias` and implicit alias supported |
-| `SELECT` | `DISTINCT` | ✅ | Single-table queries only |
+| `SELECT` | `DISTINCT` | ✅ | For `DISTINCT`, `ORDER BY` columns must be in the select list |
+| `SELECT` | Window functions (`OVER (...)`) | ⚠️ Experimental | Core support for `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` |
+| `SELECT` | CTEs (`WITH`) | ⚠️ Experimental | Non-recursive CTEs only |
 | `FROM` | Table aliases | ✅ | Base table and JOIN sources |
 | `WHERE` | Comparison operators | ✅ | `= == != <> > >= < <=` |
 | `WHERE` | Boolean logic | ✅ | `AND`, `OR`, `NOT`, nested parentheses |
@@ -32,7 +35,7 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `WHERE` | `IN` / `NOT IN` (literal list) | ✅ | Empty list rejected |
 | `WHERE` | `LIKE` / `NOT LIKE` | ✅ | `%` and `_` wildcards |
 | `WHERE` | `IS NULL` / `IS NOT NULL` | ✅ | |
-| `WHERE` | Subquery in `IN` / `NOT IN` | ✅ | Single-column `SELECT`; no correlated/parameterized subquery |
+| `WHERE` | Subquery in `IN` / `NOT IN` | ✅ | Single-column `SELECT`; correlated/parameterized subqueries are rejected |
 | `JOIN` | `INNER`, `LEFT`, `RIGHT` | ✅ | Chained joins supported |
 | `JOIN` | `FULL OUTER` / `FULL` | ✅ | |
 | `JOIN` | `CROSS JOIN` | ✅ | No `ON` clause allowed |
@@ -59,7 +62,6 @@ This table is the **single authoritative matrix** for SQL feature support.
 
 ### 2.1 Important JOIN Restrictions
 
-- `DISTINCT` with JOIN is not supported.
 - `SELECT *` in JOIN is supported, but mixing `SELECT *, col` is rejected.
 - `GROUP BY` and aggregate arguments in JOIN queries must use qualified columns (`t.col`).
 - Subqueries in JOIN `WHERE ... IN (SELECT ...)` are not supported.
@@ -149,7 +151,7 @@ Subquery limitations:
 
 - Must return exactly one column.
 - No `JOIN`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, `OFFSET` in the subquery.
-- No correlated references.
+- Correlated references are rejected.
 - No placeholders inside the subquery.
 
 ---
@@ -179,8 +181,7 @@ Subquery limitations:
 
 ## 7. Explicitly Unsupported Features
 
-- CTEs (`WITH`)
-- Window functions (`OVER`, `PARTITION BY`)
+- Recursive CTEs (`WITH RECURSIVE`)
 - `NATURAL JOIN`
 - `SELECT ... FOR UPDATE`
 - `RETURNING`

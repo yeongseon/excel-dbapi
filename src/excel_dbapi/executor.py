@@ -1,7 +1,7 @@
 import copy
 from datetime import date, datetime, time
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Protocol, cast
 
 from .engines.base import TableData, WorkbookBackend
 from .engines.result import Description, ExecutionResult
@@ -12,6 +12,10 @@ from .sanitize import sanitize_cell_value, sanitize_row
 _READONLY_ACTIONS = frozenset(
     {"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"}
 )
+
+
+class _SupportsOrder(Protocol):
+    def __lt__(self, other: Any, /) -> bool: ...
 
 
 def _build_like_regex(pattern: str, escape_char: str | None) -> str:
@@ -714,7 +718,7 @@ class SharedExecutor:
             column_name = str(item["column"])
             if column_name not in selected:
                 raise ValueError(
-                    "ORDER BY columns must appear in SELECT list when using DISTINCT with JOIN"
+                    "ORDER BY columns must appear in SELECT list when using DISTINCT"
                 )
 
     @staticmethod
@@ -2225,29 +2229,9 @@ class SharedExecutor:
 
         window_columns = self._apply_window_functions(rows, columns, order_by)
 
-        order_expression_columns: set[str] = set()
-        if order_by:
-            order_expression_columns = self._materialize_order_expression_columns(
-                rows,
-                order_by,
-            )
-
-        if order_by:
-            if needs_expression_projection and columns != ["*"]:
-                pass
-            else:
-                available_columns = set(headers)
-                available_columns.update(order_expression_columns)
-                available_columns.update(window_columns)
-                rows = self._apply_order_by(
-                    rows,
-                    order_by,
-                    value_getter=lambda r, col: r.get(col),
-                    available_columns=available_columns,
-                )
-
+        projected_rows: list[dict[str, Any]]
         if needs_expression_projection and columns != ["*"]:
-            projected_rows: list[dict[str, Any]] = []
+            projected_rows = []
             for row in rows:
                 projected_row = dict(row)
                 for column, key in zip(columns, selected_columns):
@@ -2258,54 +2242,41 @@ class SharedExecutor:
                         lambda col_name: row.get(col_name),
                     )
                 projected_rows.append(projected_row)
-
-            if order_by:
-                expression_columns = self._materialize_order_expression_columns(
-                    projected_rows,
-                    order_by,
-                )
-                available_columns = set(headers)
-                available_columns.update(selected_columns)
-                available_columns.update(expression_columns)
-                available_columns.update(window_columns)
-                projected_rows = self._apply_order_by(
-                    projected_rows,
-                    order_by,
-                    value_getter=lambda r, col: r.get(col),
-                    available_columns=available_columns,
-                )
-
-            offset = parsed.get("offset") or 0
-            limit = parsed.get("limit")
-            if offset:
-                projected_rows = projected_rows[offset:]
-            if limit is not None:
-                projected_rows = projected_rows[:limit]
-
-            rows_out = [
-                tuple(projected_row.get(col) for col in selected_columns)
-                for projected_row in projected_rows
-            ]
         else:
-            offset = parsed.get("offset") or 0
-            limit = parsed.get("limit")
-            if offset:
-                rows = rows[offset:]
-            if limit is not None:
-                rows = rows[:limit]
-
-            rows_out = [tuple(row.get(col) for col in selected_columns) for row in rows]
+            projected_rows = rows
 
         distinct = parsed.get("distinct", False)
         if distinct:
-            seen: set[tuple[Any, ...]] = set()
-            unique_rows: list[tuple[Any, ...]] = []
-            for r in rows_out:
-                h = tuple(tuple(v) if isinstance(v, list) else v for v in r)
-                if h not in seen:
-                    seen.add(h)
-                    unique_rows.append(r)
-            rows_out = unique_rows
+            self._validate_distinct_order_by_columns(order_by, selected_columns)
+            projected_rows = self._dedupe_projected_rows(projected_rows, selected_columns)
+
+        if order_by:
+            expression_columns = self._materialize_order_expression_columns(
+                projected_rows,
+                order_by,
+            )
+            available_columns = set(headers)
+            available_columns.update(selected_columns)
+            available_columns.update(expression_columns)
+            available_columns.update(window_columns)
+            projected_rows = self._apply_order_by(
+                projected_rows,
+                order_by,
+                value_getter=lambda r, col: r.get(col),
+                available_columns=available_columns,
+            )
+
+        offset = parsed.get("offset") or 0
+        limit = parsed.get("limit")
+        if offset:
+            projected_rows = projected_rows[offset:]
+        if limit is not None:
+            projected_rows = projected_rows[:limit]
+
+        rows_out = [
+            tuple(projected_row.get(col) for col in selected_columns)
+            for projected_row in projected_rows
+        ]
 
         description: Description = [
             (col, None, None, None, None, None, None) for col in output_names
@@ -2715,7 +2686,11 @@ class SharedExecutor:
                 return len(applicable_rows)
             return sum(1 for row in applicable_rows if row.get(arg) is not None)
 
-        values = [row.get(arg) for row in applicable_rows if row.get(arg) is not None]
+        values: list[_SupportsOrder] = []
+        for row in applicable_rows:
+            value = row.get(arg)
+            if value is not None:
+                values.append(cast(_SupportsOrder, value))
         if not values:
             return None
 
@@ -2725,16 +2700,18 @@ class SharedExecutor:
             if numeric is not None:
                 numeric_values.append(numeric)
 
-        if not numeric_values:
-            return None
         if aggregate == "SUM":
+            if not numeric_values:
+                return None
             return sum(numeric_values)
         if aggregate == "AVG":
+            if not numeric_values:
+                return None
             return sum(numeric_values) / len(numeric_values)
         if aggregate == "MIN":
-            return min(numeric_values)
+            return min(values)
         if aggregate == "MAX":
-            return max(numeric_values)
+            return max(values)
         raise ValueError(f"Unsupported aggregate function: {func}")
 
     def _call_function(self, name: str, args: list[Any]) -> Any:

@@ -125,7 +125,7 @@ def test_distinct_join_order_by_non_selected_column_rejected(tmp_path: Path) -> 
         cursor = conn.cursor()
         with pytest.raises(
             ProgrammingError,
-            match="ORDER BY columns must appear in SELECT list when using DISTINCT with JOIN",
+        match="ORDER BY columns must appear in SELECT list when using DISTINCT",
         ):
             cursor.execute(
                 "SELECT DISTINCT a.col FROM t1 a JOIN t2 b ON a.id = b.id ORDER BY b.tag"

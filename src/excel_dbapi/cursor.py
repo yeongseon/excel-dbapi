@@ -86,7 +86,12 @@ class ExcelCursor:
         total_rowcount = 0
         last_rowid = None
         last_action = None
-        snapshot = self.connection.engine.snapshot()
+        supports_transactions = bool(
+            getattr(self.connection.engine, "supports_transactions", True)
+        )
+        snapshot = self.connection.engine.snapshot() if supports_transactions else None
+        backend_name = type(self.connection.engine).__name__
+
         for params in seq_of_params:
             try:
                 result: ExecutionResult = (
@@ -95,23 +100,58 @@ class ExcelCursor:
                     )
                 )
             except ValueError as exc:
-                self.connection.engine.restore(snapshot)
-                raise ProgrammingError(str(exc)) from exc
+                mapped: Exception = ProgrammingError(str(exc))
+                if supports_transactions:
+                    self.connection.engine.restore(snapshot)
+                    raise mapped from exc
+                raise ProgrammingError(
+                    f"{mapped}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
             except NotImplementedError as exc:
-                self.connection.engine.restore(snapshot)
-                raise NotSupportedError(str(exc)) from exc
+                mapped = NotSupportedError(str(exc))
+                if supports_transactions:
+                    self.connection.engine.restore(snapshot)
+                    raise mapped from exc
+                raise NotSupportedError(
+                    f"{mapped}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
             except (KeyError, TypeError, IndexError) as exc:
-                self.connection.engine.restore(snapshot)
-                raise ProgrammingError(str(exc)) from exc
+                mapped = ProgrammingError(str(exc))
+                if supports_transactions:
+                    self.connection.engine.restore(snapshot)
+                    raise mapped from exc
+                raise ProgrammingError(
+                    f"{mapped}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
             except OSError as exc:
-                self.connection.engine.restore(snapshot)
-                raise OperationalError(str(exc)) from exc
-            except DatabaseError:
-                self.connection.engine.restore(snapshot)
-                raise
+                mapped = OperationalError(str(exc))
+                if supports_transactions:
+                    self.connection.engine.restore(snapshot)
+                    raise mapped from exc
+                raise OperationalError(
+                    f"{mapped}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
+            except DatabaseError as exc:
+                if supports_transactions:
+                    self.connection.engine.restore(snapshot)
+                    raise
+                raise type(exc)(
+                    f"{exc}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
             except Exception as exc:
-                self.connection.engine.restore(snapshot)
-                raise DatabaseError(str(exc)) from exc
+                mapped = DatabaseError(str(exc))
+                if supports_transactions:
+                    self.connection.engine.restore(snapshot)
+                    raise mapped from exc
+                raise DatabaseError(
+                    f"{mapped}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
             total_rowcount += result.rowcount
             last_rowid = result.lastrowid
             last_action = result.action
