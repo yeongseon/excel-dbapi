@@ -465,3 +465,76 @@ def test_do_update_with_sanitize_formulas(tmp_path: Path) -> None:
     rows = _fetch_rows(file_path, "SELECT id, name FROM items")
     # Formula should be sanitized (prefixed with single quote)
     assert rows == [(1, "'=HYPERLINK(\"http://evil.com\")")]
+
+
+# ── Oracle Review Round 2: Composite NULL + Bare Identifier Tests ──
+
+
+def test_do_nothing_with_null_in_composite_target(tmp_path: Path) -> None:
+    """Composite ON CONFLICT (id, code) where one target col is NULL => no conflict."""
+    file_path = tmp_path / "test.xlsx"
+    _create_items_workbook(file_path, [
+        [1, "Alice", 30, "active", None, 10],
+    ])
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO items (id, name, age, status, code, value) "
+            "VALUES (1, 'NewAlice', 40, 'active', NULL, 99) "
+            "ON CONFLICT (id, code) DO NOTHING"
+        )
+        # NULL in 'code' column on both sides => no conflict (NULL != NULL)
+        assert cursor.rowcount == 1
+
+    rows = _fetch_rows(file_path, "SELECT id, name FROM items ORDER BY name")
+    assert rows == [(1, "Alice"), (1, "NewAlice")]
+
+
+def test_do_update_with_null_in_composite_target(tmp_path: Path) -> None:
+    """Composite ON CONFLICT (id, code) where existing row has NULL code => insert, not update."""
+    file_path = tmp_path / "test.xlsx"
+    _create_items_workbook(file_path, [
+        [1, "Alice", 30, "active", None, 10],
+        [2, "Bob", 25, "active", "B", 20],
+    ])
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        # Row 1: id=1, code=NULL incoming vs id=1, code=NULL existing => NO conflict
+        # Row 2: id=2, code='B' incoming vs id=2, code='B' existing => CONFLICT => UPDATE
+        cursor.execute(
+            "INSERT INTO items (id, name, age, status, code, value) VALUES "
+            "(1, 'NewAlice', 40, 'active', NULL, 99), "
+            "(2, 'NewBob', 35, 'active', 'B', 25) "
+            "ON CONFLICT (id, code) DO UPDATE SET name = excluded.name"
+        )
+        assert cursor.rowcount == 2  # 1 insert + 1 update
+
+    rows = _fetch_rows(file_path, "SELECT id, name, code FROM items ORDER BY id, name")
+    assert rows == [
+        (1, "Alice", None),       # original — not updated (NULL != NULL)
+        (1, "NewAlice", None),    # inserted (no conflict)
+        (2, "NewBob", "B"),      # updated (conflict on id=2, code='B')
+    ]
+
+
+def test_do_update_bare_identifier_stores_literal(tmp_path: Path) -> None:
+    """SET col = name stores the string 'name' as literal, NOT a column reference."""
+    file_path = tmp_path / "test.xlsx"
+    _create_items_workbook(file_path, [
+        [1, "Alice", 30, "active", "A", 10],
+    ])
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO items (id, name, age, status, code, value) "
+            "VALUES (1, 'Incoming', 40, 'active', 'A', 99) "
+            "ON CONFLICT (id) DO UPDATE SET status = hello"
+        )
+        assert cursor.rowcount == 1
+
+    rows = _fetch_rows(file_path, "SELECT id, status FROM items")
+    # 'hello' is a bare identifier — treated as string literal per SQL_SPEC.md
+    assert rows == [(1, "hello")]
