@@ -1233,10 +1233,20 @@ class SharedExecutor:
                     selected_columns.append(f"{source_ref}.{col_name}")
                     output_names.append(f"{source_ref}.{col_name}")
             if order_by:
+                order_expression_columns = self._materialize_order_expression_columns(
+                    joined_rows_flat,
+                    order_by,
+                )
+                available_cols: set[str] = set()
+                for source_ref, ordered_headers in source_headers_ordered:
+                    for col_name in ordered_headers:
+                        available_cols.add(f"{source_ref}.{col_name}")
+                available_cols.update(order_expression_columns)
                 joined_rows_flat = self._apply_order_by(
                     joined_rows_flat,
                     order_by,
                     value_getter=lambda r, col: r.get(col),
+                    available_columns=available_cols,
                 )
 
             offset = parsed.get("offset") or 0
@@ -1267,10 +1277,15 @@ class SharedExecutor:
                 projected_rows.append(projected_row)
 
             if order_by:
+                order_expression_columns = self._materialize_order_expression_columns(
+                    projected_rows,
+                    order_by,
+                )
                 available_columns = set(selected_columns)
                 for source_ref, ordered_headers in source_headers_ordered:
                     for col_name in ordered_headers:
                         available_columns.add(f"{source_ref}.{col_name}")
+                available_columns.update(order_expression_columns)
                 projected_rows = self._apply_order_by(
                     projected_rows,
                     order_by,
@@ -1632,10 +1647,15 @@ class SharedExecutor:
             grouped_rows = deduped
 
         if order_by_clause:
+            order_expression_columns = self._materialize_order_expression_columns(
+                grouped_rows,
+                order_by_clause,
+            )
             available_order_columns = set(output_sources)
             if group_by:
                 available_order_columns.update(group_by)
             available_order_columns.update(required_aggregates.keys())
+            available_order_columns.update(order_expression_columns)
             grouped_rows = self._apply_order_by(
                 grouped_rows,
                 order_by_clause,

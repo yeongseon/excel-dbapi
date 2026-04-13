@@ -249,3 +249,69 @@ def test_case_parameter_binding_select_and_update(tmp_path: Path) -> None:
 
     rows, _ = _query(file_path, "SELECT label FROM t WHERE id = 1")
     assert rows == [("high",)]
+
+
+def test_case_order_by_case_with_parameters(tmp_path: Path) -> None:
+    file_path = tmp_path / "case_order_by_case_params.xlsx"
+    _create_case_workbook(file_path)
+
+    rows, _ = _query(
+        file_path,
+        "SELECT id, status FROM t "
+        "ORDER BY CASE WHEN status = ? THEN ? WHEN status = ? THEN ? ELSE ? END ASC",
+        ("active", 0, "pending", 1, 2),
+    )
+    assert rows == [(1, "active"), (4, "active"), (2, "inactive"), (3, "inactive")]
+
+
+def test_case_order_by_case_with_join(tmp_path: Path) -> None:
+    file_path = tmp_path / "case_order_by_case_join.xlsx"
+
+    workbook = Workbook()
+    sheet_employees = workbook.active
+    assert sheet_employees is not None
+    sheet_employees.title = "employees"
+    sheet_employees.append(["id", "name", "dept_id"])
+    sheet_employees.append([1, "Alice", 10])
+    sheet_employees.append([2, "Bob", 20])
+    sheet_employees.append([3, "Carol", 10])
+
+    sheet_departments = workbook.create_sheet("departments")
+    sheet_departments.append(["id", "dept_name"])
+    sheet_departments.append([10, "Engineering"])
+    sheet_departments.append([20, "Sales"])
+    workbook.save(file_path)
+
+    rows, _ = _query(
+        file_path,
+        "SELECT employees.name, departments.dept_name, "
+        "CASE WHEN departments.dept_name = 'Sales' THEN 0 ELSE 1 END AS sort_key "
+        "FROM employees "
+        "INNER JOIN departments ON employees.dept_id = departments.id "
+        "ORDER BY sort_key ASC",
+    )
+    assert rows[0] == ("Bob", "Sales", 0)
+    assert len(rows) == 3
+
+
+def test_case_order_by_case_with_group_by(tmp_path: Path) -> None:
+    file_path = tmp_path / "case_order_by_case_group_by.xlsx"
+
+    workbook = Workbook()
+    sheet_sales = workbook.active
+    assert sheet_sales is not None
+    sheet_sales.title = "sales"
+    sheet_sales.append(["region", "amount"])
+    sheet_sales.append(["East", 100])
+    sheet_sales.append(["West", 200])
+    sheet_sales.append(["East", 150])
+    sheet_sales.append(["West", 50])
+    workbook.save(file_path)
+
+    rows, _ = _query(
+        file_path,
+        "SELECT region, SUM(amount) FROM sales GROUP BY region "
+        "ORDER BY CASE WHEN region = 'West' THEN 0 ELSE 1 END ASC",
+    )
+    assert rows[0] == ("West", 250)
+    assert rows[1] == ("East", 250)
