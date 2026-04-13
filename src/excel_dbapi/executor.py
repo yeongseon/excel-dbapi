@@ -919,13 +919,7 @@ class SharedExecutor:
                     )
                 required_aggregates[ref] = (func, arg)
 
-        order_by_clause_raw = parsed.get("order_by")
-        if isinstance(order_by_clause_raw, list):
-            order_by_clause = order_by_clause_raw
-        elif isinstance(order_by_clause_raw, dict):
-            order_by_clause = [order_by_clause_raw]
-        else:
-            order_by_clause = None
+        order_by_clause = self._normalize_order_by(parsed.get("order_by"))
         if order_by_clause is not None:
             for item in order_by_clause:
                 ref = str(item["column"])
