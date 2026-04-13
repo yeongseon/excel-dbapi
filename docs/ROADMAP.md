@@ -1,73 +1,61 @@
 # excel-dbapi Roadmap
 
-> **Current version**: 0.3.0 · **Python**: 3.10+ · **Published**: [PyPI](https://pypi.org/project/excel-dbapi/)
-
-## Completed
-
-### v0.1.0 — PEP 249 Foundation
-
-- PEP 249 (DB-API 2.0) compliant `ExcelConnection` and `ExcelCursor`
-- SQL parser: SELECT with WHERE (AND/OR, comparison operators), ORDER BY, LIMIT
-- INSERT, UPDATE, DELETE execution
-- CREATE TABLE / DROP TABLE (DDL)
-- Openpyxl engine (default) and Pandas engine (optional)
-- Transaction simulation: `commit()` / `rollback()` with in-memory snapshot
-- PEP 249 exception hierarchy
-- Parameter binding (`?` placeholder)
-- Formula injection defense (enabled by default)
-- Reflection helpers for dialect integration
-- Metadata sheet for schema persistence
-
-### v0.2.x — Operators & Quality
-
-- IN, BETWEEN, LIKE operators for WHERE clauses
-- Codecov CI integration
-- mypy strict mode enabled and passing
-- PyPI Trusted Publisher (OIDC) for secure releases
-
-### v0.3.0 — Stabilization (Current)
-
-- Formal SQL subset specification ([`docs/SQL_SPEC.md`](SQL_SPEC.md)) with EBNF grammar
-- Parser golden tests for all statement families (SELECT, INSERT, UPDATE, DELETE, DDL)
-- Comprehensive test suite: **397 tests, 98% coverage**
-- Parser fix: quoted strings with embedded spaces handled correctly
-- Parser fix: escaped quotes (`''`, `""`) parsed correctly
-- README restructured: limitations-first layout
-- Microsoft Graph API engine: remote Excel files on OneDrive/SharePoint (experimental)
-
-## Future
-
-### Planned
-
-- **DISTINCT**: Remove duplicate rows from SELECT results
-- **OFFSET**: Pagination support (currently only LIMIT is supported)
-- **Aggregate functions**: COUNT, SUM, AVG, MIN, MAX
-- **GROUP BY**: Grouping with aggregate functions
-- **Subqueries**: Nested SELECT statements
-- **Multi-sheet JOIN**: Cross-sheet queries (INNER JOIN, LEFT JOIN)
-- **Polars engine**: Optional backend using Polars instead of pandas
-- **Async support**: Asyncio-compatible driver
-
-### Not Planned
-
-These are explicitly out of scope for excel-dbapi:
-
-- Full ACID transactions (Excel files are not a database)
-- Concurrent write support (single-writer model by design)
-- ALTER TABLE / schema migration
-- Stored procedures or triggers
-- Foreign key enforcement
-
-## Versioning
-
-excel-dbapi follows [Semantic Versioning](https://semver.org/):
-
-- **PATCH** (0.x.**y**): Bug fixes
-- **MINOR** (0.**x**.0): New features, backward-compatible
-- **MAJOR** (**x**.0.0): Breaking changes, stable API
-
-**Current status**: Beta (0.x.x) — API may change before 1.0.0.
+> Current line: 0.6.x series  
+> SQL support reference: [`docs/SQL_SPEC.md`](SQL_SPEC.md)
 
 ---
 
-See [CHANGELOG.md](../CHANGELOG.md) for detailed release history.
+## Completed
+
+### Core DB-API and Engines
+
+- PEP 249-compliant `ExcelConnection` and `ExcelCursor`
+- Parameter binding with qmark placeholders (`?`)
+- Openpyxl engine (default) and optional pandas engine
+- Autocommit and snapshot-based rollback semantics
+- Formula injection defense for write operations
+
+### SQL Parser and Execution (Implemented)
+
+- `SELECT` with projection, expressions, aliases, `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`
+- `DISTINCT` (single-table queries)
+- JOIN support: `INNER`, `LEFT`, `RIGHT`, `FULL OUTER`, `CROSS` (including chained JOINs)
+- Aggregation: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `COUNT(DISTINCT ...)`
+- `GROUP BY` and `HAVING`
+- Subqueries in `WHERE ... [NOT] IN (SELECT ...)` (single-column, non-correlated)
+- Compound queries: `UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`
+- Expressions: arithmetic (`+ - * /`) and `CASE ... WHEN ... THEN ... ELSE ... END`
+- DML: `INSERT` (single, multi-row, `INSERT ... SELECT`), `UPDATE`, `DELETE`
+- UPSERT: `INSERT ... ON CONFLICT ... DO NOTHING / DO UPDATE`
+- DDL: `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE ADD/DROP/RENAME COLUMN`
+
+### Quality and Delivery
+
+- Strict mypy configuration and CI validation
+- Broad parser/executor regression coverage
+- Trusted Publisher (OIDC) release flow for PyPI
+
+---
+
+## Planned
+
+- Async-friendly API surface (design investigation)
+- Additional backend options (e.g., Polars-based engine)
+- Performance tuning for large-sheet scans and join-heavy queries
+- Documentation and example expansion around advanced SQL patterns
+
+---
+
+## Explicitly Out of Scope
+
+- Full ACID transaction guarantees on `.xlsx`
+- Multi-writer concurrency on the same workbook path
+- Stored procedures, triggers, and foreign key enforcement
+- Full SQL dialect parity with SQLite/PostgreSQL
+
+---
+
+## Documentation Authority
+
+- Authoritative SQL behavior: [`docs/SQL_SPEC.md`](SQL_SPEC.md)
+- Authoritative feature matrix: [`docs/SQL_SPEC.md#2-authoritative-feature-matrix`](SQL_SPEC.md#2-authoritative-feature-matrix)

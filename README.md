@@ -13,11 +13,18 @@
 A **local-first** Python DB-API 2.0 connector for Excel files.
 Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no database server required.
 
+## About and docs
+
+- SQL reference and authoritative feature matrix: [docs/SQL_SPEC.md](docs/SQL_SPEC.md)
+- Usage guide: [docs/USAGE.md](docs/USAGE.md)
+- 10-minute quickstart: [docs/QUICKSTART_10_MIN.md](docs/QUICKSTART_10_MIN.md)
+- Roadmap and planning status: [docs/ROADMAP.md](docs/ROADMAP.md)
+
 ## Limitations
 
 Before you begin, understand what excel-dbapi is **not**:
 
-- **No FULL OUTER JOIN or CROSS JOIN** — supports INNER/LEFT/RIGHT JOIN including chained JOINs
+- **Not full SQL** — this is a documented SQL subset (see `docs/SQL_SPEC.md`)
 - **No concurrent writes** — use a single-writer model
 - **Not for large datasets** — if your Excel file has 100k+ rows, use pandas directly or a database
 - **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL
@@ -26,6 +33,16 @@ Before you begin, understand what excel-dbapi is **not**:
 If you need relational features, use SQLite or PostgreSQL.
 
 See the full [SQL Specification](docs/SQL_SPEC.md) for the exact SQL subset supported.
+
+## Current SQL feature set
+
+- `SELECT` with aliases, arithmetic/CASE expressions, `DISTINCT`, `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, `OFFSET`
+- JOINs: `INNER`, `LEFT`, `RIGHT`, `FULL OUTER`, `CROSS` (with documented JOIN-specific restrictions)
+- Aggregates: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `COUNT(DISTINCT col)`
+- Subqueries in `WHERE ... [NOT] IN (SELECT ...)` and compound queries (`UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`)
+- DML/DDL: `INSERT` (single/multi-row and `INSERT ... SELECT`), UPSERT (`ON CONFLICT`), `UPDATE`, `DELETE`, `CREATE/DROP/ALTER TABLE`
+
+For exact support/limitations per feature, use the matrix in [docs/SQL_SPEC.md#2-authoritative-feature-matrix](docs/SQL_SPEC.md#2-authoritative-feature-matrix).
 
 ---
 
