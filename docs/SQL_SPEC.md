@@ -124,6 +124,7 @@ SELECT qualified_columns FROM table [ [AS] alias ]
 | Mixed | `SELECT name, COUNT(*) FROM Sheet1 GROUP BY name` | Plain + aggregate columns |
 | Qualified | `SELECT a.id, b.name FROM Sheet1 a JOIN Sheet2 b ON a.id = b.id` | Table-qualified columns (required in JOIN) |
 | Arithmetic expression | `SELECT price * qty AS total FROM Sheet1` | Row-level arithmetic with `+`, `-`, `*`, `/`, unary `-`, and parentheses |
+| CASE expression | `SELECT CASE WHEN score > 10 THEN 'high' ELSE 'low' END AS band FROM Sheet1` | Row-level conditional expression |
 
 - Column aliases (`AS`) are **not supported**.
 - Function expressions in SELECT list are **not supported** (for example `UPPER(name)`).
@@ -184,6 +185,22 @@ Arithmetic expressions are evaluated per-row in the `SELECT` list.
 **Current limitations**:
 - Arithmetic expressions are supported only in the `SELECT` list (not in `WHERE`, `GROUP BY`, `HAVING`, or `ORDER BY` expressions).
 - Aggregate arguments still accept only bare column names or `*` (for example, `SUM(a * b)` is rejected).
+
+#### 3.2.3 CASE Expressions
+
+`CASE` expressions are supported in the SELECT list and may be nested.
+
+**Searched CASE**:
+- `CASE WHEN condition THEN result [WHEN condition THEN result ...] [ELSE result] END`
+
+**Simple CASE**:
+- `CASE expr WHEN match THEN result [WHEN match THEN result ...] [ELSE result] END`
+
+**Rules**:
+- `WHEN` conditions in searched CASE use standard WHERE-condition semantics.
+- `THEN`, `ELSE`, and simple `WHEN match` values accept scalar expressions (column refs, literals, arithmetic, nested CASE).
+- If no `WHEN` branch matches and `ELSE` is omitted, the result is `NULL`.
+- Parameter placeholders (`?`) are supported in `WHEN` conditions and `THEN`/`ELSE` results.
 
 ### 3.3 WHERE Clause
 
@@ -372,6 +389,7 @@ UPDATE table SET assignments [WHERE conditions]
 | Placeholder | `SET name = ?` |
 | Multiple | `SET name = 'Bob', age = 30` |
 | NULL | `SET name = NULL` |
+| CASE expression | `SET status = CASE WHEN score >= 60 THEN 'pass' ELSE 'fail' END` |
 
 ### 5.3 Rules
 
@@ -449,6 +467,14 @@ Example: `WHERE name LIKE 'A%'` matches "Alice", "Ann", "A".
 - Always inclusive: `BETWEEN 1 AND 10` matches 1, 5, and 10.
 - Requires the `AND` keyword between bounds.
 
+#### 7.2.4 CASE as Condition Operand
+
+CASE expressions can appear as condition operands in WHERE clauses.
+
+- Example: `WHERE CASE WHEN score > 10 THEN 'a' ELSE 'b' END = 'a'`
+- Both searched and simple CASE forms are supported.
+- Nested CASE expressions are supported.
+
 ### 7.3 Logical Connectives
 
 | Connective | Example |
@@ -517,13 +543,23 @@ cursor.execute("INSERT INTO Sheet1 (id, name) VALUES (?, ?)", (1, "Alice"))
 - Each `?` in the query consumes one parameter from the `params` tuple, left to right.
 - Too few parameters → `ValueError: Not enough parameters for placeholders`
 - Too many parameters → `ValueError: Too many parameters for placeholders`
-- Parameters can appear in: WHERE values, SET values, VALUES list, LIMIT, OFFSET
+- Parameters can appear in: SELECT CASE branches, WHERE values, SET values (including CASE branches), VALUES list, LIMIT, OFFSET
 
 ### 9.3 Binding Order
 
 For UPDATE with WHERE:
 1. SET assignment values are bound first (left to right).
 2. WHERE condition values are bound next (left to right).
+
+For SELECT with WHERE/HAVING/LIMIT/OFFSET:
+1. SELECT expression placeholders (including CASE branches) are bound first, left to right.
+2. WHERE values are bound next.
+3. HAVING values are bound next.
+4. LIMIT and OFFSET placeholders are bound last.
+
+Within CASE expressions, placeholders bind in SQL order:
+- Searched CASE: each `WHEN` condition first, then its `THEN` result, then `ELSE`.
+- Simple CASE: CASE value first, then each `WHEN match`, then `THEN` result, then `ELSE`.
 
 ---
 

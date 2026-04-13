@@ -29,16 +29,82 @@ def _split_csv(text: str) -> List[str]:
     current: List[str] = []
     in_single = False
     in_double = False
-    for char in text:
-        if char == "'" and not in_double:
-            in_single = not in_single
-        elif char == '"' and not in_single:
-            in_double = not in_double
-        if char == "," and not in_single and not in_double:
+    paren_depth = 0
+    case_depth = 0
+    index = 0
+
+    while index < len(text):
+        char = text[index]
+
+        if in_single:
+            current.append(char)
+            if char == "'":
+                if index + 1 < len(text) and text[index + 1] == "'":
+                    current.append(text[index + 1])
+                    index += 1
+                else:
+                    in_single = False
+            index += 1
+            continue
+
+        if in_double:
+            current.append(char)
+            if char == '"':
+                if index + 1 < len(text) and text[index + 1] == '"':
+                    current.append(text[index + 1])
+                    index += 1
+                else:
+                    in_double = False
+            index += 1
+            continue
+
+        if char == "'":
+            in_single = True
+            current.append(char)
+            index += 1
+            continue
+
+        if char == '"':
+            in_double = True
+            current.append(char)
+            index += 1
+            continue
+
+        if char == "(":
+            paren_depth += 1
+            current.append(char)
+            index += 1
+            continue
+
+        if char == ")":
+            if paren_depth > 0:
+                paren_depth -= 1
+            current.append(char)
+            index += 1
+            continue
+
+        if char.isalpha() or char == "_":
+            start = index
+            while index < len(text) and (text[index].isalnum() or text[index] == "_"):
+                index += 1
+            word = text[start:index]
+            upper = word.upper()
+            if upper == "CASE":
+                case_depth += 1
+            elif upper == "END" and case_depth > 0:
+                case_depth -= 1
+            current.append(word)
+            continue
+
+        if char == "," and paren_depth == 0 and case_depth == 0:
             items.append("".join(current).strip())
             current = []
+            index += 1
             continue
+
         current.append(char)
+        index += 1
+
     if current:
         items.append("".join(current).strip())
     return items
@@ -157,6 +223,450 @@ def _parse_value(token: str) -> Any:
         return token
 
 
+def _parse_numeric_literal(token: str) -> int | float | None:
+    if token.startswith(("'", '"')) and token.endswith(("'", '"')):
+        return None
+    try:
+        return int(token)
+    except ValueError:
+        pass
+    try:
+        return float(token)
+    except ValueError:
+        return None
+
+
+def _tokenize_expression(text: str) -> list[str]:
+    tokens: list[str] = []
+    current: list[str] = []
+    in_single = False
+    in_double = False
+    index = 0
+    while index < len(text):
+        char = text[index]
+
+        if in_single:
+            current.append(char)
+            if char == "'":
+                if index + 1 < len(text) and text[index + 1] == "'":
+                    current.append(text[index + 1])
+                    index += 1
+                else:
+                    in_single = False
+            index += 1
+            continue
+
+        if in_double:
+            current.append(char)
+            if char == '"':
+                if index + 1 < len(text) and text[index + 1] == '"':
+                    current.append(text[index + 1])
+                    index += 1
+                else:
+                    in_double = False
+            index += 1
+            continue
+
+        if char.isspace():
+            if current:
+                tokens.append("".join(current))
+                current = []
+            index += 1
+            continue
+
+        if char in {"+", "-", "*", "/", "(", ")"}:
+            if current:
+                tokens.append("".join(current))
+                current = []
+            tokens.append(char)
+            index += 1
+            continue
+
+        if char == "'":
+            current.append(char)
+            in_single = True
+            index += 1
+            continue
+
+        if char == '"':
+            current.append(char)
+            in_double = True
+            index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    if current:
+        tokens.append("".join(current))
+
+    return _collapse_aggregate_tokens(tokens)
+
+
+def _is_case_keyword(token: str, keyword: str) -> bool:
+    return not _is_quoted_token(token) and token.upper() == keyword
+
+
+def _collect_case_tokens_until(
+    tokens: List[str],
+    start_index: int,
+    stop_keywords: set[str],
+) -> tuple[List[str], int, Optional[str]]:
+    collected: List[str] = []
+    index = start_index
+    paren_depth = 0
+    case_depth = 0
+
+    while index < len(tokens):
+        token = tokens[index]
+        if _is_quoted_token(token):
+            collected.append(token)
+            index += 1
+            continue
+
+        if token == "(":
+            paren_depth += 1
+            collected.append(token)
+            index += 1
+            continue
+
+        if token == ")":
+            if paren_depth > 0:
+                paren_depth -= 1
+            collected.append(token)
+            index += 1
+            continue
+
+        upper = token.upper()
+        if upper == "CASE":
+            case_depth += 1
+            collected.append(token)
+            index += 1
+            continue
+
+        if upper == "END":
+            if case_depth > 0:
+                case_depth -= 1
+                collected.append(token)
+                index += 1
+                continue
+            if paren_depth == 0 and "END" in stop_keywords:
+                return collected, index, "END"
+            collected.append(token)
+            index += 1
+            continue
+
+        if paren_depth == 0 and case_depth == 0 and upper in stop_keywords:
+            return collected, index, upper
+
+        collected.append(token)
+        index += 1
+
+    return collected, index, None
+
+
+def _parse_case_expression_tokens(
+    tokens: List[str],
+    start_index: int,
+) -> tuple[Dict[str, Any], int]:
+    if start_index >= len(tokens) or not _is_case_keyword(tokens[start_index], "CASE"):
+        raise ValueError("Invalid CASE expression")
+
+    index = start_index + 1
+    head_tokens, index, first_stop = _collect_case_tokens_until(tokens, index, {"WHEN"})
+    if first_stop != "WHEN":
+        raise ValueError("Invalid CASE expression: missing WHEN")
+
+    mode = "searched"
+    case_value: Any = None
+    if head_tokens:
+        mode = "simple"
+        case_value = _parse_column_expression(
+            " ".join(head_tokens),
+            allow_wildcard=False,
+            allow_aggregates=False,
+        )
+
+    whens: List[Dict[str, Any]] = []
+    else_expression: Any = None
+    closed = False
+
+    while index < len(tokens) and _is_case_keyword(tokens[index], "WHEN"):
+        index += 1
+        when_tokens, index, then_stop = _collect_case_tokens_until(tokens, index, {"THEN"})
+        if then_stop != "THEN" or not when_tokens:
+            raise ValueError("Invalid CASE expression: expected WHEN ... THEN ...")
+
+        index += 1
+        result_tokens, index, next_stop = _collect_case_tokens_until(
+            tokens,
+            index,
+            {"WHEN", "ELSE", "END"},
+        )
+        if not result_tokens:
+            raise ValueError("Invalid CASE expression: THEN requires a result")
+        result_expression = _parse_column_expression(
+            " ".join(result_tokens),
+            allow_wildcard=False,
+            allow_aggregates=False,
+        )
+
+        if mode == "searched":
+            condition_text = " ".join(when_tokens).strip()
+            condition = _parse_where_expression(
+                condition_text,
+                params=None,
+                bind_params=False,
+            )
+            whens.append(
+                {
+                    "condition": condition,
+                    "result": result_expression,
+                }
+            )
+        else:
+            match_expression = _parse_column_expression(
+                " ".join(when_tokens),
+                allow_wildcard=False,
+                allow_aggregates=False,
+            )
+            whens.append(
+                {
+                    "match": match_expression,
+                    "result": result_expression,
+                }
+            )
+
+        if next_stop == "WHEN":
+            continue
+
+        if next_stop == "ELSE":
+            index += 1
+            else_tokens, index, end_stop = _collect_case_tokens_until(tokens, index, {"END"})
+            if end_stop != "END":
+                raise ValueError("Invalid CASE expression: missing END")
+            if not else_tokens:
+                raise ValueError("Invalid CASE expression: ELSE requires a result")
+            else_expression = _parse_column_expression(
+                " ".join(else_tokens),
+                allow_wildcard=False,
+                allow_aggregates=False,
+            )
+            index += 1
+            closed = True
+            break
+
+        if next_stop == "END":
+            index += 1
+            closed = True
+            break
+
+        raise ValueError("Invalid CASE expression")
+
+    if not whens:
+        raise ValueError("Invalid CASE expression: missing WHEN branches")
+
+    if not closed:
+        if index < len(tokens) and _is_case_keyword(tokens[index], "END"):
+            index += 1
+        else:
+            raise ValueError("Invalid CASE expression: missing END")
+
+    return (
+        {
+            "type": "case",
+            "mode": mode,
+            "value": case_value,
+            "whens": whens,
+            "else": else_expression,
+        },
+        index,
+    )
+
+
+def _parse_case_expression(expression: str) -> Dict[str, Any]:
+    tokens = _collapse_aggregate_tokens(_tokenize(expression.strip()))
+    parsed_case, index = _parse_case_expression_tokens(tokens, 0)
+    if index != len(tokens):
+        raise ValueError("Invalid CASE expression")
+    return parsed_case
+
+
+def _parse_column_expression(
+    expression: str,
+    *,
+    allow_wildcard: bool = True,
+    allow_aggregates: bool = True,
+) -> Any:
+    expression = expression.strip()
+    if not expression:
+        raise ValueError("Invalid column expression")
+
+    if re.search(r"(?i)\bOVER\s*\(", expression):
+        raise ValueError("Unsupported SQL syntax: OVER")
+
+    if re.match(r"(?i)^CASE\b", expression):
+        return _parse_case_expression(expression)
+
+    match = re.fullmatch(
+        r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
+        expression,
+    )
+    if match:
+        if not allow_aggregates:
+            raise ValueError("Unsupported column expression: aggregate functions are not supported here")
+        func = match.group(1).upper()
+        distinct_modifier = match.group(2)
+        arg = match.group(3).strip()
+        if not arg:
+            raise ValueError("Invalid aggregate expression")
+        if distinct_modifier:
+            if func != "COUNT":
+                raise ValueError("DISTINCT is only supported with COUNT")
+            if arg == "*":
+                raise ValueError("Invalid aggregate expression")
+            if not re.fullmatch(_IDENTIFIER_PATTERN, arg):
+                raise ValueError(
+                    f"Unsupported aggregate expression: COUNT(DISTINCT {arg}). "
+                    "Only bare column names are supported with DISTINCT"
+                )
+        if arg == "*" and func != "COUNT":
+            raise ValueError(f"{func} does not support *")
+        if arg != "*" and not re.fullmatch(
+            rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", arg
+        ):
+            raise ValueError(
+                f"Unsupported aggregate expression: {func}({arg}). "
+                "Only bare column names and * are supported"
+            )
+        aggregate: dict[str, Any] = {"type": "aggregate", "func": func, "arg": arg}
+        if distinct_modifier:
+            aggregate["distinct"] = True
+        return aggregate
+
+    if expression == "*":
+        if allow_wildcard:
+            return expression
+        raise ValueError("Unsupported column expression: wildcard is not supported here")
+
+    literal_value: Any | None = None
+    parsed_numeric = _parse_numeric_literal(expression)
+    if parsed_numeric is not None:
+        literal_value = parsed_numeric
+    elif expression.upper() == "NULL":
+        literal_value = None
+    elif expression == "?":
+        literal_value = expression
+    elif _is_quoted_token(expression):
+        literal_value = _parse_value(expression)
+
+    if literal_value is not None or expression.upper() == "NULL":
+        return {"type": "literal", "value": literal_value}
+
+    if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression):
+        source, name = expression.split(".", 1)
+        return {"type": "column", "source": source, "name": name}
+
+    if re.fullmatch(_IDENTIFIER_PATTERN, expression):
+        return expression
+
+    tokens = _tokenize_expression(expression)
+    position = 0
+
+    def _peek() -> str | None:
+        if position >= len(tokens):
+            return None
+        return tokens[position]
+
+    def _consume(expected: str | None = None) -> str:
+        nonlocal position
+        token = _peek()
+        if token is None:
+            raise ValueError(f"Unsupported column expression: {expression}")
+        if expected is not None and token != expected:
+            raise ValueError(f"Unsupported column expression: {expression}")
+        position += 1
+        return token
+
+    def _parse_atom() -> Any:
+        token = _peek()
+        if token is None:
+            raise ValueError(f"Unsupported column expression: {expression}")
+
+        if token == "(":
+            _consume("(")
+            parsed = _parse_expression_internal()
+            if _peek() != ")":
+                raise ValueError(f"Unsupported column expression: {expression}")
+            _consume(")")
+            return parsed
+
+        _consume()
+
+        numeric = _parse_numeric_literal(token)
+        if numeric is not None:
+            return {"type": "literal", "value": numeric}
+
+        if token.upper() == "NULL" or token == "?" or _is_quoted_token(token):
+            return {"type": "literal", "value": _parse_value(token)}
+
+        if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, token):
+            source, name = token.split(".", 1)
+            return {"type": "column", "source": source, "name": name}
+
+        if re.fullmatch(_IDENTIFIER_PATTERN, token):
+            return token
+
+        if re.fullmatch(
+            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
+            token,
+        ):
+            raise ValueError(
+                "Unsupported column expression: aggregate functions cannot be used inside arithmetic expressions"
+            )
+
+        raise ValueError(
+            f"Unsupported column expression: {expression}. "
+            "Only bare column names, qualified column names, numeric literals, "
+            "quoted literals, CASE expressions, arithmetic operators (+, -, *, /), "
+            "and aggregate functions are supported"
+        )
+
+    def _parse_factor() -> Any:
+        token = _peek()
+        if token == "-":
+            _consume("-")
+            return {"type": "unary_op", "op": "-", "operand": _parse_factor()}
+        return _parse_atom()
+
+    def _parse_term() -> Any:
+        left = _parse_factor()
+        while True:
+            op = _peek()
+            if op not in {"*", "/"}:
+                break
+            _consume(op)
+            right = _parse_factor()
+            left = {"type": "binary_op", "op": op, "left": left, "right": right}
+        return left
+
+    def _parse_expression_internal() -> Any:
+        left = _parse_term()
+        while True:
+            op = _peek()
+            if op not in {"+", "-"}:
+                break
+            _consume(op)
+            right = _parse_term()
+            left = {"type": "binary_op", "op": op, "left": left, "right": right}
+        return left
+
+    parsed_expression = _parse_expression_internal()
+    if _peek() is not None:
+        raise ValueError(f"Unsupported column expression: {expression}")
+    return parsed_expression
+
+
 _AGGREGATE_FUNCTIONS = frozenset({"COUNT", "SUM", "AVG", "MIN", "MAX"})
 _IDENTIFIER_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
 _QUALIFIED_IDENTIFIER_PATTERN = (
@@ -267,225 +777,6 @@ def _parse_columns(columns_token: str) -> List[Any]:
     if columns_token == "*":
         return ["*"]
 
-    def _parse_column_expression(expression: str) -> Any:
-        expression = expression.strip()
-        if not expression:
-            raise ValueError("Invalid column expression")
-
-        if re.search(r"(?i)\bOVER\s*\(", expression):
-            raise ValueError("Unsupported SQL syntax: OVER")
-        match = re.fullmatch(
-            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
-            expression,
-        )
-        if match:
-            func = match.group(1).upper()
-            distinct_modifier = match.group(2)
-            arg = match.group(3).strip()
-            if not arg:
-                raise ValueError("Invalid aggregate expression")
-            if distinct_modifier:
-                if func != "COUNT":
-                    raise ValueError("DISTINCT is only supported with COUNT")
-                if arg == "*":
-                    raise ValueError("Invalid aggregate expression")
-                if not re.fullmatch(_IDENTIFIER_PATTERN, arg):
-                    raise ValueError(
-                        f"Unsupported aggregate expression: COUNT(DISTINCT {arg}). "
-                        "Only bare column names are supported with DISTINCT"
-                    )
-            if arg == "*" and func != "COUNT":
-                raise ValueError(f"{func} does not support *")
-            if arg != "*" and not re.fullmatch(
-                rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", arg
-            ):
-                raise ValueError(
-                    f"Unsupported aggregate expression: {func}({arg}). "
-                    "Only bare column names and * are supported"
-                )
-            aggregate: dict[str, Any] = {"type": "aggregate", "func": func, "arg": arg}
-            if distinct_modifier:
-                aggregate["distinct"] = True
-            return aggregate
-
-        if expression == "*":
-            return expression
-
-        if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression):
-            source, name = expression.split(".", 1)
-            return {"type": "column", "source": source, "name": name}
-
-        if re.fullmatch(_IDENTIFIER_PATTERN, expression):
-            return expression
-
-        def _tokenize_expression(text: str) -> list[str]:
-            tokens: list[str] = []
-            current: list[str] = []
-            in_single = False
-            in_double = False
-            index = 0
-            while index < len(text):
-                char = text[index]
-
-                if in_single:
-                    current.append(char)
-                    if char == "'":
-                        if index + 1 < len(text) and text[index + 1] == "'":
-                            current.append(text[index + 1])
-                            index += 1
-                        else:
-                            in_single = False
-                    index += 1
-                    continue
-
-                if in_double:
-                    current.append(char)
-                    if char == '"':
-                        if index + 1 < len(text) and text[index + 1] == '"':
-                            current.append(text[index + 1])
-                            index += 1
-                        else:
-                            in_double = False
-                    index += 1
-                    continue
-
-                if char.isspace():
-                    if current:
-                        tokens.append("".join(current))
-                        current = []
-                    index += 1
-                    continue
-
-                if char in {"+", "-", "*", "/", "(", ")"}:
-                    if current:
-                        tokens.append("".join(current))
-                        current = []
-                    tokens.append(char)
-                    index += 1
-                    continue
-
-                if char == "'":
-                    current.append(char)
-                    in_single = True
-                    index += 1
-                    continue
-
-                if char == '"':
-                    current.append(char)
-                    in_double = True
-                    index += 1
-                    continue
-
-                current.append(char)
-                index += 1
-
-            if current:
-                tokens.append("".join(current))
-
-            return _collapse_aggregate_tokens(tokens)
-
-        def _parse_numeric_literal(token: str) -> int | float | None:
-            if token.startswith(("'", '"')) and token.endswith(("'", '"')):
-                return None
-            try:
-                return int(token)
-            except ValueError:
-                pass
-            try:
-                return float(token)
-            except ValueError:
-                return None
-
-        tokens = _tokenize_expression(expression)
-        position = 0
-
-        def _peek() -> str | None:
-            if position >= len(tokens):
-                return None
-            return tokens[position]
-
-        def _consume(expected: str | None = None) -> str:
-            nonlocal position
-            token = _peek()
-            if token is None:
-                raise ValueError(f"Unsupported column expression: {expression}")
-            if expected is not None and token != expected:
-                raise ValueError(f"Unsupported column expression: {expression}")
-            position += 1
-            return token
-
-        def _parse_atom() -> Any:
-            token = _peek()
-            if token is None:
-                raise ValueError(f"Unsupported column expression: {expression}")
-
-            if token == "(":
-                _consume("(")
-                parsed = _parse_expression()
-                if _peek() != ")":
-                    raise ValueError(f"Unsupported column expression: {expression}")
-                _consume(")")
-                return parsed
-
-            _consume()
-            numeric = _parse_numeric_literal(token)
-            if numeric is not None:
-                return {"type": "literal", "value": numeric}
-
-            if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, token):
-                source, name = token.split(".", 1)
-                return {"type": "column", "source": source, "name": name}
-
-            if re.fullmatch(_IDENTIFIER_PATTERN, token):
-                return token
-
-            if re.fullmatch(
-                r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
-                token,
-            ):
-                raise ValueError(
-                    "Unsupported column expression: aggregate functions cannot be used inside arithmetic expressions"
-                )
-
-            raise ValueError(
-                f"Unsupported column expression: {expression}. "
-                "Only bare column names, qualified column names, numeric literals, arithmetic operators (+, -, *, /), and aggregate functions are supported"
-            )
-
-        def _parse_factor() -> Any:
-            token = _peek()
-            if token == "-":
-                _consume("-")
-                return {"type": "unary_op", "op": "-", "operand": _parse_factor()}
-            return _parse_atom()
-
-        def _parse_term() -> Any:
-            left = _parse_factor()
-            while True:
-                op = _peek()
-                if op not in {"*", "/"}:
-                    break
-                _consume(op)
-                right = _parse_factor()
-                left = {"type": "binary_op", "op": op, "left": left, "right": right}
-            return left
-
-        def _parse_expression() -> Any:
-            left = _parse_term()
-            while True:
-                op = _peek()
-                if op not in {"+", "-"}:
-                    break
-                _consume(op)
-                right = _parse_term()
-                left = {"type": "binary_op", "op": op, "left": left, "right": right}
-            return left
-
-        parsed_expression = _parse_expression()
-        if _peek() is not None:
-            raise ValueError(f"Unsupported column expression: {expression}")
-        return parsed_expression
-
     def _is_valid_alias_name(alias_name: str) -> bool:
         if not re.fullmatch(_IDENTIFIER_PATTERN, alias_name):
             return False
@@ -556,6 +847,110 @@ def _parse_columns(columns_token: str) -> List[Any]:
     return columns
 
 
+def _expression_values_to_bind(expression: Any) -> List[Any]:
+    if isinstance(expression, dict):
+        expression_type = expression.get("type")
+        if expression_type == "alias":
+            return _expression_values_to_bind(expression.get("expression"))
+        if expression_type == "literal":
+            return [expression.get("value")]
+        if expression_type == "unary_op":
+            return _expression_values_to_bind(expression.get("operand"))
+        if expression_type == "binary_op":
+            values = _expression_values_to_bind(expression.get("left"))
+            values.extend(_expression_values_to_bind(expression.get("right")))
+            return values
+        if expression_type == "case":
+            case_values: List[Any] = []
+            mode = str(expression.get("mode", ""))
+            if mode == "simple":
+                case_values.extend(_expression_values_to_bind(expression.get("value")))
+            whens = expression.get("whens")
+            if isinstance(whens, list):
+                for when in whens:
+                    if not isinstance(when, dict):
+                        continue
+                    if mode == "searched":
+                        condition = when.get("condition")
+                        if isinstance(condition, dict):
+                            case_values.extend(_where_values_to_bind(condition))
+                    else:
+                        case_values.extend(_expression_values_to_bind(when.get("match")))
+                    case_values.extend(_expression_values_to_bind(when.get("result")))
+            case_values.extend(_expression_values_to_bind(expression.get("else")))
+            return case_values
+    return []
+
+
+def _bind_expression_values(
+    expression: Any,
+    bound_values: List[Any],
+    offset: int,
+) -> int:
+    if not isinstance(expression, dict):
+        return 0
+
+    expression_type = expression.get("type")
+    if expression_type == "alias":
+        return _bind_expression_values(expression.get("expression"), bound_values, offset)
+
+    if expression_type == "literal":
+        expression["value"] = bound_values[offset]
+        return 1
+
+    if expression_type == "unary_op":
+        return _bind_expression_values(expression.get("operand"), bound_values, offset)
+
+    if expression_type == "binary_op":
+        consumed = _bind_expression_values(expression.get("left"), bound_values, offset)
+        consumed += _bind_expression_values(
+            expression.get("right"),
+            bound_values,
+            offset + consumed,
+        )
+        return consumed
+
+    if expression_type == "case":
+        consumed = 0
+        mode = str(expression.get("mode", ""))
+        if mode == "simple":
+            consumed += _bind_expression_values(expression.get("value"), bound_values, offset + consumed)
+
+        whens = expression.get("whens")
+        if isinstance(whens, list):
+            for when in whens:
+                if not isinstance(when, dict):
+                    continue
+                if mode == "searched":
+                    condition = when.get("condition")
+                    if isinstance(condition, dict):
+                        consumed += _bind_where_conditions(
+                            condition,
+                            bound_values,
+                            offset + consumed,
+                        )
+                else:
+                    consumed += _bind_expression_values(
+                        when.get("match"),
+                        bound_values,
+                        offset + consumed,
+                    )
+                consumed += _bind_expression_values(
+                    when.get("result"),
+                    bound_values,
+                    offset + consumed,
+                )
+
+        consumed += _bind_expression_values(
+            expression.get("else"),
+            bound_values,
+            offset + consumed,
+        )
+        return consumed
+
+    return 0
+
+
 def _values_to_bind_from_condition(condition: Dict[str, Any]) -> List[Any]:
     # Handle compound/not nodes recursively
     node_type = condition.get("type")
@@ -563,18 +958,45 @@ def _values_to_bind_from_condition(condition: Dict[str, Any]) -> List[Any]:
         return _where_values_to_bind(condition["operand"])
     if node_type == "compound" or "conditions" in condition:
         return _where_values_to_bind(condition)
+
+    values: List[Any] = []
+    column_operand = condition.get("column")
+    if isinstance(column_operand, dict):
+        values.extend(_expression_values_to_bind(column_operand))
+
     operator = str(condition["operator"]).upper()
     if operator in {"IS", "IS NOT"}:
-        return []
+        return values
+
+    value = condition["value"]
     if operator in {"IN", "NOT IN"}:
-        value = condition["value"]
         if isinstance(value, dict) and value.get("type") == "subquery":
-            return []
-        return list(value)
+            return values
+        for item in value:
+            if isinstance(item, dict):
+                values.extend(_expression_values_to_bind(item))
+            else:
+                values.append(item)
+        return values
+
     if operator in {"BETWEEN", "NOT BETWEEN"}:
-        low, high = condition["value"]
-        return [low, high]
-    return [condition["value"]]
+        low, high = value
+        if isinstance(low, dict):
+            values.extend(_expression_values_to_bind(low))
+        else:
+            values.append(low)
+        if isinstance(high, dict):
+            values.extend(_expression_values_to_bind(high))
+        else:
+            values.append(high)
+        return values
+
+    if isinstance(value, dict):
+        values.extend(_expression_values_to_bind(value))
+        return values
+
+    values.append(value)
+    return values
 
 
 def _apply_bound_values_to_condition(
@@ -586,21 +1008,54 @@ def _apply_bound_values_to_condition(
         return _bind_where_conditions(condition["operand"], bound_values, offset)
     if node_type == "compound" or "conditions" in condition:
         return _bind_where_conditions(condition, bound_values, offset)
+
+    consumed = 0
+    column_operand = condition.get("column")
+    if isinstance(column_operand, dict):
+        consumed += _bind_expression_values(column_operand, bound_values, offset + consumed)
+
     operator = str(condition["operator"]).upper()
     if operator in {"IS", "IS NOT"}:
-        return 0
+        return consumed
+
+    value = condition["value"]
     if operator in {"IN", "NOT IN"}:
-        value = condition["value"]
         if isinstance(value, dict) and value.get("type") == "subquery":
-            return 0
-        size = len(value)
-        condition["value"] = tuple(bound_values[offset : offset + size])
-        return size
+            return consumed
+        updated_values: List[Any] = []
+        for item in value:
+            if isinstance(item, dict):
+                used = _bind_expression_values(item, bound_values, offset + consumed)
+                consumed += used
+                updated_values.append(item)
+            else:
+                updated_values.append(bound_values[offset + consumed])
+                consumed += 1
+        condition["value"] = tuple(updated_values)
+        return consumed
+
     if operator in {"BETWEEN", "NOT BETWEEN"}:
-        condition["value"] = (bound_values[offset], bound_values[offset + 1])
-        return 2
-    condition["value"] = bound_values[offset]
-    return 1
+        low, high = value
+        if isinstance(low, dict):
+            consumed += _bind_expression_values(low, bound_values, offset + consumed)
+        else:
+            low = bound_values[offset + consumed]
+            consumed += 1
+        if isinstance(high, dict):
+            consumed += _bind_expression_values(high, bound_values, offset + consumed)
+        else:
+            high = bound_values[offset + consumed]
+            consumed += 1
+        condition["value"] = (low, high)
+        return consumed
+
+    if isinstance(value, dict):
+        consumed += _bind_expression_values(value, bound_values, offset + consumed)
+        return consumed
+
+    condition["value"] = bound_values[offset + consumed]
+    consumed += 1
+    return consumed
 
 
 def _where_values_to_bind(where: Dict[str, Any]) -> List[Any]:
@@ -801,33 +1256,62 @@ def _parse_factor(
     return _parse_atomic_condition(tokens, index, allow_subqueries=allow_subqueries)
 
 
+def _parse_condition_operand(
+    tokens: List[str],
+    index: int,
+) -> tuple[Any, int]:
+    if index >= len(tokens):
+        raise ValueError("Invalid WHERE clause format")
+
+    if _is_case_keyword(tokens[index], "CASE"):
+        return _parse_case_expression_tokens(tokens, index)
+
+    return tokens[index], index + 1
+
+
+def _parse_condition_value(
+    tokens: List[str],
+    index: int,
+) -> tuple[Any, int]:
+    if index >= len(tokens):
+        raise ValueError("Invalid WHERE clause format")
+
+    if _is_case_keyword(tokens[index], "CASE"):
+        return _parse_case_expression_tokens(tokens, index)
+
+    return _parse_value(tokens[index]), index + 1
+
+
 def _parse_atomic_condition(
     tokens: List[str],
     index: int,
     allow_subqueries: bool = False,
 ) -> tuple[Dict[str, Any], int]:
     """Parse a single condition: col OP value."""
-    if index + 1 >= len(tokens):
+    if index >= len(tokens):
         raise ValueError("Invalid WHERE clause format")
 
-    column = tokens[index]
-    operator_token = tokens[index + 1].upper()
+    column, operator_index = _parse_condition_operand(tokens, index)
+    if operator_index >= len(tokens):
+        raise ValueError("Invalid WHERE clause format")
+
+    operator_token = tokens[operator_index].upper()
 
     # IS NULL / IS NOT NULL
     if operator_token == "IS":
-        if index + 2 < len(tokens) and tokens[index + 2].upper() == "NOT":
-            if index + 3 < len(tokens) and tokens[index + 3].upper() == "NULL":
+        if operator_index + 1 < len(tokens) and tokens[operator_index + 1].upper() == "NOT":
+            if operator_index + 2 < len(tokens) and tokens[operator_index + 2].upper() == "NULL":
                 return (
                     {"column": column, "operator": "IS NOT", "value": None},
-                    index + 4,
+                    operator_index + 3,
                 )
             raise ValueError(
                 "Invalid WHERE clause format: expected NULL after IS NOT"
             )
-        if index + 2 < len(tokens) and tokens[index + 2].upper() == "NULL":
+        if operator_index + 1 < len(tokens) and tokens[operator_index + 1].upper() == "NULL":
             return (
                 {"column": column, "operator": "IS", "value": None},
-                index + 3,
+                operator_index + 2,
             )
         raise ValueError(
             "Invalid WHERE clause format: expected NULL or NOT after IS"
@@ -835,59 +1319,75 @@ def _parse_atomic_condition(
 
     # NOT IN / NOT LIKE / NOT BETWEEN (operator-level NOT)
     if operator_token == "NOT":
-        if index + 2 < len(tokens):
-            next_token = tokens[index + 2].upper()
+        if operator_index + 1 < len(tokens):
+            next_token = tokens[operator_index + 1].upper()
             if next_token == "IN":
                 return _parse_in_condition(
-                    tokens, column, index + 3, allow_subqueries, negated=True
+                    tokens,
+                    column,
+                    operator_index + 2,
+                    allow_subqueries,
+                    negated=True,
                 )
             if next_token == "LIKE":
-                if index + 3 >= len(tokens):
+                if operator_index + 2 >= len(tokens):
                     raise ValueError("Invalid WHERE clause format")
-                value = _parse_value(tokens[index + 3])
+                value, value_index = _parse_condition_value(tokens, operator_index + 2)
                 return (
                     {"column": column, "operator": "NOT LIKE", "value": value},
-                    index + 4,
+                    value_index,
                 )
             if next_token == "BETWEEN":
                 return _parse_between_condition(
-                    tokens, column, index + 3, negated=True
+                    tokens,
+                    column,
+                    operator_index + 2,
+                    negated=True,
                 )
         raise ValueError("Invalid WHERE clause format: expected IN, LIKE, or BETWEEN after NOT")
 
     # BETWEEN
     if operator_token == "BETWEEN":
-        return _parse_between_condition(tokens, column, index + 2, negated=False)
+        return _parse_between_condition(
+            tokens,
+            column,
+            operator_index + 1,
+            negated=False,
+        )
 
     # IN
     if operator_token == "IN":
         return _parse_in_condition(
-            tokens, column, index + 2, allow_subqueries, negated=False
+            tokens,
+            column,
+            operator_index + 1,
+            allow_subqueries,
+            negated=False,
         )
 
     # LIKE
     if operator_token == "LIKE":
-        if index + 2 >= len(tokens):
+        if operator_index + 1 >= len(tokens):
             raise ValueError("Invalid WHERE clause format")
-        value = _parse_value(tokens[index + 2])
+        value, value_index = _parse_condition_value(tokens, operator_index + 1)
         return (
             {"column": column, "operator": "LIKE", "value": value},
-            index + 3,
+            value_index,
         )
 
     # Standard comparison: =, !=, <>, >, >=, <, <=
-    if index + 2 >= len(tokens):
+    if operator_index + 1 >= len(tokens):
         raise ValueError("Invalid WHERE clause format")
-    value = _parse_value(tokens[index + 2])
+    value, value_index = _parse_condition_value(tokens, operator_index + 1)
     return (
-        {"column": column, "operator": tokens[index + 1], "value": value},
-        index + 3,
+        {"column": column, "operator": tokens[operator_index], "value": value},
+        value_index,
     )
 
 
 def _parse_between_condition(
     tokens: List[str],
-    column: str,
+    column: Any,
     value_start: int,
     negated: bool,
 ) -> tuple[Dict[str, Any], int]:
@@ -909,7 +1409,7 @@ def _parse_between_condition(
 
 def _parse_in_condition(
     tokens: List[str],
-    column: str,
+    column: Any,
     paren_start: int,
     allow_subqueries: bool,
     negated: bool,
@@ -1159,6 +1659,28 @@ def _validate_join_column_reference(
             _validate_join_column_reference(column.get("left"), allowed_sources, context)
             _validate_join_column_reference(column.get("right"), allowed_sources, context)
             return
+        if column_type == "case":
+            mode = str(column.get("mode", ""))
+            if mode == "simple":
+                _validate_join_column_reference(column.get("value"), allowed_sources, context)
+
+            whens = column.get("whens")
+            if isinstance(whens, list):
+                for when in whens:
+                    if not isinstance(when, dict):
+                        continue
+                    if mode == "searched":
+                        condition = when.get("condition")
+                        if isinstance(condition, dict):
+                            _validate_join_where_node(condition, allowed_sources)
+                    else:
+                        _validate_join_column_reference(when.get("match"), allowed_sources, context)
+                    _validate_join_column_reference(when.get("result"), allowed_sources, context)
+
+            else_expression = column.get("else")
+            if else_expression is not None:
+                _validate_join_column_reference(else_expression, allowed_sources, context)
+            return
 
     raise ValueError(f"{context} requires qualified column names in JOIN queries")
 
@@ -1215,10 +1737,22 @@ def _validate_join_where_node(
             _validate_join_where_node(child, join_sources)
         return
     # Atomic condition: validate column reference
-    column_ref = str(node.get("column", ""))
-    if column_ref:
-        parsed_column = _parse_qualified_column_reference(column_ref)
-        _validate_join_column_reference(parsed_column, join_sources, "WHERE")
+    column_ref = node.get("column")
+    if isinstance(column_ref, dict):
+        _validate_join_column_reference(column_ref, join_sources, "WHERE")
+    else:
+        column_name = str(column_ref or "")
+        if column_name:
+            parsed_column = _parse_qualified_column_reference(column_name)
+            _validate_join_column_reference(parsed_column, join_sources, "WHERE")
+
+    value = node.get("value")
+    if isinstance(value, dict) and value.get("type") != "subquery":
+        _validate_join_column_reference(value, join_sources, "WHERE")
+    elif isinstance(value, tuple):
+        for part in value:
+            if isinstance(part, dict):
+                _validate_join_column_reference(part, join_sources, "WHERE")
 
 
 def _parse_order_by_item_tokens(tokens: list[str]) -> dict[str, str]:
@@ -1620,13 +2154,29 @@ def _parse_select(
         unconsumed_text = " ".join(clause_tokens[i] for i in unconsumed)
         raise ValueError(f"Unsupported SQL syntax: {unconsumed_text}")
 
+    column_expressions: List[Any] = []
+    for column in columns:
+        if isinstance(column, dict) and column.get("type") == "alias":
+            column_expressions.append(column.get("expression"))
+        else:
+            column_expressions.append(column)
+
+    has_column_placeholders = any(
+        _is_placeholder(value)
+        for expression in column_expressions
+        for value in _expression_values_to_bind(expression)
+    )
+
     if params is not None or (
-        (where and any(_is_placeholder(value) for value in _where_values_to_bind(where)))
+        has_column_placeholders
+        or (where and any(_is_placeholder(value) for value in _where_values_to_bind(where)))
         or (having and any(_is_placeholder(value) for value in _where_values_to_bind(having)))
         or _is_placeholder(limit)
         or _is_placeholder(offset)
     ):
         values_to_bind = []
+        for expression in column_expressions:
+            values_to_bind.extend(_expression_values_to_bind(expression))
         if where:
             values_to_bind.extend(_where_values_to_bind(where))
         if having:
@@ -1637,6 +2187,8 @@ def _parse_select(
             values_to_bind.append(offset)
         bound = _bind_params(values_to_bind, params)
         consumed = 0
+        for expression in column_expressions:
+            consumed += _bind_expression_values(expression, bound, consumed)
         if where:
             consumed += _bind_where_conditions(where, bound, consumed)
         if having:
@@ -2247,22 +2799,43 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         if "=" not in assignment:
             raise ValueError(f"Invalid UPDATE format: {query}")
         col, value = assignment.split("=", 1)
-        assignments.append({"column": col.strip(), "value": _parse_value(value)})
+        parsed_value: Any
+        value_text = value.strip()
+        if re.match(r"(?i)^CASE\b", value_text):
+            parsed_value = _parse_column_expression(
+                value_text,
+                allow_wildcard=False,
+                allow_aggregates=False,
+            )
+        else:
+            parsed_value = _parse_value(value)
+        assignments.append({"column": col.strip(), "value": parsed_value})
 
     where = None
     if where_part:
         where = _parse_where_expression(where_part, params, bind_params=False, allow_subqueries=True)
 
-    values_to_bind = [item["value"] for item in assignments]
+    values_to_bind: List[Any] = []
+    for item in assignments:
+        assignment_value = item["value"]
+        if isinstance(assignment_value, dict):
+            values_to_bind.extend(_expression_values_to_bind(assignment_value))
+        else:
+            values_to_bind.append(assignment_value)
     if where is not None:
         values_to_bind.extend(_where_values_to_bind(where))
     if params is not None or any(_is_placeholder(value) for value in values_to_bind):
         bound = _bind_params(values_to_bind, params)
-        for idx, item in enumerate(assignments):
-            item["value"] = bound[idx]
+        consumed = 0
+        for item in assignments:
+            assignment_value = item["value"]
+            if isinstance(assignment_value, dict):
+                consumed += _bind_expression_values(assignment_value, bound, consumed)
+            else:
+                item["value"] = bound[consumed]
+                consumed += 1
         if where is not None:
-            offset = len(assignments)
-            _bind_where_conditions(where, bound, offset)
+            _bind_where_conditions(where, bound, consumed)
 
     return {
         "action": "UPDATE",

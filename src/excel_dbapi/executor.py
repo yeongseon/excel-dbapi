@@ -99,10 +99,17 @@ class SharedExecutor:
                     continue
                 for update in updates:
                     col_index = headers.index(update["column"])
+                    raw_value = update["value"]
+                    if isinstance(raw_value, dict) and raw_value.get("type") in {"case", "binary_op", "unary_op", "literal"}:
+                        evaluated = self._eval_expression(
+                            raw_value, row_map, lambda c: row_map.get(c)
+                        )
+                    else:
+                        evaluated = raw_value
                     value = (
-                        sanitize_cell_value(update["value"])
+                        sanitize_cell_value(evaluated)
                         if self.sanitize_formulas
-                        else update["value"]
+                        else evaluated
                     )
                     if col_index >= len(row_values):
                         row_values.extend([None] * (col_index - len(row_values) + 1))
@@ -309,6 +316,8 @@ class SharedExecutor:
                 return f"{column['source']}.{column['name']}"
             if column.get("type") in {"binary_op", "unary_op", "literal"}:
                 return SharedExecutor._expression_label(column)
+            if column.get("type") == "case":
+                return "case_expr"
         return str(column)
 
     @staticmethod
@@ -321,7 +330,7 @@ class SharedExecutor:
                 return f"{inner['func']}({inner['arg']})"
             if inner.get("type") == "column":
                 return f"{inner['source']}.{inner['name']}"
-            if inner.get("type") in {"binary_op", "unary_op", "literal"}:
+            if inner.get("type") in {"binary_op", "unary_op", "literal", "case"}:
                 return f"__expr__:{SharedExecutor._expression_to_sql(inner)}"
         return str(inner)
 
@@ -336,7 +345,7 @@ class SharedExecutor:
             if expression_type == "aggregate":
                 return f"{expression['func']}({expression['arg']})"
             if expression_type == "literal":
-                return str(expression.get("value"))
+                return SharedExecutor._literal_to_sql(expression.get("value"))
             if expression_type == "unary_op":
                 operand_sql = SharedExecutor._expression_to_sql(expression.get("operand"))
                 return f"-{operand_sql}"
@@ -344,7 +353,106 @@ class SharedExecutor:
                 left_sql = SharedExecutor._expression_to_sql(expression.get("left"))
                 right_sql = SharedExecutor._expression_to_sql(expression.get("right"))
                 return f"({left_sql} {expression['op']} {right_sql})"
+            if expression_type == "case":
+                parts: list[str] = ["CASE"]
+                mode = expression.get("mode", "searched")
+                if mode == "simple" and expression.get("value") is not None:
+                    parts.append(SharedExecutor._expression_to_sql(expression["value"]))
+                for when_branch in expression.get("whens", []):
+                    if mode == "searched":
+                        condition = when_branch.get("condition")
+                        condition_sql = ""
+                        if isinstance(condition, dict):
+                            condition_sql = SharedExecutor._where_to_sql(condition)
+                        parts.append(f"WHEN {condition_sql} THEN")
+                    else:
+                        match_sql = SharedExecutor._expression_to_sql(when_branch.get("match"))
+                        parts.append(f"WHEN {match_sql} THEN")
+                    parts.append(SharedExecutor._expression_to_sql(when_branch["result"]))
+                if expression.get("else") is not None:
+                    parts.append("ELSE")
+                    parts.append(SharedExecutor._expression_to_sql(expression["else"]))
+                parts.append("END")
+                return " ".join(parts)
         return str(expression)
+
+    @staticmethod
+    def _literal_to_sql(value: Any) -> str:
+        if value is None:
+            return "NULL"
+        if isinstance(value, str):
+            escaped = value.replace("'", "''")
+            return f"'{escaped}'"
+        return str(value)
+
+    @staticmethod
+    def _where_operand_to_sql(operand: Any, *, is_column: bool) -> str:
+        if isinstance(operand, dict):
+            if operand.get("type") == "subquery":
+                return "(SUBQUERY)"
+            return SharedExecutor._expression_to_sql(operand)
+        if isinstance(operand, str):
+            if is_column:
+                return operand
+            return SharedExecutor._literal_to_sql(operand)
+        return SharedExecutor._literal_to_sql(operand)
+
+    @staticmethod
+    def _where_to_sql(where: dict[str, Any]) -> str:
+        node_type = where.get("type")
+        if node_type == "not":
+            operand = where.get("operand")
+            if isinstance(operand, dict):
+                return f"NOT ({SharedExecutor._where_to_sql(operand)})"
+            return "NOT"
+
+        if "conditions" in where:
+            conditions = where.get("conditions", [])
+            if not conditions:
+                return ""
+            parts = [SharedExecutor._where_to_sql(conditions[0])]
+            conjunctions = where.get("conjunctions", [])
+            for idx, conjunction in enumerate(conjunctions):
+                if idx + 1 >= len(conditions):
+                    break
+                parts.append(str(conjunction))
+                parts.append(SharedExecutor._where_to_sql(conditions[idx + 1]))
+            combined = " ".join(parts)
+            if where.get("type") == "compound":
+                return f"({combined})"
+            return combined
+
+        column_sql = SharedExecutor._where_operand_to_sql(
+            where.get("column"),
+            is_column=True,
+        )
+        operator = str(where.get("operator", ""))
+        value = where.get("value")
+
+        if operator in {"IS", "IS NOT"}:
+            return f"{column_sql} {operator} NULL"
+
+        if operator in {"IN", "NOT IN"}:
+            if isinstance(value, dict) and value.get("type") == "subquery":
+                return f"{column_sql} {operator} (SUBQUERY)"
+            if isinstance(value, (list, tuple)):
+                values_sql = ", ".join(
+                    SharedExecutor._where_operand_to_sql(item, is_column=False)
+                    for item in value
+                )
+            else:
+                values_sql = SharedExecutor._where_operand_to_sql(value, is_column=False)
+            return f"{column_sql} {operator} ({values_sql})"
+
+        if operator in {"BETWEEN", "NOT BETWEEN"} and isinstance(value, (list, tuple)):
+            if len(value) != 2:
+                return f"{column_sql} {operator}"
+            low_sql = SharedExecutor._where_operand_to_sql(value[0], is_column=False)
+            high_sql = SharedExecutor._where_operand_to_sql(value[1], is_column=False)
+            return f"{column_sql} {operator} {low_sql} AND {high_sql}"
+
+        value_sql = SharedExecutor._where_operand_to_sql(value, is_column=False)
+        return f"{column_sql} {operator} {value_sql}"
 
     @staticmethod
     def _expression_label(expression: Any) -> str:
@@ -359,7 +467,7 @@ class SharedExecutor:
         if not isinstance(inner, dict):
             return False
         expression_type = inner.get("type")
-        if expression_type in {"binary_op", "unary_op", "literal"}:
+        if expression_type in {"binary_op", "unary_op", "literal", "case"}:
             return True
         if expression_type == "alias":
             return SharedExecutor._contains_arithmetic_expression(inner.get("expression"))
@@ -386,8 +494,51 @@ class SharedExecutor:
             return refs
         if expression_type == "unary_op":
             refs.update(SharedExecutor._collect_expression_column_refs(expression.get("operand")))
+            return refs
+        if expression_type == "case":
+            if expression.get("value") is not None:
+                refs.update(SharedExecutor._collect_expression_column_refs(expression["value"]))
+            for when_branch in expression.get("whens", []):
+                # Collect from condition (searched mode) or match (simple mode)
+                condition = when_branch.get("condition")
+                if condition is not None:
+                    refs.update(SharedExecutor._collect_where_column_refs(condition))
+                match_expr = when_branch.get("match")
+                if match_expr is not None:
+                    refs.update(SharedExecutor._collect_expression_column_refs(match_expr))
+                refs.update(SharedExecutor._collect_expression_column_refs(when_branch["result"]))
+            if expression.get("else") is not None:
+                refs.update(SharedExecutor._collect_expression_column_refs(expression["else"]))
+            return refs
         return refs
 
+    @staticmethod
+    def _collect_where_column_refs(where: dict[str, Any]) -> set[str]:
+        """Collect column references from a WHERE condition tree."""
+        refs: set[str] = set()
+        node_type = where.get("type")
+        if node_type == "not":
+            refs.update(SharedExecutor._collect_where_column_refs(where["operand"]))
+            return refs
+        if "conditions" in where:
+            for cond in where["conditions"]:
+                refs.update(SharedExecutor._collect_where_column_refs(cond))
+            return refs
+        # Atomic condition: {column, operator, value}
+        column = where.get("column")
+        if isinstance(column, str):
+            refs.add(column)
+        elif isinstance(column, dict):
+            refs.update(SharedExecutor._collect_expression_column_refs(column))
+
+        value = where.get("value")
+        if isinstance(value, dict) and value.get("type") != "subquery":
+            refs.update(SharedExecutor._collect_expression_column_refs(value))
+        elif isinstance(value, (list, tuple)):
+            for candidate in value:
+                if isinstance(candidate, dict):
+                    refs.update(SharedExecutor._collect_expression_column_refs(candidate))
+        return refs
     @staticmethod
     def _build_alias_map(columns: list[Any]) -> dict[str, str]:
         alias_map: dict[str, str] = {}
@@ -543,11 +694,59 @@ class SharedExecutor:
             for child in node["conditions"]:
                 SharedExecutor._validate_join_where_node(child, validate_fn)
             return
-        # Atomic condition: validate column reference
-        col_ref = str(node.get("column", ""))
-        if "." in col_ref:
-            src, col_name = col_ref.split(".", 1)
-            validate_fn(src, col_name, "WHERE")
+
+        def _validate_expression_refs(expression: Any, *, column_context: bool) -> None:
+            if expression is None:
+                return
+            if isinstance(expression, dict):
+                expression_type = expression.get("type")
+                if expression_type == "column":
+                    validate_fn(
+                        str(expression["source"]),
+                        str(expression["name"]),
+                        "WHERE",
+                    )
+                    return
+                if expression_type == "alias":
+                    _validate_expression_refs(expression.get("expression"), column_context=column_context)
+                    return
+                if expression_type == "unary_op":
+                    _validate_expression_refs(expression.get("operand"), column_context=False)
+                    return
+                if expression_type == "binary_op":
+                    _validate_expression_refs(expression.get("left"), column_context=False)
+                    _validate_expression_refs(expression.get("right"), column_context=False)
+                    return
+                if expression_type == "case":
+                    mode = str(expression.get("mode", ""))
+                    if mode == "simple":
+                        _validate_expression_refs(expression.get("value"), column_context=False)
+                    for when_branch in expression.get("whens", []):
+                        if not isinstance(when_branch, dict):
+                            continue
+                        if mode == "searched":
+                            condition = when_branch.get("condition")
+                            if isinstance(condition, dict):
+                                SharedExecutor._validate_join_where_node(condition, validate_fn)
+                        else:
+                            _validate_expression_refs(when_branch.get("match"), column_context=False)
+                        _validate_expression_refs(when_branch.get("result"), column_context=False)
+                    _validate_expression_refs(expression.get("else"), column_context=False)
+                    return
+                return
+            if column_context and isinstance(expression, str) and "." in expression:
+                src, col_name = expression.split(".", 1)
+                validate_fn(src, col_name, "WHERE")
+
+        column_expr = node.get("column")
+        _validate_expression_refs(column_expr, column_context=True)
+
+        value_expr = node.get("value")
+        if isinstance(value_expr, dict) and value_expr.get("type") != "subquery":
+            _validate_expression_refs(value_expr, column_context=False)
+        elif isinstance(value_expr, (list, tuple)):
+            for candidate in value_expr:
+                _validate_expression_refs(candidate, column_context=False)
 
     def _matches_where(self, row: dict[str, Any], where: dict[str, Any]) -> bool:
         node_type = where.get("type")
@@ -833,6 +1032,8 @@ class SharedExecutor:
 
         # Validate SELECT columns
         def _validate_join_select_expression(expression: Any) -> None:
+            if expression is None:
+                return
             if isinstance(expression, dict):
                 expression_type = expression.get("type")
                 if expression_type == "column":
@@ -861,6 +1062,22 @@ class SharedExecutor:
                 if expression_type == "binary_op":
                     _validate_join_select_expression(expression.get("left"))
                     _validate_join_select_expression(expression.get("right"))
+                    return
+                if expression_type == "case":
+                    mode = str(expression.get("mode", ""))
+                    if mode == "simple":
+                        _validate_join_select_expression(expression.get("value"))
+                    for when_branch in expression.get("whens", []):
+                        if not isinstance(when_branch, dict):
+                            continue
+                        if mode == "searched":
+                            condition = when_branch.get("condition")
+                            if isinstance(condition, dict):
+                                SharedExecutor._validate_join_where_node(condition, _validate_column_ref)
+                        else:
+                            _validate_join_select_expression(when_branch.get("match"))
+                        _validate_join_select_expression(when_branch.get("result"))
+                    _validate_join_select_expression(expression.get("else"))
                     return
             raise ValueError("JOIN queries require qualified column names in SELECT")
 
@@ -1537,6 +1754,31 @@ class SharedExecutor:
         if expr_type == "aggregate":
             raise ProgrammingError("Aggregate expressions are not supported in row-level arithmetic")
 
+        if expr_type == "case":
+            mode = expr.get("mode", "searched")
+            if mode == "searched":
+                for when_branch in expr.get("whens", []):
+                    if not isinstance(when_branch, dict):
+                        continue
+                    condition = when_branch.get("condition")
+                    if isinstance(condition, dict) and self._matches_where(row, condition):
+                        return self._eval_expression(when_branch["result"], row, resolve_column)
+            else:  # simple mode
+                case_value = self._eval_expression(expr.get("value"), row, resolve_column)
+                for when_branch in expr.get("whens", []):
+                    if not isinstance(when_branch, dict):
+                        continue
+                    match_value = self._eval_expression(when_branch["match"], row, resolve_column)
+                    if case_value is not None and match_value is not None:
+                        left, right = self._coerce_for_compare(case_value, match_value)
+                        if left == right:
+                            return self._eval_expression(when_branch["result"], row, resolve_column)
+            # No WHEN matched — evaluate ELSE or return None
+            else_expr = expr.get("else")
+            if else_expr is not None:
+                return self._eval_expression(else_expr, row, resolve_column)
+            return None
+
         raise ProgrammingError(f"Unsupported expression type: {expr_type}")
 
     def _evaluate_condition(
@@ -1545,7 +1787,15 @@ class SharedExecutor:
         column = condition["column"]
         operator = condition["operator"]
         value = condition["value"]
-        row_value = row.get(column)
+
+        def _resolve_operand(operand: Any, *, as_column: bool) -> Any:
+            if isinstance(operand, dict) and operand.get("type") != "subquery":
+                return self._eval_expression(operand, row, lambda col_name: row.get(col_name))
+            if as_column:
+                return row.get(str(operand))
+            return operand
+
+        row_value = _resolve_operand(column, as_column=True)
 
         if operator == "IS" and value is None:
             return row_value is None
@@ -1555,7 +1805,8 @@ class SharedExecutor:
             if row_value is None:
                 return False
             for candidate in value:
-                left, right = self._coerce_for_compare(row_value, candidate)
+                candidate_value = _resolve_operand(candidate, as_column=False)
+                left, right = self._coerce_for_compare(row_value, candidate_value)
                 if left == right:
                     return True
             return False
@@ -1563,7 +1814,8 @@ class SharedExecutor:
             if row_value is None:
                 return False
             for candidate in value:
-                left, right = self._coerce_for_compare(row_value, candidate)
+                candidate_value = _resolve_operand(candidate, as_column=False)
+                left, right = self._coerce_for_compare(row_value, candidate_value)
                 if left == right:
                     return False
             return True
@@ -1571,6 +1823,8 @@ class SharedExecutor:
             if row_value is None:
                 return False
             low, high = value
+            low = _resolve_operand(low, as_column=False)
+            high = _resolve_operand(high, as_column=False)
             if low is None or high is None:
                 return False
             left_low, right_low = self._coerce_for_compare(row_value, low)
@@ -1580,6 +1834,8 @@ class SharedExecutor:
             if row_value is None:
                 return False
             low, high = value
+            low = _resolve_operand(low, as_column=False)
+            high = _resolve_operand(high, as_column=False)
             if low is None or high is None:
                 return False
             left_low, right_low = self._coerce_for_compare(row_value, low)
@@ -1588,6 +1844,7 @@ class SharedExecutor:
         if operator == "LIKE":
             if row_value is None:
                 return False
+            value = _resolve_operand(value, as_column=False)
             if not isinstance(value, str):
                 raise NotImplementedError("Unsupported LIKE pattern type")
             regex = "^" + re.escape(value).replace(r"%", ".*").replace(r"_", ".") + "$"
@@ -1595,10 +1852,13 @@ class SharedExecutor:
         if operator == "NOT LIKE":
             if row_value is None:
                 return False
+            value = _resolve_operand(value, as_column=False)
             if not isinstance(value, str):
                 raise NotImplementedError("Unsupported LIKE pattern type")
             regex = "^" + re.escape(value).replace(r"%", ".*").replace(r"_", ".") + "$"
             return not bool(re.match(regex, str(row_value)))
+
+        value = _resolve_operand(value, as_column=False)
 
         if row_value is None or value is None:
             return False
