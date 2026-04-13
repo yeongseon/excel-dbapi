@@ -39,11 +39,6 @@ def test_rejects_except():
         parse_sql("SELECT * FROM users EXCEPT SELECT * FROM admins")
 
 
-def test_rejects_right_join():
-    with pytest.raises(ValueError, match="Unsupported SQL syntax: RIGHT JOIN"):
-        parse_sql("SELECT a.id FROM t1 a RIGHT JOIN t2 b ON a.id = b.id")
-
-
 def test_rejects_cross_join():
     with pytest.raises(ValueError, match="Unsupported SQL syntax: CROSS JOIN"):
         parse_sql("SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id")
@@ -58,7 +53,3 @@ def test_rejects_join_with_select_star():
     with pytest.raises(ValueError, match="SELECT \\* is not supported with JOIN"):
         parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
 
-
-def test_rejects_multiple_joins():
-    with pytest.raises(ValueError, match="Only one JOIN clause is supported"):
-        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id JOIN t3 c ON a.id = c.id")

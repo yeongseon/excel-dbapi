@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- RIGHT JOIN and RIGHT OUTER JOIN support in SELECT JOIN parsing/execution
+- Chained (multi-table) JOIN support with iterative fold execution
+- Extended JOIN test coverage for RIGHT JOIN and chained JOIN behaviors
+
+### Changed
+- JOIN source collision checks now track all previously introduced table references
+- JOIN ON validation now allows references to any previously joined source plus the current right source
+
+### Rejected (by design)
+- FULL OUTER JOIN and CROSS JOIN remain unsupported
+
 ## [0.4.0] - 2026-04-13
 
 ### Added

@@ -704,7 +704,8 @@ def _parse_select(
             token_index += 1
 
     joins: List[Dict[str, Any]] = []
-    if token_index < len(tokens):
+    known_source_refs: set[str] = {str(from_entry["table"]), str(from_entry["ref"])}
+    while token_index < len(tokens):
         join_token = tokens[token_index].upper()
         join_type: Optional[str] = None
         if join_token == "JOIN":
@@ -723,62 +724,72 @@ def _parse_select(
                 raise ValueError("Unsupported SQL syntax: LEFT")
             join_type = "LEFT"
             token_index += 1
-        elif join_token in {"RIGHT", "FULL", "CROSS"}:
-            raise ValueError(f"Unsupported SQL syntax: {join_token} JOIN")
-
-        if join_type is not None:
-            if token_index >= len(tokens):
-                raise ValueError("Invalid JOIN clause: missing table")
-            join_table = tokens[token_index]
+        elif join_token == "RIGHT":
             token_index += 1
-
-            join_source: Dict[str, Any] = {
-                "table": join_table,
-                "alias": None,
-                "ref": join_table,
-            }
-            if token_index < len(tokens):
-                maybe_alias = tokens[token_index]
-                if maybe_alias.upper() == "AS":
-                    token_index += 1
-                    if token_index >= len(tokens):
-                        raise ValueError("Expected alias after AS")
-                    maybe_alias = tokens[token_index]
-                if not _is_reserved_select_token(maybe_alias):
-                    join_source["alias"] = maybe_alias
-                    join_source["ref"] = maybe_alias
-                    token_index += 1
-
-            if token_index >= len(tokens) or tokens[token_index].upper() != "ON":
-                raise ValueError("JOIN requires ON condition")
-            token_index += 1
-
-            on_start = token_index
-            while token_index < len(tokens):
-                if _is_select_clause_token(tokens[token_index]):
-                    break
+            if token_index < len(tokens) and tokens[token_index].upper() == "OUTER":
                 token_index += 1
-            on_tokens = tokens[on_start:token_index]
+            if token_index >= len(tokens) or tokens[token_index].upper() != "JOIN":
+                raise ValueError("Unsupported SQL syntax: RIGHT")
+            join_type = "RIGHT"
+            token_index += 1
+        elif join_token in {"FULL", "CROSS"}:
+            raise ValueError(f"Unsupported SQL syntax: {join_token} JOIN")
+        else:
+            break
 
-            left_sources = {str(from_entry["table"]), str(from_entry["ref"])}
-            right_sources = {str(join_source["table"]), str(join_source["ref"])}
-            joins.append(
-                {
-                    "type": join_type,
-                    "source": join_source,
-                    "on": _parse_join_on_condition(on_tokens, left_sources, right_sources),
-                }
+        if token_index >= len(tokens):
+            raise ValueError("Invalid JOIN clause: missing table")
+        join_table = tokens[token_index]
+        token_index += 1
+
+        join_source: Dict[str, Any] = {
+            "table": join_table,
+            "alias": None,
+            "ref": join_table,
+        }
+        if token_index < len(tokens):
+            maybe_alias = tokens[token_index]
+            if maybe_alias.upper() == "AS":
+                token_index += 1
+                if token_index >= len(tokens):
+                    raise ValueError("Expected alias after AS")
+                maybe_alias = tokens[token_index]
+            if not _is_reserved_select_token(maybe_alias):
+                join_source["alias"] = maybe_alias
+                join_source["ref"] = maybe_alias
+                token_index += 1
+
+        right_sources = {str(join_source["table"]), str(join_source["ref"])}
+        collision = known_source_refs & right_sources
+        if collision:
+            raise ValueError(
+                f"Ambiguous table reference '{collision.pop()}' in JOIN; "
+                f"use distinct aliases for each table"
             )
 
-            # Reject duplicate/colliding source references
-            left_names = {str(from_entry["table"]), str(from_entry["ref"])}
-            right_names = {str(join_source["table"]), str(join_source["ref"])}
-            collision = left_names & right_names
-            if collision:
-                raise ValueError(
-                    f"Ambiguous table reference '{collision.pop()}' in JOIN; "
-                    f"use distinct aliases for each table"
-                )
+        if token_index >= len(tokens) or tokens[token_index].upper() != "ON":
+            raise ValueError("JOIN requires ON condition")
+        token_index += 1
+
+        on_start = token_index
+        while token_index < len(tokens):
+            if _is_select_clause_token(tokens[token_index]):
+                break
+            token_index += 1
+        on_tokens = tokens[on_start:token_index]
+
+        joins.append(
+            {
+                "type": join_type,
+                "source": join_source,
+                "on": _parse_join_on_condition(
+                    on_tokens,
+                    set(known_source_refs),
+                    right_sources,
+                ),
+            }
+        )
+        known_source_refs.update(right_sources)
 
     clause_tokens = tokens[token_index:]
 
@@ -795,9 +806,7 @@ def _parse_select(
         if _is_quoted_token(token):
             continue
         upper = token.upper()
-        if upper in {"JOIN", "INNER", "LEFT"}:
-            raise ValueError("Only one JOIN clause is supported")
-        if upper in {"RIGHT", "FULL", "CROSS"}:
+        if upper in {"FULL", "CROSS"}:
             next_token = (
                 clause_tokens[idx + 1].upper()
                 if idx + 1 < len(clause_tokens)
@@ -1058,9 +1067,10 @@ def _parse_select(
         join_sources = {
             str(from_entry["table"]),
             str(from_entry["ref"]),
-            str(joins_value[0]["source"]["table"]),
-            str(joins_value[0]["source"]["ref"]),
         }
+        for join in joins_value:
+            join_sources.add(str(join["source"]["table"]))
+            join_sources.add(str(join["source"]["ref"]))
 
         for column in columns:
             if isinstance(column, dict) and column.get("type") == "aggregate":

@@ -466,9 +466,14 @@ def test_parse_join_rejects_select_star():
         parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
 
 
-def test_parse_join_rejects_multiple_joins():
-    with pytest.raises(ValueError, match="Only one JOIN clause is supported"):
-        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id JOIN t3 c ON a.id = c.id")
+def test_parse_join_allows_multiple_joins():
+    parsed = parse_sql(
+        "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id JOIN t3 c ON b.id = c.id"
+    )
+    assert parsed["joins"] is not None
+    assert len(parsed["joins"]) == 2
+    assert parsed["joins"][0]["type"] == "INNER"
+    assert parsed["joins"][1]["type"] == "INNER"
 
 
 def test_parse_join_rejects_unqualified_columns():
@@ -476,9 +481,9 @@ def test_parse_join_rejects_unqualified_columns():
         parse_sql("SELECT id FROM t1 a JOIN t2 b ON a.id = b.id")
 
 
-def test_parse_join_rejects_right_join():
-    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
-        parse_sql("SELECT a.id FROM t1 a RIGHT JOIN t2 b ON a.id = b.id")
+def test_parse_join_accepts_right_join():
+    parsed = parse_sql("SELECT a.id FROM t1 a RIGHT JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"][0]["type"] == "RIGHT"
 
 
 def test_parse_join_rejects_cross_join():

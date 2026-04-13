@@ -367,14 +367,10 @@ def test_join_with_subquery_where_rejected() -> None:
 
 
 # =============================================================================
-# Parser: RIGHT/FULL/CROSS JOIN rejection in post-JOIN clause scanning
-# (lines 800-813)
-# =============================================================================
-
-
-def test_right_join_rejected() -> None:
-    with pytest.raises(ValueError, match="Unsupported SQL syntax: RIGHT JOIN"):
-        parse_sql("SELECT a.id FROM t1 a RIGHT JOIN t2 b ON a.id = b.id")
+def test_right_join_accepted() -> None:
+    parsed = parse_sql("SELECT a.id FROM t1 a RIGHT JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"] is not None
+    assert parsed["joins"][0]["type"] == "RIGHT"
 
 
 def test_full_outer_join_rejected() -> None:

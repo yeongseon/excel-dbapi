@@ -16,7 +16,7 @@ database engine.
 
 | Statement | Supported |
 |-----------|-----------|
-| `SELECT`  | ✅ Single-table with DISTINCT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT / OFFSET / Aggregates; INNER/LEFT JOIN on two tables |
+| `SELECT`  | ✅ Single-table with DISTINCT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT / OFFSET / Aggregates; INNER/LEFT/RIGHT JOIN with chained JOIN clauses |
 | `INSERT`  | ✅ Single-row and multi-row VALUES with optional column list; INSERT...SELECT |
 | `UPDATE`  | ✅ With SET assignments and optional WHERE |
 | `DELETE`  | ✅ With optional WHERE |
@@ -27,11 +27,10 @@ database engine.
 
 The following SQL features are **rejected at parse time** with `ValueError`:
 
-- `RIGHT JOIN`, `FULL OUTER JOIN`, `CROSS JOIN`, `NATURAL JOIN` (only INNER and LEFT JOIN supported)
-- Multiple JOINs in one query (max one JOIN clause)
+- `FULL OUTER JOIN`, `CROSS JOIN`, `NATURAL JOIN` (INNER, LEFT, and RIGHT JOIN are supported)
 - `SELECT *` with JOIN (columns must be explicitly listed with table qualifiers)
 - `GROUP BY`, `HAVING`, aggregates in JOIN queries
-- Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])`
+- Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])` and `INSERT INTO ... SELECT ...`
 - Common Table Expressions (CTEs / `WITH`)
 - `UNION` / `INTERSECT` / `EXCEPT`
 - Window functions (`OVER`, `PARTITION BY`)
@@ -106,11 +105,11 @@ SELECT [DISTINCT] columns FROM table
   [OFFSET n]
 ```
 
-#### JOIN (two tables)
+#### JOIN (one or more tables)
 
 ```
 SELECT qualified_columns FROM table [ [AS] alias ]
-  [ INNER | LEFT [OUTER] ] JOIN table [ [AS] alias ] ON condition { AND condition }
+  { [ INNER | LEFT [OUTER] | RIGHT [OUTER] ] JOIN table [ [AS] alias ] ON condition { AND condition } }
   [WHERE conditions]
   [ORDER BY qualified_column [ASC|DESC]]
   [LIMIT n]
@@ -229,11 +228,11 @@ Any other ordering raises `ValueError`.
 |---------|-----------|---------|
 | INNER JOIN | ✅ | `SELECT a.id, b.name FROM t1 a JOIN t2 b ON a.id = b.id` |
 | LEFT JOIN | ✅ | `SELECT a.id, b.name FROM t1 a LEFT JOIN t2 b ON a.id = b.id` |
-| RIGHT JOIN | ❌ | Not supported |
+| RIGHT JOIN | ✅ | `SELECT a.id, b.name FROM t1 a RIGHT JOIN t2 b ON a.id = b.id` |
 | FULL OUTER JOIN | ❌ | Not supported |
 | CROSS JOIN | ❌ | Not supported |
 | NATURAL JOIN | ❌ | Not supported |
-| Multiple JOINs | ❌ | Only one JOIN clause per query |
+| Multiple JOINs | ✅ | `... JOIN t2 ... JOIN t3 ...` |
 
 **Requirements**:
 - Table aliases are recommended (e.g., `FROM users a JOIN orders b ON ...`).
@@ -243,12 +242,15 @@ Any other ordering raises `ValueError`.
 - Subqueries (`WHERE ... IN (SELECT ...)`) are **not supported** with JOIN.
 - The ON clause requires at least one equality condition (e.g., `a.id = b.user_id`).
 - Multiple ON conditions are joined with `AND`.
+- For chained JOINs, each ON clause may reference columns from any previously joined source and the current right source.
 - `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET` work with JOIN queries.
 - `GROUP BY`, `HAVING`, and aggregates are **not supported** in JOIN queries.
 
 **Execution**:
 - INNER JOIN returns only rows where the ON condition matches in both tables.
 - LEFT JOIN returns all rows from the left table, with NULL values for unmatched right-table columns.
+- RIGHT JOIN returns all rows from the right table, with NULL values for unmatched left-table columns.
+- Chained JOINs execute left-to-right as iterative two-source folds.
 - The join algorithm uses hash matching for efficient lookups.
 ---
 
@@ -509,7 +511,7 @@ column_def    = column [ type_name ] ;
 assignment    = column "=" value ;
 qualified_col  = table_or_alias "." column ;
 table_ref      = table [ [ "AS" ] alias ] ;
-join_clause    = [ "INNER" | "LEFT" [ "OUTER" ] ] "JOIN" table_ref "ON" join_cond { "AND" join_cond } ;
+join_clause    = { [ "INNER" | "LEFT" [ "OUTER" ] | "RIGHT" [ "OUTER" ] ] "JOIN" table_ref "ON" join_cond { "AND" join_cond } } ;
 join_cond      = qualified_col "=" qualified_col ;
 alias          = identifier ;
 

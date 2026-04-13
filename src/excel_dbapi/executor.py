@@ -2,7 +2,7 @@ import copy
 import re
 from typing import Any
 
-from .engines.base import WorkbookBackend
+from .engines.base import TableData, WorkbookBackend
 from .engines.result import Description, ExecutionResult
 from .parser import parse_sql
 from .sanitize import sanitize_cell_value, sanitize_row
@@ -178,27 +178,48 @@ class SharedExecutor:
                     raise ValueError("Invalid INSERT subquery format")
                 subquery_result = self.execute(values["query"])
                 rows_to_insert = [list(row) for row in subquery_result.rows]
+                # Validate column count from subquery even when zero rows returned
+                expected_count = (
+                    len(insert_columns) if insert_columns is not None else len(headers)
+                )
+                if subquery_result.description:
+                    actual_count = len(subquery_result.description)
+                    if actual_count != expected_count:
+                        raise ValueError(
+                            f"INSERT...SELECT column count mismatch: "
+                            f"target has {expected_count} column(s), "
+                            f"SELECT returns {actual_count}"
+                        )
             elif isinstance(values, list):
                 rows_to_insert = [list(row) for row in values]
             else:
                 raise ValueError("Invalid INSERT values format")
 
-            last_row = None
+            # Pre-validate ALL rows before appending any (atomicity guarantee)
+            expected_count = (
+                len(insert_columns) if insert_columns is not None else len(headers)
+            )
+            sanitized_rows: list[list[Any]] = []
             for values_row in rows_to_insert:
-                if insert_columns is None:
-                    if len(values_row) != len(headers):
+                if len(values_row) != expected_count:
+                    if insert_columns is None:
                         raise ValueError("INSERT values count does not match header count")
+                    else:
+                        raise ValueError("INSERT values count does not match column count")
+                if insert_columns is None:
                     row_values = list(values_row)
                 else:
-                    if len(values_row) != len(insert_columns):
-                        raise ValueError("INSERT values count does not match column count")
                     row_values = [None for _ in headers]
                     for col, value in zip(insert_columns, values_row):
                         row_values[headers.index(col)] = value
-
                 sanitized_row = (
                     sanitize_row(row_values) if self.sanitize_formulas else row_values
                 )
+                sanitized_rows.append(sanitized_row)
+
+            # All rows validated — now append atomically
+            last_row = None
+            for sanitized_row in sanitized_rows:
                 last_row = self.backend.append_row(resolved_table, sanitized_row)
 
             return ExecutionResult(
@@ -288,6 +309,107 @@ class SharedExecutor:
                 flattened[f"{source}.{column}"] = value
         return flattened
 
+    def _join_two_sources(
+        self,
+        left_rows: list[dict[str, dict[str, Any]]],
+        left_headers_map: dict[str, set[str]],
+        right_data: TableData,
+        right_source: dict[str, Any],
+        join_type: str,
+        on_clauses: list[dict[str, Any]],
+        all_known_sources: set[str],
+    ) -> tuple[list[dict[str, dict[str, Any]]], dict[str, set[str]]]:
+        right_headers = list(right_data.headers)
+        right_sources = {str(right_source["table"]), str(right_source["ref"])}
+
+        # Sentinel: each NULL key gets a unique object so NULL != NULL per SQL standard.
+        _null_sentinel_counter = 0
+
+        def _normalize_key_value(val: Any) -> Any:
+            """Coerce key values for consistent hash matching."""
+            if val is None:
+                nonlocal _null_sentinel_counter
+                _null_sentinel_counter += 1
+                return object()
+            num = self._to_number(val)
+            if num is not None:
+                return num
+            return val
+
+        def build_key(
+            row_ns: dict[str, Any],
+            is_left_side: bool,
+        ) -> tuple[Any, ...]:
+            key_parts: list[Any] = []
+            for clause in on_clauses:
+                left_col = clause["left"]
+                right_col = clause["right"]
+                left_is_left = str(left_col["source"]) in all_known_sources
+                selected = left_col if left_is_left == is_left_side else right_col
+                raw_val = self._resolve_join_column(row_ns, selected)
+                key_parts.append(_normalize_key_value(raw_val))
+            return tuple(key_parts)
+
+        right_rows = [
+            self._build_source_row(right_source, right_headers, right_row_values)
+            for right_row_values in right_data.rows
+        ]
+        right_hash: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for right_ns in right_rows:
+            key = build_key(right_ns, False)
+            right_hash.setdefault(key, []).append(right_ns)
+
+        joined_rows: list[dict[str, dict[str, Any]]] = []
+        right_null_values = [None for _ in right_headers]
+        right_null_ns = self._build_source_row(right_source, right_headers, right_null_values)
+
+        if join_type.upper() == "RIGHT":
+            left_hash: dict[tuple[Any, ...], list[dict[str, dict[str, Any]]]] = {}
+            for left_ns in left_rows:
+                key = build_key(left_ns, True)
+                left_hash.setdefault(key, []).append(left_ns)
+
+            left_null_ns = {
+                source: {column: None for column in columns}
+                for source, columns in left_headers_map.items()
+            }
+
+            for right_ns in right_rows:
+                key = build_key(right_ns, False)
+                matches = left_hash.get(key, [])
+                if matches:
+                    for left_ns in matches:
+                        combined_row: dict[str, dict[str, Any]] = {}
+                        combined_row.update(left_ns)
+                        combined_row.update(right_ns)
+                        joined_rows.append(combined_row)
+                else:
+                    combined_row = {}
+                    combined_row.update(left_null_ns)
+                    combined_row.update(right_ns)
+                    joined_rows.append(combined_row)
+        else:
+            for left_ns in left_rows:
+                key = build_key(left_ns, True)
+                matches = right_hash.get(key, [])
+                if matches:
+                    for right_ns in matches:
+                        combined_row = {}
+                        combined_row.update(left_ns)
+                        combined_row.update(right_ns)
+                        joined_rows.append(combined_row)
+                elif join_type.upper() == "LEFT":
+                    combined_row = {}
+                    combined_row.update(left_ns)
+                    combined_row.update(right_null_ns)
+                    joined_rows.append(combined_row)
+
+        updated_headers_map = dict(left_headers_map)
+        for source in right_sources:
+            updated_headers_map[source] = set(right_headers)
+
+        return joined_rows, updated_headers_map
+
     def _execute_join_select(
         self,
         action: str,
@@ -295,23 +417,9 @@ class SharedExecutor:
         resolved_left_table: str,
     ) -> ExecutionResult:
         joins = parsed.get("joins") or []
-        if len(joins) != 1:
-            raise ValueError("Only one JOIN clause is supported")
-
         from_source = parsed["from"]
-        join_spec = joins[0]
-        right_source = join_spec["source"]
-        resolved_right_table = self._resolve_sheet_name(str(right_source["table"]))
-        if resolved_right_table is None:
-            available = self.backend.list_sheets()
-            msg = f"Sheet '{right_source['table']}' not found in Excel."
-            if available:
-                msg += f" Available sheets: {available}"
-            raise ValueError(msg)
-
         left_data = self.backend.read_sheet(resolved_left_table)
-        right_data = self.backend.read_sheet(resolved_right_table)
-        if not left_data.headers or not right_data.headers:
+        if not left_data.headers:
             return ExecutionResult(
                 action=action,
                 rows=[],
@@ -321,22 +429,15 @@ class SharedExecutor:
             )
 
         left_headers = list(left_data.headers)
-        right_headers = list(right_data.headers)
-        left_sources = {str(from_source["table"]), str(from_source["ref"])}
-        on_clauses = join_spec["on"]["clauses"]
+
+        source_headers: dict[str, set[str]] = {
+            str(from_source["ref"]): set(left_headers),
+            str(from_source["table"]): set(left_headers),
+        }
+        join_inputs: list[tuple[dict[str, Any], TableData]] = []
+        known_sources = {str(from_source["table"]), str(from_source["ref"])}
 
         # --- Column existence validation ---
-        # Build a mapping: source_ref -> set of valid column names
-        left_ref = str(from_source["ref"])
-        left_table_name = str(from_source["table"])
-        right_ref = str(right_source["ref"])
-        right_table_name = str(right_source["table"])
-        source_headers: dict[str, set[str]] = {}
-        for src in (left_ref, left_table_name):
-            source_headers[src] = set(left_headers)
-        for src in (right_ref, right_table_name):
-            source_headers[src] = set(right_headers)
-
         def _validate_column_ref(source: str, name: str, context: str) -> None:
             valid = source_headers.get(source)
             if valid is None:
@@ -347,16 +448,44 @@ class SharedExecutor:
                     f"Available columns in '{source}': {sorted(valid)}"
                 )
 
+        for join_spec in joins:
+            right_source = join_spec["source"]
+            resolved_right_table = self._resolve_sheet_name(str(right_source["table"]))
+            if resolved_right_table is None:
+                available = self.backend.list_sheets()
+                msg = f"Sheet '{right_source['table']}' not found in Excel."
+                if available:
+                    msg += f" Available sheets: {available}"
+                raise ValueError(msg)
+
+            right_data = self.backend.read_sheet(resolved_right_table)
+            if not right_data.headers:
+                return ExecutionResult(
+                    action=action,
+                    rows=[],
+                    description=[],
+                    rowcount=0,
+                    lastrowid=None,
+                )
+
+            right_headers = set(right_data.headers)
+            right_ref = str(right_source["ref"])
+            right_table_name = str(right_source["table"])
+            source_headers[right_ref] = right_headers
+            source_headers[right_table_name] = right_headers
+
+            for clause in join_spec["on"]["clauses"]:
+                for side in ("left", "right"):
+                    col = clause[side]
+                    _validate_column_ref(str(col["source"]), str(col["name"]), "ON")
+
+            known_sources.update({right_ref, right_table_name})
+            join_inputs.append((join_spec, right_data))
+
         # Validate SELECT columns
         for column in parsed["columns"]:
             if isinstance(column, dict) and column.get("type") == "column":
                 _validate_column_ref(str(column["source"]), str(column["name"]), "SELECT")
-
-        # Validate ON columns
-        for clause in on_clauses:
-            for side in ("left", "right"):
-                col = clause[side]
-                _validate_column_ref(str(col["source"]), str(col["name"]), "ON")
 
         # Validate WHERE columns
         where_raw = parsed.get("where")
@@ -375,59 +504,35 @@ class SharedExecutor:
                 src, col_name = col_ref.split(".", 1)
                 _validate_column_ref(src, col_name, "ORDER BY")
 
-        # Sentinel: each NULL key gets a unique object so NULL != NULL per SQL standard.
-        _null_sentinel_counter = 0
+        left_rows = [
+            self._build_source_row(from_source, left_headers, left_row_values)
+            for left_row_values in left_data.rows
+        ]
+        left_headers_map: dict[str, set[str]] = {
+            str(from_source["table"]): set(left_headers),
+            str(from_source["ref"]): set(left_headers),
+        }
+        all_known_sources = {str(from_source["table"]), str(from_source["ref"])}
 
-        def _normalize_key_value(val: Any) -> Any:
-            """Coerce key values for consistent hash matching."""
-            if val is None:
-                nonlocal _null_sentinel_counter
-                _null_sentinel_counter += 1
-                return object()  # unique, never equals another
-            num = self._to_number(val)
-            if num is not None:
-                return num
-            return val
+        for join_spec, right_data in join_inputs:
+            right_source = join_spec["source"]
+            left_rows, left_headers_map = self._join_two_sources(
+                left_rows=left_rows,
+                left_headers_map=left_headers_map,
+                right_data=right_data,
+                right_source=right_source,
+                join_type=str(join_spec["type"]),
+                on_clauses=join_spec["on"]["clauses"],
+                all_known_sources=all_known_sources,
+            )
+            all_known_sources.update(
+                {
+                    str(right_source["table"]),
+                    str(right_source["ref"]),
+                }
+            )
 
-        def build_key(
-            row_ns: dict[str, Any],
-            is_left_side: bool,
-        ) -> tuple[Any, ...]:
-            key_parts: list[Any] = []
-            for clause in on_clauses:
-                left_col = clause["left"]
-                right_col = clause["right"]
-                left_is_left = str(left_col["source"]) in left_sources
-                selected = left_col if left_is_left == is_left_side else right_col
-                raw_val = self._resolve_join_column(row_ns, selected)
-                key_parts.append(_normalize_key_value(raw_val))
-            return tuple(key_parts)
-
-        right_hash: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
-        for right_row_values in right_data.rows:
-            right_ns = self._build_source_row(right_source, right_headers, right_row_values)
-            key = build_key(right_ns, False)
-            right_hash.setdefault(key, []).append(right_ns)
-
-        joined_rows_flat: list[dict[str, Any]] = []
-        right_null_values = [None for _ in right_headers]
-        right_null_ns = self._build_source_row(right_source, right_headers, right_null_values)
-
-        for left_row_values in left_data.rows:
-            left_ns = self._build_source_row(from_source, left_headers, left_row_values)
-            key = build_key(left_ns, True)
-            matches = right_hash.get(key, [])
-            if matches:
-                for right_ns in matches:
-                    combined: dict[str, Any] = {}
-                    combined.update(left_ns)
-                    combined.update(right_ns)
-                    joined_rows_flat.append(self._flatten_join_row(combined))
-            elif str(join_spec["type"]).upper() == "LEFT":
-                combined = {}
-                combined.update(left_ns)
-                combined.update(right_null_ns)
-                joined_rows_flat.append(self._flatten_join_row(combined))
+        joined_rows_flat = [self._flatten_join_row(row) for row in left_rows]
 
         where = parsed.get("where")
         if where:

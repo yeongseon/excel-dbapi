@@ -17,7 +17,7 @@ Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no da
 
 Before you begin, understand what excel-dbapi is **not**:
 
-- **No RIGHT JOIN, FULL OUTER JOIN, or chained JOINs** — INNER and LEFT JOIN on two tables only
+- **No FULL OUTER JOIN or CROSS JOIN** — supports INNER/LEFT/RIGHT JOIN including chained JOINs
 - **No concurrent writes** — use a single-writer model
 - **Not for large datasets** — if your Excel file has 100k+ rows, use pandas directly or a database
 - **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL
