@@ -205,7 +205,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
         executor._evaluate_condition(
             {"id": 1}, {"column": "id", "operator": "~~~", "value": 2}
         )
-    assert executor._sort_key(None) == (1, "")
+    assert executor._sort_key(None) == (1, (0, ""))
     assert executor._to_number(True) is None
     assert executor._to_number({"x": 1}) is None
 

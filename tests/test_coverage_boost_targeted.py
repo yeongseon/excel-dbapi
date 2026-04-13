@@ -225,9 +225,9 @@ def test_executor_apply_order_by_and_sort_key_edges(tmp_path: Path) -> None:
     )
     assert ordered == single
 
-    assert executor._sort_key(None) == (1, "")
-    assert executor._sort_key("12") == (0, 12.0)
-    assert executor._sort_key(True) == (0, "True")
+    assert executor._sort_key(None) == (1, (0, ""))
+    assert executor._sort_key("12") == (0, (0, 12.0))
+    assert executor._sort_key(True) == (0, (1, 1))
     backend.close()
 
 
