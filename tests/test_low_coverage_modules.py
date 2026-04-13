@@ -228,24 +228,33 @@ def test_cursor_paths_for_executemany_and_fetch() -> None:
         def save(self) -> None:
             self.saved = True
 
+    class FakeExecutor:
+        def execute_with_params(
+            self, query: str, params: tuple[Any, ...] | None = None
+        ) -> ExecutionResult:
+            raise NotImplementedError("not supported")
+
     class FakeConnection:
         def __init__(self) -> None:
             self.closed = False
             self.autocommit = False
             self.engine = FakeEngine()
             self._snapshot = None
+            self._executor = FakeExecutor()
 
         def execute(
             self, query: str, params: tuple[Any, ...] | None = None
         ) -> ExecutionResult:
             raise NotImplementedError("not supported")
 
+        def _finalize_autocommit(self, action: str) -> None:
+            pass
+
     cursor = ExcelCursor(FakeConnection())
     with pytest.raises(NotSupportedError):
         cursor.executemany("SELECT 1", [(1,)])
     assert cursor.fetchone() is None
     assert cursor.fetchmany(0) == []
-
 
 def test_connection_str_and_repr(tmp_path: Path) -> None:
     file_path = tmp_path / "repr.xlsx"

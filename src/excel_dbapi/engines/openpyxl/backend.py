@@ -8,7 +8,7 @@ from openpyxl.workbook.workbook import Workbook
 
 from ...executor import SharedExecutor
 from ..result import ExecutionResult
-from ..base import TableData, WorkbookBackend
+from ..base import TableData, WorkbookBackend, _normalize_headers
 
 
 class OpenpyxlBackend(WorkbookBackend):
@@ -82,7 +82,7 @@ class OpenpyxlBackend(WorkbookBackend):
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
             return TableData(headers=[], rows=[])
-        headers = list(rows[0])
+        headers = _normalize_headers(list(rows[0]))
         table_rows = [list(row) for row in rows[1:]]
         return TableData(headers=headers, rows=table_rows)
 

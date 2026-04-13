@@ -1,9 +1,15 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
 from typing import Any, Concatenate, List, Optional, ParamSpec, TypeVar, cast
 
 from .engines.result import Description, ExecutionResult
-from .exceptions import InterfaceError, NotSupportedError, ProgrammingError
+from .exceptions import (
+    DatabaseError,
+    InterfaceError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 
 
 P = ParamSpec("P")
@@ -53,6 +59,14 @@ class ExcelCursor:
             raise ProgrammingError(str(exc)) from exc
         except NotImplementedError as exc:
             raise NotSupportedError(str(exc)) from exc
+        except (KeyError, TypeError, IndexError) as exc:
+            raise ProgrammingError(str(exc)) from exc
+        except OSError as exc:
+            raise OperationalError(str(exc)) from exc
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(str(exc)) from exc
         self._results = result.rows
         self._index = 0
         self.description = result.description
@@ -60,21 +74,11 @@ class ExcelCursor:
             self.description = None
         self.rowcount = result.rowcount
         self.lastrowid = result.lastrowid
-        if self.connection.autocommit and result.action in {
-            "INSERT",
-            "CREATE",
-            "DROP",
-            "ALTER",
-            "UPDATE",
-            "DELETE",
-        }:
-            self.connection.engine.save()
-            self.connection._snapshot = self.connection.engine.snapshot()
         return self
 
     @check_closed
     def executemany(
-        self, query: str, seq_of_params: List[tuple[Any, ...]]
+        self, query: str, seq_of_params: Iterable[Sequence[Any]]
     ) -> "ExcelCursor":
         total_rowcount = 0
         last_rowid = None
@@ -84,7 +88,11 @@ class ExcelCursor:
             snapshot = self.connection.engine.snapshot()
         for params in seq_of_params:
             try:
-                result: ExecutionResult = self.connection.execute(query, params)
+                result: ExecutionResult = (
+                    self.connection._executor.execute_with_params(
+                        query, tuple(params)
+                    )
+                )
             except ValueError as exc:
                 if snapshot is not None:
                     self.connection.engine.restore(snapshot)
@@ -93,6 +101,22 @@ class ExcelCursor:
                 if snapshot is not None:
                     self.connection.engine.restore(snapshot)
                 raise NotSupportedError(str(exc)) from exc
+            except (KeyError, TypeError, IndexError) as exc:
+                if snapshot is not None:
+                    self.connection.engine.restore(snapshot)
+                raise ProgrammingError(str(exc)) from exc
+            except OSError as exc:
+                if snapshot is not None:
+                    self.connection.engine.restore(snapshot)
+                raise OperationalError(str(exc)) from exc
+            except DatabaseError:
+                if snapshot is not None:
+                    self.connection.engine.restore(snapshot)
+                raise
+            except Exception as exc:
+                if snapshot is not None:
+                    self.connection.engine.restore(snapshot)
+                raise DatabaseError(str(exc)) from exc
             total_rowcount += result.rowcount
             last_rowid = result.lastrowid
             last_action = result.action
@@ -101,16 +125,8 @@ class ExcelCursor:
         self.description = None
         self.rowcount = total_rowcount
         self.lastrowid = last_rowid
-        if self.connection.autocommit and last_action in {
-            "INSERT",
-            "CREATE",
-            "DROP",
-            "ALTER",
-            "UPDATE",
-            "DELETE",
-        }:
-            self.connection.engine.save()
-            self.connection._snapshot = self.connection.engine.snapshot()
+        if self.connection.autocommit and last_action is not None:
+            self.connection._finalize_autocommit(last_action)
         return self
 
     @check_closed

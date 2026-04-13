@@ -13,6 +13,7 @@ from .executor import SharedExecutor
 from .engines.result import ExecutionResult
 from .exceptions import InterfaceError, NotSupportedError, OperationalError
 
+_MUTATING_ACTIONS = frozenset({"INSERT", "CREATE", "DROP", "UPDATE", "DELETE", "ALTER"})
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -53,7 +54,7 @@ class ExcelConnection:
     def __init__(
         self,
         file_path: str,
-        engine: str | None = "openpyxl",
+        engine: str | None = None,
         autocommit: bool = True,
         create: bool = False,
         data_only: bool = True,
@@ -156,7 +157,15 @@ class ExcelConnection:
     def execute(
         self, query: str, params: Optional[tuple[Any, ...]] = None
     ) -> ExecutionResult:
-        return self._executor.execute_with_params(query, params)
+        result = self._executor.execute_with_params(query, params)
+        self._finalize_autocommit(result.action)
+        return result
+
+    def _finalize_autocommit(self, action: str) -> None:
+        """Save and snapshot if autocommit is enabled and action is mutating."""
+        if self.autocommit and action in _MUTATING_ACTIONS:
+            self.engine.save()
+            self._snapshot = self.engine.snapshot()
 
     def close(self) -> None:
         self.engine.close()

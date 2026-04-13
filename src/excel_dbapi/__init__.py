@@ -26,12 +26,18 @@ from .reflection import (
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"
-__version__ = "0.3.0"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _pkg_version
+
+try:
+    __version__ = _pkg_version("excel-dbapi")
+except PackageNotFoundError:
+    __version__ = "0.0.0"
 
 
 def connect(
     file_path: str,
-    engine: str | None = "openpyxl",
+    engine: str | None = None,
     autocommit: bool = True,
     create: bool = False,
     data_only: bool = True,

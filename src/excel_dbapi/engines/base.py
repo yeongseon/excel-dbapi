@@ -78,3 +78,35 @@ class WorkbookBackend(ABC):
         raise NotSupportedError(
             f"Backend '{type(self).__name__}' does not expose a workbook object"
         )
+
+
+def _normalize_headers(raw: list[Any]) -> list[str]:
+    """Validate and normalise raw header values to a list of strings.
+
+    Raises
+    ------
+    DataError
+        If any header is empty/None or if there are duplicate headers.
+    """
+    from ..exceptions import DataError
+
+    headers: list[str] = []
+    for idx, value in enumerate(raw):
+        if value is None or (isinstance(value, str) and value.strip() == ""):
+            raise DataError(
+                f"Empty or None header at column index {idx}"
+            )
+        headers.append(str(value))
+
+    seen: set[str] = set()
+    lower_map: dict[str, str] = {}
+    for h in headers:
+        key = h.lower()
+        if key in seen:
+            raise DataError(
+                f"Duplicate header: {h!r} (conflicts with {lower_map[key]!r})"
+            )
+        seen.add(key)
+        lower_map[key] = h
+
+    return headers

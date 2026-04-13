@@ -6,7 +6,7 @@ import pandas as pd
 
 from ...exceptions import NotSupportedError
 from ...executor import SharedExecutor
-from ..base import TableData, WorkbookBackend
+from ..base import TableData, WorkbookBackend, _normalize_headers
 from ..result import ExecutionResult
 
 
@@ -69,7 +69,7 @@ class PandasBackend(WorkbookBackend):
         frame = self.data.get(sheet_name)
         if frame is None:
             raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
-        headers = [str(col) for col in frame.columns]
+        headers = _normalize_headers([str(col) for col in frame.columns])
         rows: list[list[Any]] = []
         for row in frame.itertuples(index=False, name=None):
             row_values: list[Any] = []

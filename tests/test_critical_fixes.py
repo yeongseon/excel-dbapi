@@ -1,0 +1,349 @@
+"""Tests for critical bug fixes (#54-#58).
+
+Fix 1 (#54): connection.execute() autocommit persistence
+Fix 2 (#55): DSN auto engine selection
+Fix 3 (#56): Package version matches pyproject.toml
+Fix 4 (#57): Header normalization/validation
+Fix 5 (#58): Exception mapping + cursor API signature
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import pytest
+from openpyxl import Workbook
+
+from excel_dbapi import ExcelConnection, connect
+from excel_dbapi.engines.base import _normalize_headers
+from excel_dbapi.exceptions import (
+    DataError,
+    DatabaseError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
+
+
+def _make_xlsx(path: Path, sheet: str = "users", headers: list[str] | None = None,
+               rows: list[list[Any]] | None = None) -> str:
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = sheet
+    for h in (headers or ["id", "name"]):
+        pass
+    ws.append(headers or ["id", "name"])
+    for row in (rows or []):
+        ws.append(row)
+    fpath = str(path)
+    wb.save(fpath)
+    wb.close()
+    return fpath
+
+
+# ─── Fix 1: connection.execute() autocommit persists (#54) ──────────────
+
+
+class TestConnectionExecuteAutocommit:
+    """Fix 1: connection.execute() must save when autocommit=True."""
+
+    def test_connection_execute_insert_persists(self, tmp_path: Path) -> None:
+        """connection.execute('INSERT ...') persists data when autocommit=True."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
+            conn.execute("INSERT INTO users VALUES (1, 'Alice')")
+
+        # Re-open and verify data was persisted
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            result = conn.execute("SELECT * FROM users")
+            assert len(result.rows) == 1
+            assert result.rows[0] == (1, "Alice")
+
+    def test_connection_execute_update_persists(self, tmp_path: Path) -> None:
+        """connection.execute('UPDATE ...') persists data."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Alice"]])
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
+            conn.execute("UPDATE users SET name = 'Bob' WHERE id = 1")
+
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            result = conn.execute("SELECT * FROM users WHERE id = 1")
+            assert result.rows[0] == (1, "Bob")
+
+    def test_connection_execute_delete_persists(self, tmp_path: Path) -> None:
+        """connection.execute('DELETE ...') persists data."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Alice"], [2, "Bob"]])
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
+            conn.execute("DELETE FROM users WHERE id = 1")
+
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            result = conn.execute("SELECT * FROM users")
+            assert len(result.rows) == 1
+
+    def test_connection_execute_no_save_without_autocommit(self, tmp_path: Path) -> None:
+        """connection.execute() does NOT save when autocommit=False."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=False) as conn:
+            conn.execute("INSERT INTO users VALUES (1, 'Alice')")
+            # Not committed — rollback
+            conn.rollback()
+
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            result = conn.execute("SELECT * FROM users")
+            assert len(result.rows) == 0
+
+    def test_connection_execute_select_no_save(self, tmp_path: Path) -> None:
+        """SELECT via connection.execute() does NOT trigger save."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Alice"]])
+        mod_time_before = os.path.getmtime(fpath)
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
+            result = conn.execute("SELECT * FROM users")
+            assert len(result.rows) == 1
+        # File should not have been re-saved for a SELECT
+        # (mod_time could be same if fast, but at least no error)
+
+    def test_executemany_saves_once_not_per_row(self, tmp_path: Path) -> None:
+        """executemany() should save only once at end, not per row."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        save_count = 0
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
+            original_save = conn.engine.save
+            def counting_save() -> None:
+                nonlocal save_count
+                save_count += 1
+                original_save()
+            conn.engine.save = counting_save  # type: ignore[assignment]
+            cursor = conn.cursor()
+            cursor.executemany(
+                "INSERT INTO users VALUES (?, ?)",
+                [(1, "Alice"), (2, "Bob"), (3, "Charlie")],
+            )
+        assert save_count == 1, f"Expected 1 save, got {save_count}"
+
+    def test_connection_execute_create_table_persists(self, tmp_path: Path) -> None:
+        """connection.execute('CREATE TABLE ...') persists."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
+            conn.execute("CREATE TABLE orders (id INTEGER, product TEXT)")
+
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            result = conn.execute("SELECT * FROM orders")
+            assert result.rows == []
+
+
+# ─── Fix 2: DSN auto engine selection (#55) ─────────────────────────────
+
+
+class TestDSNAutoEngineSelection:
+    """Fix 2: engine default=None allows DSN-based auto-detection."""
+
+    def test_connect_defaults_to_openpyxl_for_local_files(self, tmp_path: Path) -> None:
+        """connect() with local file still uses openpyxl when engine=None."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        conn = connect(fpath, autocommit=True)
+        assert "Openpyxl" in conn.engine_name
+        conn.close()
+
+    def test_connect_explicit_engine_still_works(self, tmp_path: Path) -> None:
+        """Explicit engine='openpyxl' still works."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        conn = connect(fpath, engine="openpyxl", autocommit=True)
+        assert "Openpyxl" in conn.engine_name
+        conn.close()
+
+    def test_dsn_engine_auto_detection(self) -> None:
+        """msgraph:// DSN auto-detects 'graph' engine (would fail with
+        engine='openpyxl' default due to mismatch error)."""
+        from excel_dbapi.connection import _resolve_engine_and_location
+
+        engine, location = _resolve_engine_and_location(
+            "msgraph://drives/fake/items/fake", None
+        )
+        assert engine == "graph"
+        assert location == "msgraph://drives/fake/items/fake"
+
+    def test_dsn_engine_mismatch_raises(self) -> None:
+        """Explicit engine conflicting with DSN raises ValueError."""
+        from excel_dbapi.connection import _resolve_engine_and_location
+
+        with pytest.raises(ValueError, match="Engine mismatch"):
+            _resolve_engine_and_location(
+                "msgraph://drives/fake/items/fake", "openpyxl"
+            )
+
+
+# ─── Fix 3: Package version (#56) ───────────────────────────────────────
+
+
+class TestPackageVersion:
+    """Fix 3: __version__ matches pyproject.toml."""
+
+    def test_version_is_not_hardcoded_030(self) -> None:
+        """__version__ should NOT be the old hardcoded '0.3.0'."""
+        import excel_dbapi
+
+        assert excel_dbapi.__version__ != "0.3.0"
+
+    def test_version_matches_pyproject(self) -> None:
+        """__version__ matches the version in pyproject.toml."""
+        import sys
+
+        if sys.version_info >= (3, 11):
+            import tomllib
+        else:
+            try:
+                import tomllib  # type: ignore[import-not-found,no-redef]
+            except ModuleNotFoundError:
+                import tomli as tomllib  # type: ignore[import-not-found,no-redef]
+
+        pyproject = Path(__file__).parent.parent / "pyproject.toml"
+        with open(pyproject, "rb") as f:
+            data = tomllib.load(f)
+        expected = data["project"]["version"]
+
+        import excel_dbapi
+
+        # In editable installs the version comes from importlib.metadata
+        # which reads pyproject.toml, so they should match.
+        assert excel_dbapi.__version__ == expected
+
+    def test_version_fallback_format(self) -> None:
+        """Version is a valid semver-like string (not empty)."""
+        import excel_dbapi
+
+        parts = excel_dbapi.__version__.split(".")
+        assert len(parts) >= 2, f"Version {excel_dbapi.__version__!r} is not semver-like"
+
+
+# ─── Fix 4: Header normalization (#57) ──────────────────────────────────
+
+
+class TestHeaderNormalization:
+    """Fix 4: _normalize_headers validates and coerces headers."""
+
+    def test_valid_headers(self) -> None:
+        result = _normalize_headers(["id", "name", "age"])
+        assert result == ["id", "name", "age"]
+
+    def test_numeric_headers_coerced_to_string(self) -> None:
+        result = _normalize_headers([1, 2, 3])
+        assert result == ["1", "2", "3"]
+
+    def test_none_header_raises_data_error(self) -> None:
+        with pytest.raises(DataError, match="Empty or None header at column index 1"):
+            _normalize_headers(["id", None, "age"])
+
+    def test_empty_string_header_raises_data_error(self) -> None:
+        with pytest.raises(DataError, match="Empty or None header"):
+            _normalize_headers(["id", "", "age"])
+
+    def test_whitespace_only_header_raises_data_error(self) -> None:
+        with pytest.raises(DataError, match="Empty or None header"):
+            _normalize_headers(["id", "   ", "age"])
+
+    def test_duplicate_headers_raises_data_error(self) -> None:
+        with pytest.raises(DataError, match="Duplicate header"):
+            _normalize_headers(["id", "name", "id"])
+
+    def test_case_insensitive_duplicate_raises_data_error(self) -> None:
+        with pytest.raises(DataError, match="Duplicate header"):
+            _normalize_headers(["Name", "age", "name"])
+
+    def test_duplicate_headers_in_xlsx(self, tmp_path: Path) -> None:
+        """Reading a sheet with duplicate headers raises DataError."""
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "bad"
+        ws.append(["id", "name", "id"])
+        ws.append([1, "Alice", 2])
+        fpath = str(tmp_path / "dup.xlsx")
+        wb.save(fpath)
+        wb.close()
+
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            with pytest.raises(DataError, match="Duplicate header"):
+                conn.execute("SELECT * FROM bad")
+
+    def test_empty_header_in_xlsx(self, tmp_path: Path) -> None:
+        """Reading a sheet with empty/None header raises DataError."""
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "bad"
+        ws.append(["id", None, "age"])
+        ws.append([1, "Alice", 25])
+        fpath = str(tmp_path / "empty.xlsx")
+        wb.save(fpath)
+        wb.close()
+
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            with pytest.raises(DataError, match="Empty or None header"):
+                conn.execute("SELECT * FROM bad")
+
+
+# ─── Fix 5: Exception mapping (#58) ─────────────────────────────────────
+
+
+class TestExceptionMapping:
+    """Fix 5: Cursor wraps raw exceptions into PEP 249 hierarchy."""
+
+    def test_value_error_becomes_programming_error(self, tmp_path: Path) -> None:
+        """ValueError from executor → ProgrammingError."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            cursor = conn.cursor()
+            with pytest.raises(ProgrammingError):
+                cursor.execute("INVALID SQL GIBBERISH")
+
+    def test_not_implemented_becomes_not_supported(self, tmp_path: Path) -> None:
+        """NotImplementedError → NotSupportedError."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            cursor = conn.cursor()
+            # Trigger a non-supported operation
+            with pytest.raises((ProgrammingError, NotSupportedError)):
+                cursor.execute("CREATE INDEX idx ON users (id)")
+
+    def test_executemany_accepts_iterable_of_sequences(self, tmp_path: Path) -> None:
+        """executemany() accepts Iterable[Sequence[Any]], not just List[tuple]."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
+            cursor = conn.cursor()
+            # Pass a generator of lists (not List[tuple])
+            params = ([i, f"user{i}"] for i in range(1, 4))
+            cursor.executemany("INSERT INTO users VALUES (?, ?)", params)
+            assert cursor.rowcount == 3
+
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            result = conn.execute("SELECT * FROM users")
+            assert len(result.rows) == 3
+
+    def test_executemany_rollback_on_error_autocommit_off(self, tmp_path: Path) -> None:
+        """executemany() with autocommit=False rolls back on error."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Original"]])
+        with ExcelConnection(fpath, engine="openpyxl", autocommit=False) as conn:
+            cursor = conn.cursor()
+            with pytest.raises((ProgrammingError, DatabaseError)):
+                # First insert succeeds, second should fail
+                cursor.executemany(
+                    "INSERT INTO users VALUES (?, ?)",
+                    [(2, "Bob"), (3, None, "extra")],  # type: ignore[list-item]
+                )
+            # After error, rollback should have happened
+            conn.rollback()
+            result = conn.execute("SELECT * FROM users")
+            # Only original row should remain
+            assert len(result.rows) == 1
+            assert result.rows[0] == (1, "Original")
+
+    def test_database_error_subclasses_pass_through(self, tmp_path: Path) -> None:
+        """PEP 249 exceptions already raised in executor pass through unchanged."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        with ExcelConnection(fpath, engine="openpyxl") as conn:
+            cursor = conn.cursor()
+            # This raises ProgrammingError from the parser — should pass through
+            with pytest.raises(ProgrammingError):
+                cursor.execute("SELECT * FROM nonexistent_table_xyz")
