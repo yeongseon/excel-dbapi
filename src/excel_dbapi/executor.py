@@ -274,6 +274,46 @@ class SharedExecutor:
             deduped.append(row)
         return deduped
 
+    @staticmethod
+    def _normalize_order_by(
+        raw: Any,
+    ) -> list[dict[str, str]] | None:
+        """Normalize order_by from parsed dict to a list of order items."""
+        if isinstance(raw, list):
+            return raw  # already a list
+        if isinstance(raw, dict):
+            return [raw]
+        return None
+
+    def _apply_order_by(
+        self,
+        rows: list[Any],
+        order_by: list[dict[str, str]] | None,
+        *,
+        value_getter: Callable[[Any, str], Any],
+        available_columns: set[str] | None = None,
+    ) -> list[Any]:
+        if not order_by:
+            return rows
+        if available_columns is not None:
+            for item in order_by:
+                col = str(item["column"])
+                if col not in available_columns:
+                    raise ValueError(
+                        f"Unknown column: {col}. Available columns: {sorted(available_columns)}"
+                    )
+        if len(rows) < 2:
+            return rows
+        for item in reversed(order_by):
+            col = str(item["column"])
+            reverse = item["direction"] == "DESC"
+            rows = sorted(
+                rows,
+                key=lambda r: self._sort_key(value_getter(r, col)),
+                reverse=reverse,
+            )
+        return rows
+
     def _execute_compound(self, parsed: dict[str, Any]) -> ExecutionResult:
         queries = parsed.get("queries")
         if not isinstance(queries, list) or not queries:
@@ -330,25 +370,24 @@ class SharedExecutor:
             raise ValueError(f"Unsupported compound operator: {operator}")
 
         # Apply compound-level ORDER BY / LIMIT / OFFSET.
-        order_by = parsed.get("order_by")
+        order_by = self._normalize_order_by(parsed.get("order_by"))
         if order_by:
-            col_name = str(order_by["column"])
-            # Resolve column name to positional index in the result tuples.
             desc_names = [d[0] for d in first_result.description]
-            col_index: Optional[int] = None
-            for i, dname in enumerate(desc_names):
-                # Match by bare name or qualified name.
-                if dname is not None and (dname == col_name or dname.endswith(f".{col_name}")):
-                    col_index = i
-                    break
-            if col_index is None:
-                raise ValueError(f"ORDER BY column '{col_name}' not found in compound result")
-            reverse = order_by["direction"] == "DESC"
-            resolved_col_index = col_index
-            rows = sorted(
+            resolved_indexes: dict[str, int] = {}
+            for item in order_by:
+                col_name = str(item["column"])
+                col_index: int | None = None
+                for i, dname in enumerate(desc_names):
+                    if dname is not None and (dname == col_name or dname.endswith(f".{col_name}")):
+                        col_index = i
+                        break
+                if col_index is None:
+                    raise ValueError(f"ORDER BY column '{col_name}' not found in compound result")
+                resolved_indexes[col_name] = col_index
+            rows = self._apply_order_by(
                 rows,
-                key=lambda r: self._sort_key(r[resolved_col_index]),
-                reverse=reverse,
+                order_by,
+                value_getter=lambda r, col: r[resolved_indexes[col]],
             )
 
         compound_offset = parsed.get("offset") or 0
@@ -638,12 +677,13 @@ class SharedExecutor:
             self._validate_join_where_refs(where_raw, _validate_column_ref)
 
         # Validate ORDER BY column
-        order_by_raw = parsed.get("order_by")
-        if order_by_raw:
-            col_ref = str(order_by_raw["column"])
-            if "." in col_ref:
-                src, col_name = col_ref.split(".", 1)
-                _validate_column_ref(src, col_name, "ORDER BY")
+        order_by = self._normalize_order_by(parsed.get("order_by"))
+        if order_by:
+            for item in order_by:
+                col_ref = str(item["column"])
+                if "." in col_ref:
+                    src, col_name = col_ref.split(".", 1)
+                    _validate_column_ref(src, col_name, "ORDER BY")
 
         left_rows = [
             self._build_source_row(from_source, left_headers, left_row_values)
@@ -681,14 +721,12 @@ class SharedExecutor:
                 row for row in joined_rows_flat if self._matches_where(row, where)
             ]
 
-        order_by = parsed.get("order_by")
+        order_by = self._normalize_order_by(parsed.get("order_by"))
         if order_by:
-            order_col = str(order_by["column"])
-            reverse = order_by["direction"] == "DESC"
-            joined_rows_flat = sorted(
+            joined_rows_flat = self._apply_order_by(
                 joined_rows_flat,
-                key=lambda r: self._sort_key(r.get(order_col)),
-                reverse=reverse,
+                order_by,
+                value_getter=lambda r, col: r.get(col),
             )
 
         offset = parsed.get("offset") or 0
@@ -754,18 +792,13 @@ class SharedExecutor:
                 f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}"
             )
 
-        order_by = parsed.get("order_by")
+        order_by = self._normalize_order_by(parsed.get("order_by"))
         if order_by:
-            order_col = str(order_by["column"])
-            if order_col not in headers:
-                raise ValueError(
-                    f"Unknown column: {order_col}. Available columns: {headers}"
-                )
-            reverse = order_by["direction"] == "DESC"
-            rows = sorted(
+            rows = self._apply_order_by(
                 rows,
-                key=lambda r: self._sort_key(r.get(order_col)),
-                reverse=reverse,
+                order_by,
+                value_getter=lambda r, col: r.get(col),
+                available_columns=set(headers),
             )
 
         offset = parsed.get("offset") or 0
@@ -870,14 +903,32 @@ class SharedExecutor:
                 )
             output_columns.append(column_name)
 
-        for clause in (having, parsed.get("order_by")):
-            if clause is None:
-                continue
-            if "conditions" in clause:
-                refs = [str(condition["column"]) for condition in clause["conditions"]]
+        if having is not None:
+            if "conditions" in having:
+                refs = [str(condition["column"]) for condition in having["conditions"]]
             else:
-                refs = [str(clause["column"])]
+                refs = [str(having["column"])]
             for ref in refs:
+                aggregate_spec = self._aggregate_spec_from_label(ref)
+                if aggregate_spec is None:
+                    continue
+                func, arg = aggregate_spec
+                if arg != "*" and arg not in headers:
+                    raise ValueError(
+                        f"Unknown column: {arg}. Available columns: {headers}"
+                    )
+                required_aggregates[ref] = (func, arg)
+
+        order_by_clause_raw = parsed.get("order_by")
+        if isinstance(order_by_clause_raw, list):
+            order_by_clause = order_by_clause_raw
+        elif isinstance(order_by_clause_raw, dict):
+            order_by_clause = [order_by_clause_raw]
+        else:
+            order_by_clause = None
+        if order_by_clause is not None:
+            for item in order_by_clause:
+                ref = str(item["column"])
                 aggregate_spec = self._aggregate_spec_from_label(ref)
                 if aggregate_spec is None:
                     continue
@@ -931,22 +982,17 @@ class SharedExecutor:
                     deduped.append(row)
             grouped_rows = deduped
 
-        order_by = parsed.get("order_by")
+        order_by = self._normalize_order_by(parsed.get("order_by"))
         if order_by:
-            order_column = str(order_by["column"])
             available_order_columns = set(output_columns)
             if group_by:
                 available_order_columns.update(group_by)
             available_order_columns.update(required_aggregates.keys())
-            if order_column not in available_order_columns:
-                raise ValueError(
-                    f"Unknown column: {order_column}. Available columns: {sorted(available_order_columns)}"
-                )
-            reverse = order_by["direction"] == "DESC"
-            grouped_rows = sorted(
+            grouped_rows = self._apply_order_by(
                 grouped_rows,
-                key=lambda r: self._sort_key(r.get(order_column)),
-                reverse=reverse,
+                order_by,
+                value_getter=lambda r, col: r.get(col),
+                available_columns=available_order_columns,
             )
 
         offset = parsed.get("offset") or 0

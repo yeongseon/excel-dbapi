@@ -1,6 +1,6 @@
 # excel-dbapi SQL Specification
 
-> Version: 0.5.0  
+> Version: 0.6.0
 > Status: **Normative** — this document defines the SQL subset that excel-dbapi supports.  
 > Last updated: 2026-04-13
 
@@ -16,7 +16,7 @@ database engine.
 
 | Statement | Supported |
 |-----------|-----------|
-| `SELECT`  | ✅ Single-table with DISTINCT / WHERE / GROUP BY / HAVING / ORDER BY / LIMIT / OFFSET / Aggregates; INNER/LEFT/RIGHT JOIN with chained JOIN clauses |
+| `SELECT`  | ✅ Single-table with DISTINCT / WHERE / GROUP BY / HAVING / multi-column ORDER BY / LIMIT / OFFSET / Aggregates; INNER/LEFT/RIGHT JOIN with chained JOIN clauses |
 | `INSERT`  | ✅ Single-row and multi-row VALUES with optional column list; INSERT...SELECT |
 | `UPDATE`  | ✅ With SET assignments and optional WHERE |
 | `DELETE`  | ✅ With optional WHERE |
@@ -96,7 +96,7 @@ SELECT [DISTINCT] columns FROM table
   [WHERE conditions]
   [GROUP BY column { "," column }]
   [HAVING conditions]
-  [ORDER BY column [ASC|DESC]]
+  [ORDER BY column [ASC|DESC] { "," column [ASC|DESC] }]
   [LIMIT n]
   [OFFSET n]
 ```
@@ -107,7 +107,7 @@ SELECT [DISTINCT] columns FROM table
 SELECT qualified_columns FROM table [ [AS] alias ]
   { [ INNER | LEFT [OUTER] | RIGHT [OUTER] ] JOIN table [ [AS] alias ] ON condition { AND condition } }
   [WHERE conditions]
-  [ORDER BY qualified_column [ASC|DESC]]
+  [ORDER BY qualified_column [ASC|DESC] { "," qualified_column [ASC|DESC] }]
   [LIMIT n]
   [OFFSET n]
 ```
@@ -158,7 +158,7 @@ See [Section 7: WHERE Clause](#7-where-clause).
 |---------|-----------|---------|
 | Single column | ✅ | `ORDER BY name ASC` |
 | Direction | ✅ | `ASC` (default) or `DESC` |
-| Multi-column | ❌ | `ORDER BY name, age` — not supported |
+| Multi-column | ✅ | `ORDER BY name ASC, age DESC` |
 | Expressions | ❌ | `ORDER BY UPPER(name)` — not supported |
 
 - Non-aggregate queries: ORDER BY column must exist in worksheet headers.

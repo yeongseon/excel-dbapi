@@ -1,9 +1,23 @@
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, SupportsIndex, Union
 
 
 class _QuotedString(str):
     pass
+
+
+class _OrderByClause(list[dict[str, str]]):
+    def __getitem__(self, index: SupportsIndex | slice | str) -> Any:
+        if isinstance(index, str):
+            if len(self) != 1:
+                raise TypeError("list indices must be integers or slices, not str")
+            return super().__getitem__(0)[index]
+        return super().__getitem__(index)
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, dict):
+            return len(self) == 1 and super().__getitem__(0) == other
+        return super().__eq__(other)
 
 
 def _is_placeholder(value: Any) -> bool:
@@ -933,6 +947,51 @@ def _validate_join_where_node(
         _validate_join_column_reference(parsed_column, join_sources, "WHERE")
 
 
+def _parse_order_by_item_tokens(tokens: list[str]) -> dict[str, str]:
+    """Parse a single ORDER BY item like ['name', 'DESC']."""
+    if not tokens:
+        raise ValueError("Invalid ORDER BY clause format")
+    direction = "ASC"
+    if len(tokens) > 1:
+        direction = tokens[1].upper()
+    if direction not in {"ASC", "DESC"}:
+        raise ValueError("Invalid ORDER BY direction")
+    if len(tokens) > 2:
+        raise ValueError(f"Unsupported SQL syntax: {' '.join(tokens[2:])}")
+    return {"column": tokens[0], "direction": direction}
+
+
+def _parse_order_by_clause_text(order_part: str) -> list[dict[str, str]]:
+    """Parse ORDER BY clause text like 'name DESC, age ASC'."""
+    order_part = _normalize_aggregate_expressions(order_part)
+    items = [_parse_order_by_item_tokens(part.split()) for part in order_part.split(",")]
+    if not items:
+        raise ValueError("Invalid ORDER BY clause format")
+    return _OrderByClause(items)
+
+
+def _parse_order_by_clause_tokens(tokens: list[str]) -> list[dict[str, str]]:
+    """Parse ORDER BY tokens (comma-separated) into parsed items."""
+    parts: list[list[str]] = []
+    current: list[str] = []
+
+    for token in tokens:
+        chunks = token.split(",")
+        for index, chunk in enumerate(chunks):
+            normalized = chunk.strip()
+            if normalized:
+                current.append(normalized)
+            if index < len(chunks) - 1:
+                parts.append(current)
+                current = []
+
+    parts.append(current)
+    items = [_parse_order_by_item_tokens(part) for part in parts if part]
+    if not items:
+        raise ValueError("Invalid ORDER BY clause format")
+    return _OrderByClause(items)
+
+
 def _parse_select(
     query: str,
     params: Optional[tuple[Any, ...]],
@@ -1194,20 +1253,7 @@ def _parse_select(
         ]
         order_end = min(order_end_candidates) if order_end_candidates else len(clause_tokens)
         order_part = " ".join(clause_tokens[order_start:order_end]).strip()
-        order_part = _normalize_aggregate_expressions(order_part)
-        order_tokens = order_part.split()
-        if not order_tokens:
-            raise ValueError("Invalid ORDER BY clause format")
-        direction = "ASC"
-        if len(order_tokens) > 1:
-            direction = order_tokens[1].upper()
-        if direction not in {"ASC", "DESC"}:
-            raise ValueError("Invalid ORDER BY direction")
-        if len(order_tokens) > 2:
-            raise ValueError(
-                f"Unsupported SQL syntax: {' '.join(order_tokens[2:])}"
-            )
-        order_by = {"column": order_tokens[0], "direction": direction}
+        order_by = _parse_order_by_clause_text(order_part)
 
     if limit_index >= 0:
         limit_start = limit_index + 1
@@ -1354,8 +1400,9 @@ def _parse_select(
             _validate_join_where_columns(where, join_sources)
 
         if order_by is not None:
-            parsed_order_column = _parse_qualified_column_reference(str(order_by["column"]))
-            _validate_join_column_reference(parsed_order_column, join_sources, "ORDER BY")
+            for item in order_by:
+                parsed_order_column = _parse_qualified_column_reference(str(item["column"]))
+                _validate_join_column_reference(parsed_order_column, join_sources, "ORDER BY")
 
     return {
         "action": "SELECT",
@@ -1607,12 +1654,12 @@ def _strip_outer_parens(tokens: List[str]) -> List[str]:
 
 def _extract_trailing_clauses(
     tokens: List[str],
-) -> tuple[List[str], Optional[Dict[str, Any]], Optional[Union[int, str]], Optional[Union[int, str]]]:
+) -> tuple[List[str], list[dict[str, str]] | None, Optional[Union[int, str]], Optional[Union[int, str]]]:
     """Split trailing ORDER BY / LIMIT / OFFSET from a compound's last branch.
 
     Returns ``(branch_tokens, order_by, limit, offset)``.
     """
-    order_by: Optional[Dict[str, Any]] = None
+    order_by: list[dict[str, str]] | None = None
     limit: Optional[Union[int, str]] = None
     offset: Optional[Union[int, str]] = None
 
@@ -1667,15 +1714,11 @@ def _extract_trailing_clauses(
         tu = trail_uppers[idx]
         if tu == "ORDER" and idx + 1 < len(trail_uppers) and trail_uppers[idx + 1] == "BY":
             idx += 2  # skip ORDER BY
-            if idx >= len(trail_tokens):
-                raise ValueError("Invalid ORDER BY clause format")
-            order_col = trail_tokens[idx]
-            idx += 1
-            direction = "ASC"
-            if idx < len(trail_tokens) and trail_uppers[idx] in {"ASC", "DESC"}:
-                direction = trail_uppers[idx]
+            order_tokens_list: list[str] = []
+            while idx < len(trail_tokens) and trail_uppers[idx] not in {"LIMIT", "OFFSET"}:
+                order_tokens_list.append(trail_tokens[idx])
                 idx += 1
-            order_by = {"column": order_col, "direction": direction}
+            order_by = _parse_order_by_clause_tokens(order_tokens_list)
         elif tu == "LIMIT":
             idx += 1
             if idx >= len(trail_tokens):
