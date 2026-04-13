@@ -819,3 +819,80 @@ def test_cross_join_on_rejected(tmp_path: Path) -> None:
             cursor.execute(
                 "SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id WHERE a.id = b.id"
             )
+
+
+def _create_non_equi_join_workbook(path: Path) -> None:
+    workbook = Workbook()
+
+    a_sheet = workbook.active
+    assert a_sheet is not None
+    a_sheet.title = "a"
+    a_sheet.append(["id", "name", "x"])
+    a_sheet.append([1, "alpha", 10])
+    a_sheet.append([2, "beta", 20])
+    a_sheet.append([3, "shared", 30])
+
+    b_sheet = workbook.create_sheet("b")
+    b_sheet.append(["id", "name", "y"])
+    b_sheet.append([0, "zero", 5])
+    b_sheet.append([1, "uno", 5])
+    b_sheet.append([2, "other", 20])
+    b_sheet.append([4, "shared", 15])
+
+    workbook.save(path)
+
+
+def test_join_on_greater_than_condition(tmp_path: Path) -> None:
+    file_path = tmp_path / "join_on_greater_than.xlsx"
+    _create_non_equi_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id FROM a JOIN b ON a.id > b.id ORDER BY a.id, b.id",
+    )
+    assert rows == [(1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (3, 2)]
+
+
+def test_join_on_not_equal_condition(tmp_path: Path) -> None:
+    file_path = tmp_path / "join_on_not_equal.xlsx"
+    _create_non_equi_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id FROM a JOIN b ON a.x != b.y ORDER BY a.id, b.id",
+    )
+    assert rows == [
+        (1, 0),
+        (1, 1),
+        (1, 2),
+        (1, 4),
+        (2, 0),
+        (2, 1),
+        (2, 4),
+        (3, 0),
+        (3, 1),
+        (3, 2),
+        (3, 4),
+    ]
+
+
+def test_join_on_or_condition(tmp_path: Path) -> None:
+    file_path = tmp_path / "join_on_or_condition.xlsx"
+    _create_non_equi_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id FROM a JOIN b ON a.id = b.id OR a.name = b.name ORDER BY a.id, b.id",
+    )
+    assert rows == [(1, 1), (2, 2), (3, 4)]
+
+
+def test_join_on_mixed_and_or_with_parentheses(tmp_path: Path) -> None:
+    file_path = tmp_path / "join_on_mixed_and_or.xlsx"
+    _create_non_equi_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id FROM a JOIN b ON (a.id = b.id AND a.x > b.y) OR a.name = b.name ORDER BY a.id, b.id",
+    )
+    assert rows == [(1, 1), (3, 4)]

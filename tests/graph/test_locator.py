@@ -13,7 +13,7 @@ class TestGraphWorkbookLocator:
     def test_frozen(self):
         loc = GraphWorkbookLocator(drive_id="d", item_id="i")
         with pytest.raises(AttributeError):
-            loc.drive_id = "x"  # type: ignore[misc]
+            setattr(loc, "drive_id", "x")
 
 
 class TestParseMsgraphDsn:
@@ -24,7 +24,7 @@ class TestParseMsgraphDsn:
         assert loc.item_id == "xyz789"
 
     def test_wrong_scheme(self):
-        with pytest.raises(ValueError, match="Expected 'msgraph' scheme"):
+        with pytest.raises(ValueError, match=r"Expected 'msgraph' scheme"):
             parse_msgraph_dsn("https://drives/abc/items/xyz")
 
     def test_missing_items_segment(self):

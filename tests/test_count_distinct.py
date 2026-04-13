@@ -56,10 +56,11 @@ def test_parse_count_distinct() -> None:
     ]
 
 
-def test_parse_count_distinct_qualified_rejected() -> None:
-    """Qualified identifiers (t1.dept) must be rejected in COUNT(DISTINCT)."""
-    with pytest.raises(ValueError, match="Only bare column names are supported with DISTINCT"):
-        parse_sql("SELECT COUNT(DISTINCT t1.dept) FROM users AS t1")
+def test_parse_count_distinct_qualified_supported() -> None:
+    parsed = parse_sql("SELECT COUNT(DISTINCT t1.dept) FROM users AS t1")
+    assert parsed["columns"] == [
+        {"type": "aggregate", "func": "COUNT", "arg": "t1.dept", "distinct": True}
+    ]
 
 
 def test_parse_count_without_distinct() -> None:
@@ -182,6 +183,8 @@ def test_aggregate_label_round_trip() -> None:
     """Verify _aggregate_label and _aggregate_spec_from_label round-trip for DISTINCT."""
     from excel_dbapi.executor import SharedExecutor
 
+    executor = SharedExecutor.__new__(SharedExecutor)
+
     # Test DISTINCT label
     distinct_agg: dict[str, object] = {
         "type": "aggregate",
@@ -189,14 +192,15 @@ def test_aggregate_label_round_trip() -> None:
         "arg": "dept",
         "distinct": True,
     }
-    label = SharedExecutor._aggregate_label(None, distinct_agg)  # type: ignore[arg-type]
+    label = SharedExecutor._aggregate_label(executor, distinct_agg)
     assert label == "COUNT(DISTINCT dept)"
-    spec = SharedExecutor._aggregate_spec_from_label(None, label)  # type: ignore[arg-type]
+    spec = SharedExecutor._aggregate_spec_from_label(executor, label)
     assert spec is not None
-    func, arg, is_distinct = spec
+    func, arg, is_distinct, filter_condition = spec
     assert func == "COUNT"
     assert arg == "dept"
     assert is_distinct is True
+    assert filter_condition is None
 
     # Test non-DISTINCT label
     regular_agg: dict[str, object] = {
@@ -204,11 +208,12 @@ def test_aggregate_label_round_trip() -> None:
         "func": "COUNT",
         "arg": "dept",
     }
-    label2 = SharedExecutor._aggregate_label(None, regular_agg)  # type: ignore[arg-type]
+    label2 = SharedExecutor._aggregate_label(executor, regular_agg)
     assert label2 == "COUNT(dept)"
-    spec2 = SharedExecutor._aggregate_spec_from_label(None, label2)  # type: ignore[arg-type]
+    spec2 = SharedExecutor._aggregate_spec_from_label(executor, label2)
     assert spec2 is not None
-    func2, arg2, is_distinct2 = spec2
+    func2, arg2, is_distinct2, filter_condition2 = spec2
     assert func2 == "COUNT"
     assert arg2 == "dept"
     assert is_distinct2 is False
+    assert filter_condition2 is None

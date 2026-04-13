@@ -3,15 +3,9 @@ import pytest
 from excel_dbapi.parser import parse_sql
 
 
-@pytest.mark.parametrize(
-    "query",
-    [
-        "SELECT * FROM Sheet1 WHERE id = (SELECT id FROM Sheet2)",
-    ],
-)
-def test_unsupported_sql_grammar_is_rejected(query):
-    with pytest.raises(ValueError):
-        parse_sql(query)
+def test_scalar_subquery_in_where_is_accepted():
+    parsed = parse_sql("SELECT * FROM Sheet1 WHERE id = (SELECT id FROM Sheet2)")
+    assert parsed is not None
 
 
 def test_rejects_for_update():

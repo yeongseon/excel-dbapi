@@ -890,7 +890,6 @@ class TestPrecedenceGroupedNodes:
             assert names == ["Alice", "Bob"]
 
     def test_join_rejects_subquery_in_precedence_group(self, tmp_path: Path) -> None:
-        """JOIN must reject subqueries even when nested in precedence-grouped WHERE."""
         f = tmp_path / "join_sub.xlsx"
         wb = Workbook()
         ws1 = wb.active
@@ -906,10 +905,11 @@ class TestPrecedenceGroupedNodes:
 
         with ExcelConnection(str(f), engine="openpyxl") as conn:
             cur = conn.cursor()
-            with pytest.raises(Exception, match="[Ss]ubquer"):
-                cur.execute(
-                    "SELECT users.name FROM users "
-                    "JOIN orders ON users.id = orders.user_id "
-                    "WHERE users.name = 'Alice' OR "
-                    "users.id IN (SELECT id FROM users) AND orders.amount > 0"
-                )
+            cur.execute(
+                "SELECT users.name FROM users "
+                "JOIN orders ON users.id = orders.user_id "
+                "WHERE users.name = 'Alice' OR "
+                "users.id IN (SELECT id FROM users) AND orders.amount > 0"
+            )
+            rows = cur.fetchall()
+            assert rows == [("Alice",)]

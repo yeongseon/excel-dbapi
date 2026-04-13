@@ -8,6 +8,25 @@ from excel_dbapi.parser import _tokenize, parse_sql
 
 
 IDENTIFIER = st.from_regex(r"[A-Za-z_][A-Za-z0-9_]{0,8}", fullmatch=True)
+NON_RESERVED_IDENTIFIER = IDENTIFIER.filter(
+    lambda value: value.upper()
+    not in {
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "AND",
+        "OR",
+        "ORDER",
+        "BY",
+        "LIMIT",
+        "OFFSET",
+        "NULL",
+        "IN",
+        "NOT",
+        "BETWEEN",
+        "IS",
+    }
+)
 INT_LITERAL = st.integers(min_value=-100000, max_value=100000)
 
 
@@ -100,7 +119,7 @@ def simple_select_sql(draw: st.DrawFn) -> str:
 
 @st.composite
 def where_condition_sql(draw: st.DrawFn) -> str:
-    column = draw(IDENTIFIER)
+    column = draw(NON_RESERVED_IDENTIFIER)
     simple_op = draw(st.sampled_from(["=", "!=", "<>", "<", "<=", ">", ">="]))
     simple_value = draw(INT_LITERAL)
 
@@ -157,7 +176,7 @@ def test_quoted_unicode_and_spaced_names_do_not_crash_parser(name: str) -> None:
 
 
 @settings(max_examples=120)
-@given(where_condition_sql(), IDENTIFIER)
+@given(where_condition_sql(), NON_RESERVED_IDENTIFIER)
 def test_valid_where_conditions_do_not_crash_parser(condition_sql: str, table: str) -> None:
     sql = f"SELECT * FROM {table} WHERE {condition_sql}"
     parsed = parse_sql(sql)

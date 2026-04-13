@@ -322,8 +322,7 @@ def test_executor_aggregate_edge_paths(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Unsupported aggregate function"):
         executor._compute_aggregate("MEDIAN", "id", [{"id": 1}], distinct=False)
     assert executor._aggregate_spec_from_label("COUNT()") is None
-    with pytest.raises(ValueError, match="DISTINCT is only supported with COUNT"):
-        executor._aggregate_spec_from_label("SUM(DISTINCT t1.id)")
+    assert executor._aggregate_spec_from_label("SUM(DISTINCT t1.id)") is None
 
     with pytest.raises(ValueError, match="must appear in GROUP BY"):
         executor.execute(parse_sql("SELECT id, COUNT(*) FROM t1 GROUP BY name"))
@@ -341,7 +340,7 @@ def test_executor_compound_manual_description_mismatch(tmp_path: Path) -> None:
             super().__init__(backend_obj)
             self._idx = 0
 
-        def execute(self, parsed: dict[str, Any]) -> ExecutionResult:  # type: ignore[override]
+        def execute(self, parsed: dict[str, Any], **kwargs: Any) -> ExecutionResult:  # type: ignore[override]
             self._idx += 1
             if self._idx == 1:
                 return ExecutionResult("SELECT", [(1,)], [("id", None, None, None, None, None, None)], 1)
@@ -368,7 +367,7 @@ def test_parser_column_expression_internal_error_paths() -> None:
         _parse_column_expression("   ")
     with pytest.raises(ValueError, match="aggregate functions are not supported"):
         _parse_column_expression("COUNT(id)", allow_aggregates=False)
-    with pytest.raises(ValueError, match="Unsupported column expression"):
+    with pytest.raises(ValueError, match="Unsupported function: COUNT"):
         _parse_column_expression("COUNT()")
     with pytest.raises(ValueError, match="wildcard is not supported"):
         _parse_column_expression("*", allow_wildcard=False)

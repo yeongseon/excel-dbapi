@@ -27,7 +27,7 @@ def test_aggregate_avg_star_rejected() -> None:
 
 def test_aggregate_expression_rejected() -> None:
     """SUM(a+b) — expressions inside aggregates are not supported."""
-    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+    with pytest.raises(ValueError, match="Unsupported function: SUM"):
         parse_sql("SELECT SUM(a + b) FROM Sheet1")
 
 
@@ -127,7 +127,7 @@ def test_subquery_with_limit() -> None:
 
 def test_join_invalid_column_reference() -> None:
     """JOIN column must be qualified (table.column)."""
-    with pytest.raises(ValueError, match="Invalid column reference in JOIN"):
+    with pytest.raises(ValueError, match="qualified column-to-column comparisons"):
         parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON id = b.id")
 
 
@@ -138,9 +138,10 @@ def test_join_on_empty() -> None:
 
 
 def test_join_on_comparison_non_equality() -> None:
-    """JOIN ON only supports = comparisons."""
-    with pytest.raises(ValueError, match="only '=' comparisons"):
-        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id > b.id")
+    """JOIN ON supports non-equality comparisons."""
+    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id > b.id")
+    cond = parsed["joins"][0]["on"]["conditions"][0]
+    assert cond["operator"] == ">"
 
 
 def test_join_on_references_wrong_tables() -> None:
@@ -151,7 +152,7 @@ def test_join_on_references_wrong_tables() -> None:
 
 def test_join_on_too_many_tokens_in_comparison() -> None:
     """JOIN ON comparison must be exactly 3 tokens (left op right)."""
-    with pytest.raises(ValueError, match="AND-combined equality"):
+    with pytest.raises(ValueError, match="Invalid WHERE clause format"):
         parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id = 1")
 
 
@@ -345,9 +346,9 @@ def test_offset_param_non_integer() -> None:
 # =============================================================================
 
 
-def test_join_with_distinct_rejected() -> None:
-    with pytest.raises(ValueError, match="DISTINCT is not supported with JOIN"):
-        parse_sql("SELECT DISTINCT a.id FROM t1 a JOIN t2 b ON a.id = b.id")
+def test_join_with_distinct_supported() -> None:
+    parsed = parse_sql("SELECT DISTINCT a.id FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["distinct"] is True
 
 
 def test_join_with_select_star_allowed() -> None:
@@ -363,8 +364,11 @@ def test_join_with_having_supported() -> None:
 
 
 def test_join_with_subquery_where_rejected() -> None:
-    with pytest.raises(ValueError, match="Subqueries are not supported with JOIN"):
-        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)")
+    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)")
+    assert parsed["joins"] is not None
+    where_cond = parsed["where"]["conditions"][0]
+    assert where_cond["operator"] == "IN"
+    assert where_cond["value"]["type"] == "subquery"
 
 
 # =============================================================================
