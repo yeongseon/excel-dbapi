@@ -407,3 +407,25 @@ def test_parenthesized_branch_e2e(tmp_path: Path) -> None:
         # Branch 2: t2 ids [2,3,4,4]
         # UNION (dedup): {1, 2, 3, 4}
         assert sorted(rows) == [(1,), (2,), (3,), (4,)]
+
+
+
+
+def test_mixed_union_intersect_left_to_right(tmp_path: Path) -> None:
+    """Mixed operators evaluate left-to-right per SQL standard.
+
+    A UNION B INTERSECT C == (A UNION B) INTERSECT C.
+    t1 ids: {1, 2, 3}, t2 ids: {2, 3, 4}, t3 ids: {4, 5}.
+    (t1 UNION t2) = {1, 2, 3, 4}.
+    {1, 2, 3, 4} INTERSECT {4, 5} = {4}.
+    """
+    file_path = tmp_path / "compound_mixed_lr.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM t1 UNION SELECT id FROM t2 INTERSECT SELECT id FROM t3"
+        )
+        rows = cursor.fetchall()
+        assert rows == [(4,)]
