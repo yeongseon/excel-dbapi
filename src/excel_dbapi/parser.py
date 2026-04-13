@@ -6,7 +6,7 @@ class _QuotedString(str):
     pass
 
 
-class _OrderByClause(list[dict[str, str]]):
+class _OrderByClause(list[dict[str, Any]]):
     def __getitem__(self, index: SupportsIndex | slice | str) -> Any:
         if isinstance(index, str):
             if len(self) != 1:
@@ -461,6 +461,9 @@ def _parse_case_expression_tokens(
             closed = True
             break
 
+        if next_stop is None:
+            raise ValueError("Invalid CASE expression: missing END")
+
         raise ValueError("Invalid CASE expression")
 
     if not whens:
@@ -504,9 +507,6 @@ def _parse_column_expression(
 
     if re.search(r"(?i)\bOVER\s*\(", expression):
         raise ValueError("Unsupported SQL syntax: OVER")
-
-    if re.match(r"(?i)^CASE\b", expression):
-        return _parse_case_expression(expression)
 
     match = re.fullmatch(
         r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
@@ -589,6 +589,7 @@ def _parse_column_expression(
         return token
 
     def _parse_atom() -> Any:
+        nonlocal position
         token = _peek()
         if token is None:
             raise ValueError(f"Unsupported column expression: {expression}")
@@ -600,6 +601,12 @@ def _parse_column_expression(
                 raise ValueError(f"Unsupported column expression: {expression}")
             _consume(")")
             return parsed
+
+        if _is_case_keyword(token, "CASE"):
+            remaining_tokens = tokens[position:]
+            parsed_case, consumed = _parse_case_expression_tokens(remaining_tokens, 0)
+            position += consumed
+            return parsed_case
 
         _consume()
 
@@ -1755,10 +1762,159 @@ def _validate_join_where_node(
                 _validate_join_column_reference(part, join_sources, "WHERE")
 
 
-def _parse_order_by_item_tokens(tokens: list[str]) -> dict[str, str]:
+def _literal_to_sql_for_order_by(value: Any) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, str):
+        escaped = value.replace("'", "''")
+        return f"'{escaped}'"
+    return str(value)
+
+
+def _where_operand_to_sql_for_order_by(operand: Any, *, is_column: bool) -> str:
+    if isinstance(operand, dict):
+        if operand.get("type") == "subquery":
+            return "(SUBQUERY)"
+        return _expression_to_sql_for_order_by(operand)
+    if isinstance(operand, str):
+        if is_column:
+            return operand
+        return _literal_to_sql_for_order_by(operand)
+    return _literal_to_sql_for_order_by(operand)
+
+
+def _where_to_sql_for_order_by(where: dict[str, Any]) -> str:
+    node_type = where.get("type")
+    if node_type == "not":
+        operand = where.get("operand")
+        if isinstance(operand, dict):
+            return f"NOT ({_where_to_sql_for_order_by(operand)})"
+        return "NOT"
+
+    if "conditions" in where:
+        conditions = where.get("conditions", [])
+        if not conditions:
+            return ""
+        first = conditions[0]
+        parts = [_where_to_sql_for_order_by(first) if isinstance(first, dict) else str(first)]
+        conjunctions = where.get("conjunctions", [])
+        if isinstance(conjunctions, list):
+            for idx, conjunction in enumerate(conjunctions):
+                if idx + 1 >= len(conditions):
+                    break
+                parts.append(str(conjunction))
+                candidate = conditions[idx + 1]
+                parts.append(
+                    _where_to_sql_for_order_by(candidate)
+                    if isinstance(candidate, dict)
+                    else str(candidate)
+                )
+        combined = " ".join(parts)
+        if where.get("type") == "compound":
+            return f"({combined})"
+        return combined
+
+    column_sql = _where_operand_to_sql_for_order_by(
+        where.get("column"),
+        is_column=True,
+    )
+    operator = str(where.get("operator", ""))
+    value = where.get("value")
+
+    if operator in {"IS", "IS NOT"}:
+        return f"{column_sql} {operator} NULL"
+
+    if operator in {"IN", "NOT IN"}:
+        if isinstance(value, dict) and value.get("type") == "subquery":
+            return f"{column_sql} {operator} (SUBQUERY)"
+        if isinstance(value, (list, tuple)):
+            values_sql = ", ".join(
+                _where_operand_to_sql_for_order_by(item, is_column=False)
+                for item in value
+            )
+        else:
+            values_sql = _where_operand_to_sql_for_order_by(value, is_column=False)
+        return f"{column_sql} {operator} ({values_sql})"
+
+    if operator in {"BETWEEN", "NOT BETWEEN"} and isinstance(value, (list, tuple)):
+        if len(value) != 2:
+            return f"{column_sql} {operator}"
+        low_sql = _where_operand_to_sql_for_order_by(value[0], is_column=False)
+        high_sql = _where_operand_to_sql_for_order_by(value[1], is_column=False)
+        return f"{column_sql} {operator} {low_sql} AND {high_sql}"
+
+    value_sql = _where_operand_to_sql_for_order_by(value, is_column=False)
+    return f"{column_sql} {operator} {value_sql}"
+
+
+def _expression_to_sql_for_order_by(expression: Any) -> str:
+    if isinstance(expression, dict):
+        expression_type = expression.get("type")
+        if expression_type == "alias":
+            return _expression_to_sql_for_order_by(expression.get("expression"))
+        if expression_type == "column":
+            return f"{expression['source']}.{expression['name']}"
+        if expression_type == "aggregate":
+            return f"{expression['func']}({expression['arg']})"
+        if expression_type == "literal":
+            return _literal_to_sql_for_order_by(expression.get("value"))
+        if expression_type == "unary_op":
+            operand_sql = _expression_to_sql_for_order_by(expression.get("operand"))
+            return f"-{operand_sql}"
+        if expression_type == "binary_op":
+            left_sql = _expression_to_sql_for_order_by(expression.get("left"))
+            right_sql = _expression_to_sql_for_order_by(expression.get("right"))
+            return f"({left_sql} {expression['op']} {right_sql})"
+        if expression_type == "case":
+            parts: list[str] = ["CASE"]
+            mode = expression.get("mode", "searched")
+            if mode == "simple" and expression.get("value") is not None:
+                parts.append(_expression_to_sql_for_order_by(expression["value"]))
+            whens = expression.get("whens", [])
+            if isinstance(whens, list):
+                for when_branch in whens:
+                    if not isinstance(when_branch, dict):
+                        continue
+                    if mode == "searched":
+                        condition = when_branch.get("condition")
+                        condition_sql = ""
+                        if isinstance(condition, dict):
+                            condition_sql = _where_to_sql_for_order_by(condition)
+                        parts.append(f"WHEN {condition_sql} THEN")
+                    else:
+                        match_sql = _expression_to_sql_for_order_by(when_branch.get("match"))
+                        parts.append(f"WHEN {match_sql} THEN")
+                    parts.append(_expression_to_sql_for_order_by(when_branch.get("result")))
+            if expression.get("else") is not None:
+                parts.append("ELSE")
+                parts.append(_expression_to_sql_for_order_by(expression["else"]))
+            parts.append("END")
+            return " ".join(parts)
+    return str(expression)
+
+
+def _parse_order_by_item_tokens(tokens: list[str]) -> dict[str, Any]:
     """Parse a single ORDER BY item like ['name', 'DESC']."""
     if not tokens:
         raise ValueError("Invalid ORDER BY clause format")
+
+    if _is_case_keyword(tokens[0], "CASE"):
+        parsed_case, consumed = _parse_case_expression_tokens(tokens, 0)
+        direction = "ASC"
+        trailing_tokens = tokens[consumed:]
+        if trailing_tokens:
+            direction = trailing_tokens[0].upper()
+        if direction not in {"ASC", "DESC"}:
+            raise ValueError("Invalid ORDER BY direction")
+        if len(trailing_tokens) > 1:
+            raise ValueError(f"Unsupported SQL syntax: {' '.join(trailing_tokens[1:])}")
+        result: dict[str, Any] = {
+            "column": f"__expr__:{_expression_to_sql_for_order_by(parsed_case)}",
+            "direction": direction,
+        }
+        result["__expression__"] = parsed_case
+        return result
+
     direction = "ASC"
     if len(tokens) > 1:
         direction = tokens[1].upper()
@@ -1769,14 +1925,14 @@ def _parse_order_by_item_tokens(tokens: list[str]) -> dict[str, str]:
     return {"column": tokens[0], "direction": direction}
 
 
-def _parse_order_by_clause_text(order_part: str) -> list[dict[str, str]]:
+def _parse_order_by_clause_text(order_part: str) -> list[dict[str, Any]]:
     """Parse ORDER BY clause text like 'name DESC, age ASC'."""
     order_part = _normalize_aggregate_expressions(order_part)
     tokens = _collapse_aggregate_tokens(_tokenize(order_part))
     return _parse_order_by_clause_tokens(tokens)
 
 
-def _parse_order_by_clause_tokens(tokens: list[str]) -> list[dict[str, str]]:
+def _parse_order_by_clause_tokens(tokens: list[str]) -> list[dict[str, Any]]:
     """Parse ORDER BY tokens (comma-separated) into parsed items."""
     parts: list[list[str]] = []
     current: list[str] = []
@@ -2161,16 +2317,29 @@ def _parse_select(
         else:
             column_expressions.append(column)
 
+    # Collect ORDER BY expression ASTs for parameter binding
+    order_by_expressions: list[Any] = []
+    if order_by:
+        for item in order_by:
+            expr = item.get("__expression__")
+            if expr is not None:
+                order_by_expressions.append(expr)
+
     has_column_placeholders = any(
         _is_placeholder(value)
         for expression in column_expressions
         for value in _expression_values_to_bind(expression)
     )
-
+    has_order_by_placeholders = any(
+        _is_placeholder(value)
+        for expr in order_by_expressions
+        for value in _expression_values_to_bind(expr)
+    )
     if params is not None or (
         has_column_placeholders
         or (where and any(_is_placeholder(value) for value in _where_values_to_bind(where)))
         or (having and any(_is_placeholder(value) for value in _where_values_to_bind(having)))
+        or has_order_by_placeholders
         or _is_placeholder(limit)
         or _is_placeholder(offset)
     ):
@@ -2181,6 +2350,8 @@ def _parse_select(
             values_to_bind.extend(_where_values_to_bind(where))
         if having:
             values_to_bind.extend(_where_values_to_bind(having))
+        for expr in order_by_expressions:
+            values_to_bind.extend(_expression_values_to_bind(expr))
         if limit is not None:
             values_to_bind.append(limit)
         if offset is not None:
@@ -2193,12 +2364,18 @@ def _parse_select(
             consumed += _bind_where_conditions(where, bound, consumed)
         if having:
             consumed += _bind_where_conditions(having, bound, consumed)
+        for expr in order_by_expressions:
+            consumed += _bind_expression_values(expr, bound, consumed)
+        if order_by:
+            for item in order_by:
+                expr = item.get("__expression__")
+                if expr is not None:
+                    item["column"] = f"__expr__:{_expression_to_sql_for_order_by(expr)}"
         if limit is not None:
             limit = bound[consumed]
             consumed += 1
         if offset is not None:
             offset = bound[consumed]
-
     if limit is not None and not isinstance(limit, int):
         raise ValueError("LIMIT must be an integer")
     if offset is not None and not isinstance(offset, int):
@@ -2533,12 +2710,12 @@ def _strip_outer_parens(tokens: List[str]) -> List[str]:
 
 def _extract_trailing_clauses(
     tokens: List[str],
-) -> tuple[List[str], list[dict[str, str]] | None, Optional[Union[int, str]], Optional[Union[int, str]]]:
+) -> tuple[List[str], list[dict[str, Any]] | None, Optional[Union[int, str]], Optional[Union[int, str]]]:
     """Split trailing ORDER BY / LIMIT / OFFSET from a compound's last branch.
 
     Returns ``(branch_tokens, order_by, limit, offset)``.
     """
-    order_by: list[dict[str, str]] | None = None
+    order_by: list[dict[str, Any]] | None = None
     limit: Optional[Union[int, str]] = None
     offset: Optional[Union[int, str]] = None
 

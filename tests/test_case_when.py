@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -11,11 +12,11 @@ def _create_case_workbook(path: Path) -> None:
     sheet = workbook.active
     assert sheet is not None
     sheet.title = "t"
-    sheet.append(["id", "score", "tier", "label", "points"])
-    sheet.append([1, 15, "gold", "x", 2])
-    sheet.append([2, 8, "silver", None, 3])
-    sheet.append([3, None, "bronze", "z", 4])
-    sheet.append([4, 12, "gold", "w", 0])
+    sheet.append(["id", "score", "tier", "label", "points", "status", "x"])
+    sheet.append([1, 15, "gold", "x", 2, "active", 5])
+    sheet.append([2, 8, "silver", None, 3, "inactive", -2])
+    sheet.append([3, None, "bronze", "z", 4, "inactive", 0])
+    sheet.append([4, 12, "gold", "w", 0, "active", 7])
     workbook.save(path)
 
 
@@ -160,6 +161,72 @@ def test_case_in_where_operand(tmp_path: Path) -> None:
         "ORDER BY id",
     )
     assert rows == [(1,), (4,)]
+
+
+def test_case_order_by_case_expression(tmp_path: Path) -> None:
+    file_path = tmp_path / "case_order_by_case_asc.xlsx"
+    _create_case_workbook(file_path)
+
+    rows, _ = _query(
+        file_path,
+        "SELECT * FROM t ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END ASC",
+    )
+    assert [row[0] for row in rows] == [1, 4, 2, 3]
+
+
+def test_case_order_by_case_desc(tmp_path: Path) -> None:
+    file_path = tmp_path / "case_order_by_case_desc.xlsx"
+    _create_case_workbook(file_path)
+
+    rows, _ = _query(
+        file_path,
+        "SELECT * FROM t ORDER BY CASE WHEN status = 'active' THEN 0 ELSE 1 END DESC",
+    )
+    assert [row[0] for row in rows] == [2, 3, 1, 4]
+
+
+def test_case_arithmetic_addition(tmp_path: Path) -> None:
+    file_path = tmp_path / "case_arithmetic_addition.xlsx"
+    _create_case_workbook(file_path)
+
+    rows, description = _query(
+        file_path,
+        "SELECT CASE WHEN x > 0 THEN x ELSE 0 END + 10 AS result FROM t ORDER BY id",
+    )
+    assert description == ["result"]
+    assert rows == [(15.0,), (10.0,), (10.0,), (17.0,)]
+
+
+def test_case_arithmetic_multiplication(tmp_path: Path) -> None:
+    file_path = tmp_path / "case_arithmetic_multiplication.xlsx"
+    _create_case_workbook(file_path)
+
+    rows, _ = _query(
+        file_path,
+        "SELECT CASE WHEN x > 0 THEN x ELSE 0 END * 2 FROM t ORDER BY id",
+    )
+    assert rows == [(10.0,), (0.0,), (0.0,), (14.0,)]
+
+
+def test_case_in_complex_arithmetic(tmp_path: Path) -> None:
+    file_path = tmp_path / "case_complex_arithmetic.xlsx"
+    _create_case_workbook(file_path)
+
+    rows, _ = _query(
+        file_path,
+        "SELECT 100 + CASE WHEN status = 'active' THEN 50 ELSE 0 END FROM t ORDER BY id",
+    )
+    assert rows == [(150.0,), (100.0,), (100.0,), (150.0,)]
+
+
+def test_case_parser_error_missing_end() -> None:
+    with pytest.raises(ValueError, match="missing END"):
+        parse_sql("SELECT CASE WHEN x = 1 THEN 2 FROM t")
+
+
+def test_case_parser_error_missing_when() -> None:
+    with pytest.raises(ValueError, match="missing WHEN"):
+        parse_sql("SELECT CASE THEN 1 END FROM t")
 
 
 def test_case_parameter_binding_select_and_update(tmp_path: Path) -> None:

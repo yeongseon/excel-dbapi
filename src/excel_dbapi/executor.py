@@ -1,11 +1,11 @@
 import copy
 import re
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from .engines.base import TableData, WorkbookBackend
 from .engines.result import Description, ExecutionResult
 from .exceptions import ProgrammingError
-from .parser import parse_sql
+from .parser import _parse_column_expression, parse_sql
 from .sanitize import sanitize_cell_value, sanitize_row
 
 _READONLY_ACTIONS = frozenset({"INSERT", "UPDATE", "DELETE", "CREATE", "DROP"})
@@ -551,7 +551,7 @@ class SharedExecutor:
     def _apply_order_by(
         self,
         rows: list[Any],
-        order_by: list[dict[str, str]] | None,
+        order_by: list[dict[str, Any]] | None,
         *,
         value_getter: Callable[[Any, str], Any],
         available_columns: set[str] | None = None,
@@ -576,6 +576,43 @@ class SharedExecutor:
                 reverse=reverse,
             )
         return rows
+
+    def _materialize_order_expression_columns(
+        self,
+        rows: list[dict[str, Any]],
+        order_by: list[dict[str, Any]] | None,
+    ) -> set[str]:
+        expression_columns: set[str] = set()
+        if not order_by:
+            return expression_columns
+
+        parsed_expressions: dict[str, Any] = {}
+        for item in order_by:
+            col_ref = str(item["column"])
+            if not col_ref.startswith("__expr__:"):
+                continue
+            expression_columns.add(col_ref)
+            if col_ref in parsed_expressions:
+                continue
+            expression_sql = col_ref[len("__expr__:") :]
+            parsed_expressions[col_ref] = _parse_column_expression(
+                expression_sql,
+                allow_wildcard=False,
+                allow_aggregates=False,
+            )
+
+        if not parsed_expressions:
+            return expression_columns
+
+        for row in rows:
+            for col_ref, expression in parsed_expressions.items():
+                row[col_ref] = self._eval_expression(
+                    expression,
+                    row,
+                    lambda col_name: row.get(col_name),
+                )
+
+        return expression_columns
 
     def _execute_compound(self, parsed: dict[str, Any]) -> ExecutionResult:
         queries = parsed.get("queries")
@@ -1094,7 +1131,7 @@ class SharedExecutor:
         alias_map = self._build_alias_map(parsed["columns"])
         order_by = self._normalize_order_by(parsed.get("order_by"))
         if order_by and alias_map:
-            resolved_order_by: list[dict[str, str]] = []
+            resolved_order_by: list[dict[str, Any]] = []
             for item in order_by:
                 resolved_item = dict(item)
                 column_name = str(item["column"])
@@ -1322,7 +1359,7 @@ class SharedExecutor:
         alias_map = self._build_alias_map(columns)
         order_by = self._normalize_order_by(parsed.get("order_by"))
         if order_by and alias_map:
-            resolved_order_by: list[dict[str, str]] = []
+            resolved_order_by: list[dict[str, Any]] = []
             for item in order_by:
                 resolved_item = dict(item)
                 column_name = str(item["column"])
@@ -1330,15 +1367,24 @@ class SharedExecutor:
                 resolved_order_by.append(resolved_item)
             order_by = resolved_order_by
 
+        order_expression_columns: set[str] = set()
+        if order_by:
+            order_expression_columns = self._materialize_order_expression_columns(
+                rows,
+                order_by,
+            )
+
         if order_by:
             if needs_expression_projection and columns != ["*"]:
                 pass
             else:
+                available_columns = set(headers)
+                available_columns.update(order_expression_columns)
                 rows = self._apply_order_by(
                     rows,
                     order_by,
                     value_getter=lambda r, col: r.get(col),
-                    available_columns=set(headers),
+                    available_columns=available_columns,
                 )
 
         if needs_expression_projection and columns != ["*"]:
@@ -1355,8 +1401,13 @@ class SharedExecutor:
                 projected_rows.append(projected_row)
 
             if order_by:
+                expression_columns = self._materialize_order_expression_columns(
+                    projected_rows,
+                    order_by,
+                )
                 available_columns = set(headers)
                 available_columns.update(selected_columns)
+                available_columns.update(expression_columns)
                 projected_rows = self._apply_order_by(
                     projected_rows,
                     order_by,
@@ -1506,7 +1557,7 @@ class SharedExecutor:
         alias_map = self._build_alias_map(columns)
         order_by_clause = self._normalize_order_by(parsed.get("order_by"))
         if order_by_clause and alias_map:
-            resolved_order_by: list[dict[str, str]] = []
+            resolved_order_by: list[dict[str, Any]] = []
             for item in order_by_clause:
                 resolved_item = dict(item)
                 column_name = str(item["column"])
