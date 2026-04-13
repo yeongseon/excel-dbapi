@@ -331,10 +331,14 @@ def test_where_with_quoted_order_by_keyword():
     assert result["order_by"] is None
 
 
-def test_aggregate_rejects_distinct():
-    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
-        parse_sql("SELECT COUNT(DISTINCT name) FROM users")
-
+def test_aggregate_count_distinct():
+    result = parse_sql("SELECT COUNT(DISTINCT name) FROM users")
+    assert result["action"] == "SELECT"
+    col = result["columns"][0]
+    assert col["type"] == "aggregate"
+    assert col["func"] == "COUNT"
+    assert col["arg"] == "name"
+    assert col["distinct"] is True
 
 def test_aggregate_rejects_expression():
     with pytest.raises(ValueError, match="Unsupported aggregate expression"):
