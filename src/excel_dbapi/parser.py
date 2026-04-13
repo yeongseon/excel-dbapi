@@ -98,6 +98,31 @@ def _tokenize(text: str) -> List[str]:
     return tokens
 
 
+def _count_unquoted_placeholders(sql: str) -> int:
+    """Count ``?`` placeholders outside string literals in *sql*."""
+    count = 0
+    in_quote = False
+    quote_char = ""
+    i = 0
+    length = len(sql)
+    while i < length:
+        ch = sql[i]
+        if in_quote:
+            if ch == quote_char:
+                if i + 1 < length and sql[i + 1] == quote_char:
+                    i += 2
+                    continue
+                in_quote = False
+        else:
+            if ch in ("'", '"'):
+                in_quote = True
+                quote_char = ch
+            elif ch == "?":
+                count += 1
+        i += 1
+    return count
+
+
 def _parse_value(token: str) -> Any:
     token = token.strip()
     if token.upper() == "NULL":
@@ -1376,8 +1401,14 @@ def _extract_trailing_clauses(
     # last branch. A simple heuristic: the cut must come after the last
     # top-level FROM token.
     last_from = -1
+    from_depth = 0
     for i, u in enumerate(uppers[:cut]):
-        if u == "FROM" and depth == 0:
+        tok = tokens[i]
+        if tok == "(":
+            from_depth += 1
+        elif tok == ")":
+            from_depth -= 1
+        elif u == "FROM" and from_depth == 0:
             last_from = i
     if last_from == -1:
         return tokens, order_by, limit, offset
@@ -1506,7 +1537,7 @@ def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[D
         segment_query = " ".join(segment_tokens)
         segment_params: Optional[tuple[Any, ...]] = None
         if params is not None:
-            placeholder_count = sum(1 for tok in segment_tokens if tok.rstrip(",") == "?")
+            placeholder_count = _count_unquoted_placeholders(segment_query)
             next_index = param_index + placeholder_count
             if next_index > total_params:
                 raise ValueError("Not enough parameters for placeholders")

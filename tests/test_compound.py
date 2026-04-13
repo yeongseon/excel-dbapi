@@ -429,3 +429,95 @@ def test_mixed_union_intersect_left_to_right(tmp_path: Path) -> None:
         )
         rows = cursor.fetchall()
         assert rows == [(4,)]
+
+
+def test_compound_in_clause_param_slicing(tmp_path: Path) -> None:
+    """IN (?,?) in compound query correctly slices parameters.
+
+    Regression test for Bug #3: token-based ? counting failed when
+    tokenizer produced tokens like '(?,?)' instead of separate '?' tokens.
+    """
+    file_path = tmp_path / "compound_in_params.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        # Each branch uses IN (?,?) — 2 placeholders each, 4 total.
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id IN (?,?) "
+            "UNION "
+            "SELECT id FROM t2 WHERE id IN (?,?)",
+            (1, 2, 3, 4),
+        )
+        rows = cursor.fetchall()
+        ids = sorted(r[0] for r in rows)
+        # t1 WHERE id IN (1,2) -> {1,2}, t2 WHERE id IN (3,4) -> {3,4}
+        # UNION -> {1,2,3,4}
+        assert ids == [1, 2, 3, 4]
+
+
+def test_compound_quoted_question_mark_not_counted(tmp_path: Path) -> None:
+    """A '?' inside a string literal is not counted as a placeholder.
+
+    Regression test for Bug #3 edge case.
+    """
+    file_path = tmp_path / "compound_quoted_qmark.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        # The literal '?' in the first branch is NOT a placeholder.
+        # Only the ? in WHERE id = ? is a placeholder (1 per branch = 2 total).
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id = ? "
+            "UNION "
+            "SELECT id FROM t2 WHERE id = ?",
+            (1, 2),
+        )
+        rows = cursor.fetchall()
+        ids = sorted(r[0] for r in rows)
+        assert ids == [1, 2]
+
+
+def test_compound_from_with_subquery_depth(tmp_path: Path) -> None:
+    """FROM inside a subquery does not confuse top-level FROM detection.
+
+    Regression test for Bug #4: stale depth variable caused FROM in
+    subqueries to be treated as top-level FROM.
+    """
+    file_path = tmp_path / "compound_from_depth.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        # Subquery contains its own FROM. The compound-level ORDER BY
+        # should still be correctly detected as trailing (after the
+        # last top-level FROM).
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id IN (SELECT id FROM t2) "
+            "UNION "
+            "SELECT id FROM t3 "
+            "ORDER BY id"
+        )
+        rows = cursor.fetchall()
+        ids = [r[0] for r in rows]
+        # Results should be sorted by ORDER BY id.
+        assert ids == sorted(ids)
+
+
+def test_count_unquoted_placeholders_unit() -> None:
+    """Unit test for _count_unquoted_placeholders helper."""
+    from excel_dbapi.parser import _count_unquoted_placeholders
+
+    # Normal placeholders.
+    assert _count_unquoted_placeholders("SELECT ? FROM t WHERE id = ?") == 2
+    # Placeholder inside IN clause.
+    assert _count_unquoted_placeholders("SELECT id FROM t WHERE id IN (?,?,?)") == 3
+    # Quoted ? is not counted.
+    assert _count_unquoted_placeholders("SELECT '?' FROM t WHERE id = ?") == 1
+    # Double-quoted ? is not counted.
+    assert _count_unquoted_placeholders('SELECT "?" FROM t WHERE id = ?') == 1
+    # Escaped quote with ? after.
+    assert _count_unquoted_placeholders("SELECT 'it''s' FROM t WHERE id = ?") == 1
+    # No placeholders.
+    assert _count_unquoted_placeholders("SELECT id FROM t") == 0
