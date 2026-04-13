@@ -25,6 +25,7 @@ class PandasBackend(WorkbookBackend):
             data_only=data_only,
             create=create,
             sanitize_formulas=sanitize_formulas,
+            **options,
         )
         self._data_only = data_only
         self.data: dict[str, pd.DataFrame] = {}
@@ -69,6 +70,12 @@ class PandasBackend(WorkbookBackend):
         frame = self.data.get(sheet_name)
         if frame is None:
             raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+
+        row_count = len(frame.index)
+        self._check_row_limit(sheet_name, row_count)
+        approx_bytes = int(frame.memory_usage(index=True, deep=True).sum())
+        self._check_memory_limit(sheet_name, approx_bytes)
+
         headers = _normalize_headers([str(col) for col in frame.columns])
         rows: list[list[Any]] = []
         for row in frame.itertuples(index=False, name=None):

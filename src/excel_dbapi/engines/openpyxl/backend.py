@@ -1,5 +1,6 @@
 from io import BytesIO
 import os
+import sys
 import tempfile
 from typing import Any, cast
 
@@ -26,6 +27,7 @@ class OpenpyxlBackend(WorkbookBackend):
             data_only=data_only,
             create=create,
             sanitize_formulas=sanitize_formulas,
+            **options,
         )
         self._data_only = data_only
         self.workbook: Workbook | None = None
@@ -79,11 +81,23 @@ class OpenpyxlBackend(WorkbookBackend):
         ws = self.data.get(sheet_name)
         if ws is None:
             raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
+        row_iter = ws.iter_rows(values_only=True)
+        first_row = next(row_iter, None)
+        if first_row is None:
             return TableData(headers=[], rows=[])
-        headers = _normalize_headers(list(rows[0]))
-        table_rows = [list(row) for row in rows[1:]]
+
+        headers = _normalize_headers(list(first_row))
+        table_rows: list[list[Any]] = []
+        approx_bytes = sys.getsizeof(headers)
+
+        for index, row in enumerate(row_iter, start=1):
+            row_values = list(row)
+            table_rows.append(row_values)
+            self._check_row_limit(sheet_name, index)
+            approx_bytes += sys.getsizeof(row_values)
+            approx_bytes += sum(sys.getsizeof(value) for value in row_values)
+            self._check_memory_limit(sheet_name, approx_bytes)
+
         return TableData(headers=headers, rows=table_rows)
 
     def write_sheet(self, sheet_name: str, data: TableData) -> None:

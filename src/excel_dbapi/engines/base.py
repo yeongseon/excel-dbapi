@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import errno
 import os
 from typing import Any
+import warnings
 
 
 @dataclass
@@ -30,10 +31,32 @@ class WorkbookBackend(ABC):
         self.file_path = file_path
         self.create = create
         self.sanitize_formulas = sanitize_formulas
+        self.max_rows: int | None = self._normalize_max_rows(options.get("max_rows"))
+        self.max_memory_mb: float | None = self._normalize_max_memory_mb(
+            options.get("max_memory_mb")
+        )
         _is_local_path = not ("://" in file_path)
         self._file_locking_enabled = bool(options.get("file_locking", _is_local_path))
         self._lock_fd: int | None = None
         self._lock_path = f"{self.file_path}.lock"
+        self._row_warning_emitted: set[tuple[str, int]] = set()
+        self._memory_warning_emitted: set[tuple[str, int]] = set()
+
+    @staticmethod
+    def _normalize_max_rows(value: Any) -> int | None:
+        if value is None:
+            return None
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError("max_rows must be a positive integer")
+        return value
+
+    @staticmethod
+    def _normalize_max_memory_mb(value: Any) -> float | None:
+        if value is None:
+            return None
+        if not isinstance(value, (int, float)) or float(value) <= 0:
+            raise ValueError("max_memory_mb must be a positive number")
+        return float(value)
 
     def _acquire_lock(self) -> None:
         from ..exceptions import OperationalError
@@ -66,6 +89,50 @@ class WorkbookBackend(ABC):
         if not self._file_locking_enabled:
             return
         self._acquire_lock()
+
+    def _check_row_limit(self, sheet_name: str, row_count: int) -> None:
+        from ..exceptions import OperationalError
+
+        if self.max_rows is None:
+            return
+
+        warning_threshold = max(1, int(self.max_rows * 0.8))
+        warning_key = (sheet_name, self.max_rows)
+        if (
+            warning_key not in self._row_warning_emitted
+            and warning_threshold <= row_count <= self.max_rows
+        ):
+            warnings.warn(
+                f"Sheet '{sheet_name}' has reached {row_count}/{self.max_rows} rows",
+                stacklevel=2,
+            )
+            self._row_warning_emitted.add(warning_key)
+        if row_count > self.max_rows:
+            raise OperationalError("Sheet exceeds max_rows limit")
+
+    def _check_memory_limit(self, sheet_name: str, approx_bytes: int) -> None:
+        from ..exceptions import OperationalError
+
+        if self.max_memory_mb is None:
+            return
+
+        limit_bytes = int(self.max_memory_mb * 1024 * 1024)
+        warning_threshold = max(1, int(limit_bytes * 0.8))
+        warning_key = (sheet_name, limit_bytes)
+        if (
+            warning_key not in self._memory_warning_emitted
+            and warning_threshold <= approx_bytes <= limit_bytes
+        ):
+            warnings.warn(
+                (
+                    f"Sheet '{sheet_name}' has reached approximately "
+                    f"{approx_bytes / (1024 * 1024):.2f}/{self.max_memory_mb:.2f} MB"
+                ),
+                stacklevel=2,
+            )
+            self._memory_warning_emitted.add(warning_key)
+        if approx_bytes > limit_bytes:
+            raise OperationalError("Sheet exceeds max_memory_mb limit")
 
     @abstractmethod
     def load(self) -> None:
