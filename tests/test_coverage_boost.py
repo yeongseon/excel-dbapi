@@ -351,9 +351,9 @@ def test_join_with_distinct_rejected() -> None:
         parse_sql("SELECT DISTINCT a.id FROM t1 a JOIN t2 b ON a.id = b.id")
 
 
-def test_join_with_select_star_rejected() -> None:
-    with pytest.raises(ValueError, match="SELECT \\* is not supported with JOIN"):
-        parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+def test_join_with_select_star_allowed() -> None:
+    parsed = parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["columns"] == ["*"]
 
 
 def test_join_with_having_rejected() -> None:

@@ -1458,8 +1458,6 @@ def _parse_select(
 
     joins_value: Optional[List[Dict[str, Any]]] = joins if joins else None
     if joins_value is not None:
-        if columns == ["*"]:
-            raise ValueError("SELECT * is not supported with JOIN")
         if distinct:
             raise ValueError("DISTINCT is not supported with JOIN")
         if group_by is not None:
@@ -1483,14 +1481,25 @@ def _parse_select(
             if isinstance(column, dict) and column.get("type") == "alias"
         }
 
-        for column in columns:
-            expression = column
-            if isinstance(column, dict) and column.get("type") == "alias":
-                expression = column.get("expression")
+        has_wildcard = any(
+            isinstance(col, str) and col == "*" for col in columns
+        )
+        if has_wildcard and len(columns) > 1:
+            raise ValueError(
+                "SELECT * cannot be mixed with other columns in JOIN queries"
+            )
+        if has_wildcard:
+            # Bare wildcard is valid; skip per-column validation
+            pass
+        else:
+            for column in columns:
+                expression = column
+                if isinstance(column, dict) and column.get("type") == "alias":
+                    expression = column.get("expression")
 
-            if isinstance(expression, dict) and expression.get("type") == "aggregate":
-                raise ValueError("Aggregate functions are not supported with JOIN")
-            _validate_join_column_reference(expression, join_sources, "SELECT")
+                if isinstance(expression, dict) and expression.get("type") == "aggregate":
+                    raise ValueError("Aggregate functions are not supported with JOIN")
+                _validate_join_column_reference(expression, join_sources, "SELECT")
 
         if where is not None:
             _validate_join_where_columns(where, join_sources)

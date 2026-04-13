@@ -465,9 +465,10 @@ def test_parse_join_with_mixed_aliases():
     assert clause["right"]["source"] == "b"
 
 
-def test_parse_join_rejects_select_star():
-    with pytest.raises(ValueError, match="SELECT \* is not supported with JOIN"):
-        parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+def test_parse_join_allows_select_star():
+    parsed = parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["columns"] == ["*"]
+    assert parsed["joins"] is not None
 
 
 def test_parse_join_allows_multiple_joins():

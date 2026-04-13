@@ -656,6 +656,9 @@ class SharedExecutor:
             str(from_source["ref"]): set(left_headers),
             str(from_source["table"]): set(left_headers),
         }
+        source_headers_ordered: list[tuple[str, list[str]]] = [
+            (str(from_source["ref"]), left_headers),
+        ]
         join_inputs: list[tuple[dict[str, Any], TableData]] = []
         known_sources = {str(from_source["table"]), str(from_source["ref"])}
 
@@ -695,6 +698,7 @@ class SharedExecutor:
             right_table_name = str(right_source["table"])
             source_headers[right_ref] = right_headers
             source_headers[right_table_name] = right_headers
+            source_headers_ordered.append((right_ref, list(right_data.headers)))
 
             for clause in join_spec["on"]["clauses"]:
                 for side in ("left", "right"):
@@ -786,14 +790,21 @@ class SharedExecutor:
 
         selected_columns: list[str] = []
         output_names: list[str] = []
-        for column in parsed["columns"]:
-            inner = self._unwrap_alias(column)
-            if not isinstance(inner, dict) or inner.get("type") != "column":
-                raise ValueError("JOIN queries require qualified column names in SELECT")
-            source = str(inner["source"])
-            name = str(inner["name"])
-            selected_columns.append(f"{source}.{name}")
-            output_names.append(self._output_name(column))
+        columns = parsed["columns"]
+        if columns == ["*"]:
+            for source_ref, ordered_headers in source_headers_ordered:
+                for col_name in ordered_headers:
+                    selected_columns.append(f"{source_ref}.{col_name}")
+                    output_names.append(f"{source_ref}.{col_name}")
+        else:
+            for column in columns:
+                inner = self._unwrap_alias(column)
+                if not isinstance(inner, dict) or inner.get("type") != "column":
+                    raise ValueError("JOIN queries require qualified column names in SELECT")
+                source = str(inner["source"])
+                name = str(inner["name"])
+                selected_columns.append(f"{source}.{name}")
+                output_names.append(self._output_name(column))
 
         rows_out = [
             tuple(row.get(column_name) for column_name in selected_columns)

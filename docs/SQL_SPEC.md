@@ -28,7 +28,7 @@ database engine.
 The following SQL features are **rejected at parse time** with `ValueError`:
 
 - `FULL OUTER JOIN`, `CROSS JOIN`, `NATURAL JOIN` (INNER, LEFT, and RIGHT JOIN are supported)
-- `SELECT *` with JOIN (columns must be explicitly listed with table qualifiers)
+- Mixed `SELECT *, col` with JOIN (bare `SELECT *` is supported; see §4.8)
 - `GROUP BY`, `HAVING`, aggregates in JOIN queries
 - Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])` and `INSERT INTO ... SELECT ...`
 - Common Table Expressions (CTEs / `WITH`)
@@ -234,7 +234,7 @@ Any other ordering raises `ValueError`.
 - Table aliases are recommended (e.g., `FROM users a JOIN orders b ON ...`).
 - Each table reference (alias or bare table name) must be unique; duplicate refs raise `ValueError`.
 - All SELECT columns must use qualified names (`a.id`, not just `id`).
-- `SELECT *` is **not supported** with JOIN.
+- `SELECT *` is supported with JOIN and expands to all columns from all joined tables in JOIN clause order (left table first, then each joined table), using qualified names (`source.column`).
 - Subqueries (`WHERE ... IN (SELECT ...)`) are **not supported** with JOIN.
 - The ON clause requires at least one equality condition (e.g., `a.id = b.user_id`).
 - Multiple ON conditions are joined with `AND`.

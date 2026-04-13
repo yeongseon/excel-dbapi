@@ -34,6 +34,6 @@ def test_rejects_full_outer_join():
         parse_sql("SELECT a.id FROM t1 a FULL OUTER JOIN t2 b ON a.id = b.id")
 
 
-def test_rejects_join_with_select_star():
-    with pytest.raises(ValueError, match="SELECT \\* is not supported with JOIN"):
-        parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+def test_allows_join_with_select_star():
+    parsed = parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["columns"] == ["*"]

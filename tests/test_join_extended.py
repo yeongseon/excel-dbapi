@@ -221,3 +221,257 @@ def test_chained_join_on_references_first_table(tmp_path: Path) -> None:
         assert len(rows) == 2
         assert rows[0] == (1, "b1", "c1")
         assert rows[1] == (2, "b2", None)
+
+
+def test_select_star_inner_join(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_inner_join.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id ORDER BY a.id")
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [(1, "a1", 1, "b1"), (2, "a2", 2, "b2")]
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_left_join(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_left_join.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a LEFT JOIN t2 b ON a.id = b.id ORDER BY a.id")
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [(1, "a1", 1, "b1"), (2, "a2", 2, "b2"), (4, "a4", None, None)]
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_right_join(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_right_join.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a RIGHT JOIN t2 b ON a.id = b.id ORDER BY b.id")
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [(1, "a1", 1, "b1"), (2, "a2", 2, "b2"), (None, None, 3, "b3")]
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_chained_join(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_chained_join.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM t1 a JOIN t2 b ON a.id = b.id JOIN t3 c ON b.id = c.id"
+        )
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [(1, "a1", 1, "b1", 1, "c1")]
+    assert description is not None
+    assert [col[0] for col in description] == [
+        "a.id",
+        "a.val1",
+        "b.id",
+        "b.val2",
+        "c.id",
+        "c.val3",
+    ]
+
+
+def test_select_star_with_where(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_with_where.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.val1 = 'a1'"
+        )
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [(1, "a1", 1, "b1")]
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_with_order_by(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_with_order_by.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id ORDER BY a.id DESC")
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [(2, "a2", 2, "b2"), (1, "a1", 1, "b1")]
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_with_limit_offset(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_with_limit_offset.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM t1 a LEFT JOIN t2 b ON a.id = b.id ORDER BY a.id LIMIT 2 OFFSET 1"
+        )
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [(2, "a2", 2, "b2"), (4, "a4", None, None)]
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_description_columns(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_description_columns.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+        _ = cursor.fetchall()
+        description = cursor.description
+
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_empty_result_has_description(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_empty_result.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id = 999")
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == []
+    assert description is not None
+    assert len(description) == 4
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_duplicate_column_names(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_duplicate_column_names.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id ORDER BY a.id")
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [(1, "a1", 1, "b1"), (2, "a2", 2, "b2")]
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_select_star_chained_left_right_join(tmp_path: Path) -> None:
+    file_path = tmp_path / "select_star_chained_left_right_join.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM t1 a LEFT JOIN t2 b ON a.id = b.id RIGHT JOIN t3 c ON b.id = c.id ORDER BY c.id"
+        )
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [
+        (1, "a1", 1, "b1", 1, "c1"),
+        (None, None, None, None, 3, "c3"),
+        (None, None, None, None, 4, "c4"),
+    ]
+    assert description is not None
+    assert [col[0] for col in description] == [
+        "a.id",
+        "a.val1",
+        "b.id",
+        "b.val2",
+        "c.id",
+        "c.val3",
+    ]
+
+
+def test_select_star_mixed_with_columns_rejected(tmp_path: Path) -> None:
+    """SELECT *, a.id with JOIN is rejected at parse time."""
+    file_path = tmp_path / "mixed_star.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="SELECT \\* cannot be mixed"):
+            cursor.execute(
+                "SELECT *, a.id FROM t1 a JOIN t2 b ON a.id = b.id"
+            )
+
+
+def test_select_star_mixed_trailing_rejected(tmp_path: Path) -> None:
+    """SELECT a.id, * with JOIN is rejected at parse time."""
+    file_path = tmp_path / "mixed_star_trailing.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="SELECT \\* cannot be mixed"):
+            cursor.execute(
+                "SELECT a.id, * FROM t1 a JOIN t2 b ON a.id = b.id"
+            )
+
+
+def test_select_table_dot_star_rejected(tmp_path: Path) -> None:
+    """SELECT a.* with JOIN is rejected (only bare * is supported)."""
+    file_path = tmp_path / "table_dot_star.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError):
+            cursor.execute(
+                "SELECT a.* FROM t1 a JOIN t2 b ON a.id = b.id"
+            )
+
+
+def test_select_star_with_alias_and_no_alias_description(tmp_path: Path) -> None:
+    """SELECT * FROM t1 a JOIN t2 ON ... uses alias for t1, bare name for t2."""
+    file_path = tmp_path / "mixed_alias_desc.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM t1 a JOIN t2 ON a.id = t2.id"
+        )
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    # a is alias for t1, t2 has no alias — description uses ref names
+    assert description is not None
+    assert [col[0] for col in description] == [
+        "a.id",
+        "a.val1",
+        "t2.id",
+        "t2.val2",
+    ]
+    assert len(rows) == 2  # ids 1 and 2 match
