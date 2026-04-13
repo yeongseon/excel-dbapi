@@ -171,6 +171,17 @@ def _collapse_aggregate_tokens(tokens: List[str]) -> List[str]:
         token = tokens[index]
         upper = token.upper()
         if (
+            upper == "COUNT"
+            and index + 4 < len(tokens)
+            and tokens[index + 1] == "("
+            and tokens[index + 2].upper() == "DISTINCT"
+            and tokens[index + 4] == ")"
+        ):
+            arg = tokens[index + 3].strip()
+            collapsed.append(f"{upper}(DISTINCT {arg})")
+            index += 5
+            continue
+        if (
             upper in _AGGREGATE_FUNCTIONS
             and index + 3 < len(tokens)
             and tokens[index + 1] == "("
@@ -260,13 +271,25 @@ def _parse_columns(columns_token: str) -> List[Any]:
         if re.search(r"(?i)\bOVER\s*\(", expression):
             raise ValueError("Unsupported SQL syntax: OVER")
         match = re.fullmatch(
-            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([^\)]+?)\s*\)", expression
+            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
+            expression,
         )
         if match:
             func = match.group(1).upper()
-            arg = match.group(2).strip()
+            distinct_modifier = match.group(2)
+            arg = match.group(3).strip()
             if not arg:
                 raise ValueError("Invalid aggregate expression")
+            if distinct_modifier:
+                if func != "COUNT":
+                    raise ValueError("DISTINCT is only supported with COUNT")
+                if arg == "*":
+                    raise ValueError("Invalid aggregate expression")
+                if not re.fullmatch(_IDENTIFIER_PATTERN, arg):
+                    raise ValueError(
+                        f"Unsupported aggregate expression: COUNT(DISTINCT {arg}). "
+                        "Only bare column names are supported with DISTINCT"
+                    )
             if arg == "*" and func != "COUNT":
                 raise ValueError(f"{func} does not support *")
             if arg != "*" and not re.fullmatch(
@@ -276,7 +299,10 @@ def _parse_columns(columns_token: str) -> List[Any]:
                     f"Unsupported aggregate expression: {func}({arg}). "
                     "Only bare column names and * are supported"
                 )
-            return {"type": "aggregate", "func": func, "arg": arg}
+            aggregate: dict[str, Any] = {"type": "aggregate", "func": func, "arg": arg}
+            if distinct_modifier:
+                aggregate["distinct"] = True
+            return aggregate
 
         if expression != "*" and not re.fullmatch(
             rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", expression
@@ -1026,10 +1052,8 @@ def _parse_order_by_item_tokens(tokens: list[str]) -> dict[str, str]:
 def _parse_order_by_clause_text(order_part: str) -> list[dict[str, str]]:
     """Parse ORDER BY clause text like 'name DESC, age ASC'."""
     order_part = _normalize_aggregate_expressions(order_part)
-    items = [_parse_order_by_item_tokens(part.split()) for part in order_part.split(",")]
-    if not items:
-        raise ValueError("Invalid ORDER BY clause format")
-    return _OrderByClause(items)
+    tokens = _collapse_aggregate_tokens(_tokenize(order_part))
+    return _parse_order_by_clause_tokens(tokens)
 
 
 def _parse_order_by_clause_tokens(tokens: list[str]) -> list[dict[str, str]]:

@@ -947,7 +947,7 @@ class SharedExecutor:
 
         output_columns: list[str] = []
         output_sources: list[str] = []
-        required_aggregates: dict[str, tuple[str, str]] = {}
+        required_aggregates: dict[str, tuple[str, str, bool]] = {}
         for column in columns:
             inner = self._unwrap_alias(column)
             if self._is_aggregate_column(inner):
@@ -958,7 +958,11 @@ class SharedExecutor:
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
                 label = self._aggregate_label(aggregate_column)
-                required_aggregates[label] = (str(aggregate_column.get("func")), arg)
+                required_aggregates[label] = (
+                    str(aggregate_column.get("func")),
+                    arg,
+                    bool(aggregate_column.get("distinct")),
+                )
                 output_columns.append(self._output_name(column))
                 output_sources.append(label)
                 continue
@@ -988,12 +992,12 @@ class SharedExecutor:
                 aggregate_spec = self._aggregate_spec_from_label(ref)
                 if aggregate_spec is None:
                     continue
-                func, arg = aggregate_spec
+                func, arg, distinct = aggregate_spec
                 if arg != "*" and arg not in headers:
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
-                required_aggregates[ref] = (func, arg)
+                required_aggregates[ref] = (func, arg, distinct)
 
         alias_map = self._build_alias_map(columns)
         order_by_clause = self._normalize_order_by(parsed.get("order_by"))
@@ -1012,12 +1016,12 @@ class SharedExecutor:
                 aggregate_spec = self._aggregate_spec_from_label(ref)
                 if aggregate_spec is None:
                     continue
-                func, arg = aggregate_spec
+                func, arg, distinct = aggregate_spec
                 if arg != "*" and arg not in headers:
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
-                required_aggregates[ref] = (func, arg)
+                required_aggregates[ref] = (func, arg, distinct)
 
         if having is not None:
             for condition in having["conditions"]:
@@ -1039,15 +1043,25 @@ class SharedExecutor:
             for group_key, group_values in groups.items():
                 group_map = dict(zip(group_by, group_key))
                 context_row: dict[str, Any] = dict(group_map)
-                for label, (func, arg) in required_aggregates.items():
-                    context_row[label] = self._compute_aggregate(func, arg, group_values)
+                for label, (func, arg, distinct) in required_aggregates.items():
+                    context_row[label] = self._compute_aggregate(
+                        func,
+                        arg,
+                        group_values,
+                        distinct=distinct,
+                    )
                 if having and not self._matches_where(context_row, having):
                     continue
                 grouped_rows.append(context_row)
         else:
             context_row_single: dict[str, Any] = {}
-            for label, (func, arg) in required_aggregates.items():
-                context_row_single[label] = self._compute_aggregate(func, arg, rows)
+            for label, (func, arg, distinct) in required_aggregates.items():
+                context_row_single[label] = self._compute_aggregate(
+                    func,
+                    arg,
+                    rows,
+                    distinct=distinct,
+                )
             if not having or self._matches_where(context_row_single, having):
                 grouped_rows.append(context_row_single)
 
@@ -1105,28 +1119,48 @@ class SharedExecutor:
         )
 
     def _aggregate_label(self, aggregate: dict[str, Any]) -> str:
-        return f"{str(aggregate['func']).upper()}({aggregate['arg']})"
+        func = str(aggregate["func"]).upper()
+        arg = str(aggregate["arg"])
+        if aggregate.get("distinct"):
+            return f"{func}(DISTINCT {arg})"
+        return f"{func}({arg})"
 
-    def _aggregate_spec_from_label(self, expression: str) -> tuple[str, str] | None:
-        match = re.fullmatch(r"(?i)(COUNT|SUM|AVG|MIN|MAX)\(([^\)]+)\)", expression.strip())
+    def _aggregate_spec_from_label(
+        self, expression: str
+    ) -> tuple[str, str, bool] | None:
+        match = re.fullmatch(
+            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\((DISTINCT\s+)?([^\)]+)\)",
+            expression.strip(),
+        )
         if not match:
             return None
         func = match.group(1).upper()
-        arg = match.group(2).strip()
+        distinct_modifier = match.group(2)
+        arg = match.group(3).strip()
         if not arg:
             return None
+        if distinct_modifier and func != "COUNT":
+            raise ValueError("DISTINCT is only supported with COUNT")
         if arg != "*" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arg):
             raise ValueError(
                 f"Unsupported aggregate expression: {func}({arg}). "
                 "Only bare column names and * are supported"
             )
-        return func, arg
+        return func, arg, bool(distinct_modifier)
 
     def _compute_aggregate(
-        self, func: str, arg: str, rows: list[dict[str, Any]]
+        self,
+        func: str,
+        arg: str,
+        rows: list[dict[str, Any]],
+        distinct: bool = False,
     ) -> Any:
         aggregate = func.upper()
         if aggregate == "COUNT":
+            if distinct:
+                if arg == "*":
+                    raise ValueError("COUNT(DISTINCT *) is not supported")
+                return len({row.get(arg) for row in rows if row.get(arg) is not None})
             if arg == "*":
                 return len(rows)
             return sum(1 for row in rows if row.get(arg) is not None)
