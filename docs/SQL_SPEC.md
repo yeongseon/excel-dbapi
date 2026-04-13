@@ -544,6 +544,11 @@ ALTER TABLE name RENAME COLUMN old_name TO new_name
 - `TEXT`, `INTEGER`, `REAL`, `FLOAT`, `BOOLEAN`, `DATE`, `DATETIME`
 - `FLOAT` is normalized to `REAL`.
 
+> **Note**: The type name in `ADD COLUMN` is validated during parsing but is
+> **not persisted** in the worksheet. Excel worksheets store values without
+> schema types. Column types are inferred from stored values at reflection
+> time. A newly added column with no values will be reflected as `TEXT`.
+
 **Error conditions**:
 - Invalid syntax or missing `COLUMN` keyword raises `ValueError`.
 - Unknown `ADD COLUMN` type raises `ValueError`.

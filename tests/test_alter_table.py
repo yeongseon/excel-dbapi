@@ -215,3 +215,59 @@ def test_alter_multiple_operations(tmp_path: Path) -> None:
     rows, description = _query(file_path, "SELECT id, full_name FROM people ORDER BY id")
     assert description == ["id", "full_name"]
     assert rows == [(1, "Alice"), (2, "Bob"), (3, "Cara")]
+
+
+def test_add_column_reflection_type(tmp_path: Path) -> None:
+    file_path = tmp_path / "alter_reflect.xlsx"
+    _create_people_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE people ADD COLUMN score INTEGER")
+
+    from excel_dbapi.reflection import get_columns
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cols = get_columns(conn, "people")
+        col_names = [c["name"] for c in cols]
+        assert "score" in col_names
+        score_col = next(c for c in cols if c["name"] == "score")
+        assert score_col["type"] == "TEXT"
+
+
+def test_alter_with_manual_commit(tmp_path: Path) -> None:
+    file_path = tmp_path / "alter_manual_commit.xlsx"
+    _create_people_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=False) as conn:
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE people ADD COLUMN email TEXT")
+        conn.commit()
+
+    rows, description = _query(file_path, "SELECT id, name, email FROM people ORDER BY id")
+    assert description == ["id", "name", "email"]
+    assert rows == [(1, "Alice", None), (2, "Bob", None)]
+
+
+def test_alter_readonly_blocked(tmp_path: Path) -> None:
+    file_path = tmp_path / "alter_readonly.xlsx"
+    _create_people_workbook(file_path)
+
+    from excel_dbapi.exceptions import NotSupportedError
+
+    with ExcelConnection(str(file_path), engine="openpyxl", readonly=True) as conn:
+        cursor = conn.cursor()
+        if not getattr(conn.engine, "readonly", False):
+            conn.engine.readonly = True
+        with pytest.raises(NotSupportedError, match="ALTER.*not supported.*read-only"):
+            cursor.execute("ALTER TABLE people ADD COLUMN email TEXT")
+
+
+def test_add_column_invalid_type_rejected_at_execute(tmp_path: Path) -> None:
+    file_path = tmp_path / "alter_invalid_type.xlsx"
+    _create_people_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="Unsupported ALTER TABLE column type"):
+            cursor.execute("ALTER TABLE people ADD COLUMN payload BLOB")
