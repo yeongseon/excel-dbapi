@@ -347,3 +347,140 @@ class TestExceptionMapping:
             # This raises ProgrammingError from the parser — should pass through
             with pytest.raises(ProgrammingError):
                 cursor.execute("SELECT * FROM nonexistent_table_xyz")
+
+
+class TestExceptionMappingDirect:
+    """Gap 2: Direct tests for each exception type mapping in execute() and executemany()."""
+
+    def _make_conn_with_raising_executor(
+        self, tmp_path: Path, exc: Exception
+    ) -> ExcelConnection:
+        """Create a connection whose executor raises the given exception."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
+        original_execute = conn._executor.execute_with_params
+
+        def raising_execute(query: str, params: Any = None) -> Any:
+            raise exc
+
+        conn._executor.execute_with_params = raising_execute  # type: ignore[assignment]
+        return conn
+
+    def test_key_error_maps_to_programming_error_execute(self, tmp_path: Path) -> None:
+        conn = self._make_conn_with_raising_executor(tmp_path, KeyError("missing"))
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="missing"):
+            cursor.execute("SELECT * FROM users")
+        conn.close()
+
+    def test_type_error_maps_to_programming_error_execute(self, tmp_path: Path) -> None:
+        conn = self._make_conn_with_raising_executor(tmp_path, TypeError("bad type"))
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="bad type"):
+            cursor.execute("SELECT * FROM users")
+        conn.close()
+
+    def test_index_error_maps_to_programming_error_execute(self, tmp_path: Path) -> None:
+        conn = self._make_conn_with_raising_executor(tmp_path, IndexError("out of range"))
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="out of range"):
+            cursor.execute("SELECT * FROM users")
+        conn.close()
+
+    def test_os_error_maps_to_operational_error_execute(self, tmp_path: Path) -> None:
+        conn = self._make_conn_with_raising_executor(tmp_path, OSError("disk full"))
+        cursor = conn.cursor()
+        with pytest.raises(OperationalError, match="disk full"):
+            cursor.execute("SELECT * FROM users")
+        conn.close()
+
+    def test_generic_exception_maps_to_database_error_execute(self, tmp_path: Path) -> None:
+        conn = self._make_conn_with_raising_executor(tmp_path, RuntimeError("unexpected"))
+        cursor = conn.cursor()
+        with pytest.raises(DatabaseError, match="unexpected"):
+            cursor.execute("SELECT * FROM users")
+        conn.close()
+
+    def test_database_error_passes_through_execute(self, tmp_path: Path) -> None:
+        conn = self._make_conn_with_raising_executor(tmp_path, ProgrammingError("bad sql"))
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="bad sql"):
+            cursor.execute("SELECT * FROM users")
+        conn.close()
+
+    def test_key_error_maps_to_programming_error_executemany(self, tmp_path: Path) -> None:
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
+        original = conn._executor.execute_with_params
+        call_count = 0
+
+        def raising_on_second(query: str, params: Any = None) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                raise KeyError("missing key")
+            return original(query, params)
+
+        conn._executor.execute_with_params = raising_on_second  # type: ignore[assignment]
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="missing key"):
+            cursor.executemany("INSERT INTO users VALUES (?, ?)", [(1, "a"), (2, "b")])
+        conn.close()
+
+    def test_os_error_maps_to_operational_error_executemany(self, tmp_path: Path) -> None:
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
+
+        def raising_execute(query: str, params: Any = None) -> Any:
+            raise OSError("permission denied")
+
+        conn._executor.execute_with_params = raising_execute  # type: ignore[assignment]
+        cursor = conn.cursor()
+        with pytest.raises(OperationalError, match="permission denied"):
+            cursor.executemany("INSERT INTO users VALUES (?, ?)", [(1, "a")])
+        conn.close()
+
+    def test_generic_exception_maps_to_database_error_executemany(self, tmp_path: Path) -> None:
+        fpath = _make_xlsx(tmp_path / "test.xlsx")
+        conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
+
+        def raising_execute(query: str, params: Any = None) -> Any:
+            raise RuntimeError("boom")
+
+        conn._executor.execute_with_params = raising_execute  # type: ignore[assignment]
+        cursor = conn.cursor()
+        with pytest.raises(DatabaseError, match="boom"):
+            cursor.executemany("INSERT INTO users VALUES (?, ?)", [(1, "a")])
+        conn.close()
+
+
+class TestExecutemanyMidBatchRestore:
+    """Gap 3: Mid-batch executemany failure restores snapshot after partial mutation."""
+
+    def test_mid_batch_failure_restores_snapshot(self, tmp_path: Path) -> None:
+        """After 1 successful INSERT, a failure in batch 2 restores original state."""
+        fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Original"]])
+        conn = ExcelConnection(fpath, engine="openpyxl", autocommit=False)
+        original = conn._executor.execute_with_params
+        call_count = 0
+
+        def fail_on_second(query: str, params: Any = None) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise ValueError("bad value")
+            return original(query, params)
+
+        conn._executor.execute_with_params = fail_on_second  # type: ignore[assignment]
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="bad value"):
+            cursor.executemany(
+                "INSERT INTO users VALUES (?, ?)",
+                [(2, "Second"), (3, "Third")],
+            )
+        # After error + snapshot restore, only original row should exist
+        conn._executor.execute_with_params = original  # type: ignore[assignment]
+        result = conn.execute("SELECT * FROM users")
+        assert len(result.rows) == 1
+        assert result.rows[0] == (1, "Original")
+        conn.close()

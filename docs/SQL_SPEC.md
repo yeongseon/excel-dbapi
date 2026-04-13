@@ -1,6 +1,6 @@
 # excel-dbapi SQL Specification
 
-> Version: 0.6.0
+> Version: 0.6.1
 > Status: **Normative** — this document defines the SQL subset that excel-dbapi supports.  
 > Last updated: 2026-04-13
 
@@ -51,6 +51,24 @@ The following SQL features are **rejected at parse time** with `ValueError`:
 - Table names correspond to Excel worksheet names.
 - Column names correspond to the first row (header row) of each worksheet.
 - Reserved words (`SELECT`, `FROM`, `WHERE`, etc.) are **case-insensitive**.
+
+#### 2.1.1 Header Validation
+
+When a worksheet is loaded, the header row is validated and normalized:
+
+- **Type coercion**: Non-string header values (e.g., numeric `1`, `2.5`) are coerced
+  to their string representation (`"1"`, `"2.5"`).
+- **Empty headers**: `None`, empty string (`""`), or whitespace-only headers raise
+  `DataError` — every column must have a meaningful name.
+- **Duplicate detection**: Headers are checked for uniqueness in a **case-insensitive**
+  manner. For example, `["Name", "name"]` raises `DataError` because they collide
+  after lowercasing. The original casing is preserved for non-duplicate headers.
+- **Whitespace trimming**: Leading and trailing whitespace is stripped from each header
+  before validation.
+
+> **Rationale**: Excel allows arbitrary cell values in the header row, but SQL column
+> names must be non-empty and unique. Validating at load time prevents silent data
+> corruption caused by `dict(zip(headers, row))` when duplicate headers exist.
 
 ### 2.2 String Literals
 
@@ -615,6 +633,35 @@ Within CASE expressions, placeholders bind in SQL order:
 | INSERT into headless sheet | `ValueError` | `Cannot insert into sheet without headers` |
 | Empty IN clause | `ValueError` | `IN clause cannot be empty` |
 | Unsupported JOIN variant | `ValueError` | `Unsupported SQL syntax: {type} JOIN` |
+| Invalid header (empty/None) | `DataError` | `Empty or None header at position {i}` |
+| Duplicate headers | `DataError` | `Duplicate headers (case-insensitive): {names}` |
+
+---
+
+## 11. Transactional Behavior
+
+### 11.1 Autocommit
+
+When `autocommit=True` (the default), each mutating statement (`INSERT`,
+`UPDATE`, `DELETE`, `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE`) is
+automatically saved to disk after successful execution. `SELECT` and other
+read-only statements do not trigger a save.
+
+### 11.2 `executemany` Atomicity
+
+`cursor.executemany(sql, seq_of_params)` executes the same statement for
+each parameter set in `seq_of_params`. The save behavior is **atomic**:
+
+- A snapshot of the workbook is taken before the batch begins.
+- Each parameter set is applied sequentially (in-memory only).
+- If **all** executions succeed, the workbook is saved **once** at the end.
+- If **any** execution fails, the workbook is restored to the pre-batch
+  snapshot and the exception is re-raised. No partial mutations are persisted.
+
+> **Rationale**: Per-row saves would be both slow (O(n) disk writes) and
+> semantically surprising — a mid-batch failure would leave the workbook in
+> a half-mutated state. Atomic batch semantics match the behavior of
+> database drivers that wrap `executemany` in an implicit transaction.
 
 ---
 

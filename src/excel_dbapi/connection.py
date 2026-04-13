@@ -162,7 +162,11 @@ class ExcelConnection:
         return result
 
     def _finalize_autocommit(self, action: str) -> None:
-        """Save and snapshot if autocommit is enabled and action is mutating."""
+        """Save and snapshot if autocommit is enabled and action is mutating.
+
+        ``action`` is expected to be an uppercase SQL verb (e.g. ``"INSERT"``).
+        The parser guarantees uppercase; callers must not pass lowercase.
+        """
         if self.autocommit and action in _MUTATING_ACTIONS:
             self.engine.save()
             self._snapshot = self.engine.snapshot()
