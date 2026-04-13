@@ -199,3 +199,116 @@ def test_union_null_handling(tmp_path: Path) -> None:
         cursor = conn.cursor()
         cursor.execute("SELECT name FROM t1 WHERE id = 3 UNION SELECT name FROM t2 WHERE id = 3")
         assert cursor.fetchall() == [(None,)]
+
+
+def test_compound_parameterized_in_clause(tmp_path: Path) -> None:
+    """Regression: IN (?, ?) with compound queries must count placeholders correctly."""
+    file_path = tmp_path / "compound_param_in.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id IN (?, ?) UNION SELECT id FROM t2 WHERE id = ?",
+            (1, 2, 4),
+        )
+        assert cursor.fetchall() == [(1,), (2,), (4,)]
+
+
+def test_compound_parameterized_between(tmp_path: Path) -> None:
+    """Regression: BETWEEN ? AND ? with compound queries."""
+    file_path = tmp_path / "compound_param_between.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id BETWEEN ? AND ? UNION SELECT id FROM t2 WHERE id = ?",
+            (1, 2, 4),
+        )
+        assert cursor.fetchall() == [(1,), (2,), (4,)]
+
+
+def test_compound_parameterized_mixed_branches(tmp_path: Path) -> None:
+    """Regression: different placeholder counts across branches."""
+    file_path = tmp_path / "compound_param_mixed.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id IN (?, ?, ?) EXCEPT SELECT id FROM t2 WHERE id > ?",
+            (1, 2, 3, 3),
+        )
+        # t1 ids matching IN (1,2,3): [1,2,3], t2 ids > 3: [4]
+        # EXCEPT: [1,2,3] - [4] = [1,2,3]
+        assert cursor.fetchall() == [(1,), (2,), (3,)]
+
+
+def test_compound_parameterized_too_few_params(tmp_path: Path) -> None:
+    """Regression: too few parameters should raise ProgrammingError."""
+    file_path = tmp_path / "compound_param_few.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        with pytest.raises(Exception, match="Not enough parameters"):
+            conn.execute(
+                "SELECT id FROM t1 WHERE id IN (?, ?) UNION SELECT id FROM t2 WHERE id = ?",
+                (1, 2),
+            )
+
+
+def test_compound_parameterized_too_many_params(tmp_path: Path) -> None:
+    """Regression: too many parameters should raise ProgrammingError."""
+    file_path = tmp_path / "compound_param_many.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        with pytest.raises(Exception, match="Too many parameters"):
+            conn.execute(
+                "SELECT id FROM t1 WHERE id IN (?, ?) UNION SELECT id FROM t2 WHERE id = ?",
+                (1, 2, 3, 4),
+            )
+
+
+def test_compound_parameterized_union_all_in(tmp_path: Path) -> None:
+    """Regression: UNION ALL with IN clause placeholders."""
+    file_path = tmp_path / "compound_param_union_all.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id IN (?, ?) UNION ALL SELECT id FROM t2 WHERE id IN (?, ?)",
+            (1, 2, 2, 3),
+        )
+        # t1 ids matching IN (1,2): [1,2,2] (id=2 appears twice), t2 ids matching IN (2,3): [2,3]
+        assert cursor.fetchall() == [(1,), (2,), (2,), (2,), (3,)]
+
+
+def test_compound_parameterized_intersect_in(tmp_path: Path) -> None:
+    """Regression: INTERSECT with IN clause placeholders in both branches."""
+    file_path = tmp_path / "compound_param_intersect.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id IN (?, ?) INTERSECT SELECT id FROM t2 WHERE id IN (?, ?)",
+            (2, 3, 2, 3),
+        )
+        assert cursor.fetchall() == [(2,), (3,)]
+
+
+def test_parser_compound_placeholder_counting() -> None:
+    """Regression: parser must count ?, tokens (comma-attached) as placeholders."""
+    parsed = parse_sql(
+        "SELECT id FROM t1 WHERE id IN (?, ?) UNION SELECT id FROM t2 WHERE id = ?",
+        (10, 20, 30),
+    )
+    assert parsed["action"] == "COMPOUND"
+    # Verify branch 1 got params (10, 20) and branch 2 got (30,)
+    q1_where = parsed["queries"][0]["where"]
+    assert q1_where["conditions"][0]["value"] == (10, 20)
+    q2_where = parsed["queries"][1]["where"]
+    assert q2_where["conditions"][0]["value"] == 30

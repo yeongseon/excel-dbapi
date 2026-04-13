@@ -1383,7 +1383,7 @@ def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[D
         segment_query = " ".join(segment_tokens)
         segment_params: Optional[tuple[Any, ...]] = None
         if params is not None:
-            placeholder_count = sum(1 for tok in segment_tokens if tok == "?")
+            placeholder_count = sum(1 for tok in segment_tokens if tok.rstrip(",") == "?")
             next_index = param_index + placeholder_count
             if next_index > total_params:
                 raise ValueError("Not enough parameters for placeholders")
