@@ -206,3 +206,62 @@ def test_executor_select_mixed_alias_and_non_alias_columns(tmp_path: Path) -> No
         ("Evan", 28),
         ("Finn", 31),
     ]
+
+
+
+
+def test_executor_alias_shadows_real_column_name(tmp_path: Path) -> None:
+    """Alias 'age' shadows the real 'age' column; ORDER BY uses the alias target (name)."""
+    file_path = tmp_path / "alias_shadow.xlsx"
+    _create_users_alias_workbook(file_path)
+
+    parsed = parse_sql("SELECT name AS age FROM users ORDER BY age")
+    results = SharedExecutor(OpenpyxlBackend(str(file_path))).execute(parsed)
+
+    assert [col[0] for col in results.description] == ["age"]
+    # ORDER BY age resolves to alias target (name), so sorted alphabetically by name
+    assert results.rows == [
+        ("Alice",),
+        ("Bob",),
+        ("Charlie",),
+        ("Dora",),
+        ("Evan",),
+        ("Finn",),
+    ]
+
+
+def test_executor_mixed_alias_and_bare_order_by(tmp_path: Path) -> None:
+    """ORDER BY with alias column + non-alias column in multi-column sort."""
+    file_path = tmp_path / "alias_mixed_order.xlsx"
+    _create_users_alias_workbook(file_path)
+
+    parsed = parse_sql(
+        "SELECT department AS dept, name FROM users ORDER BY dept ASC, name DESC"
+    )
+    results = SharedExecutor(OpenpyxlBackend(str(file_path))).execute(parsed)
+
+    assert [col[0] for col in results.description] == ["dept", "name"]
+    # eng: Finn(31), Charlie(err-- wait, Charlie is ops), Bob, Alice
+    # Actually: eng has Alice(30), Bob(20), Finn(31) -> name DESC: Finn, Bob, Alice
+    # ops has Charlie(40), Evan(28) -> name DESC: Evan, Charlie
+    # sales has Dora(25)
+    assert results.rows == [
+        ("eng", "Finn"),
+        ("eng", "Bob"),
+        ("eng", "Alice"),
+        ("ops", "Evan"),
+        ("ops", "Charlie"),
+        ("sales", "Dora"),
+    ]
+
+
+def test_executor_single_row_aggregate_order_by_alias(tmp_path: Path) -> None:
+    """Single-row aggregate (no GROUP BY) with ORDER BY alias — trivial but must not crash."""
+    file_path = tmp_path / "alias_agg_order.xlsx"
+    _create_users_alias_workbook(file_path)
+
+    parsed = parse_sql("SELECT COUNT(*) AS total FROM users ORDER BY total")
+    results = SharedExecutor(OpenpyxlBackend(str(file_path))).execute(parsed)
+
+    assert [col[0] for col in results.description] == ["total"]
+    assert results.rows == [(6,)]
