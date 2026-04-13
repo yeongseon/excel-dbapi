@@ -1,6 +1,6 @@
 import copy
 import re
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from .engines.base import TableData, WorkbookBackend
 from .engines.result import Description, ExecutionResult
@@ -366,13 +366,48 @@ class SharedExecutor:
             lastrowid=None,
         )
 
+    @staticmethod
+    def _validate_join_where_refs(
+        where: dict[str, Any],
+        validate_fn: Callable[[str, str, str], None],
+    ) -> None:
+        """Recursively validate column references in WHERE tree for JOIN queries."""
+        for condition in where.get("conditions", []):
+            SharedExecutor._validate_join_where_node(condition, validate_fn)
+
+    @staticmethod
+    def _validate_join_where_node(
+        node: dict[str, Any],
+        validate_fn: Callable[[str, str, str], None],
+    ) -> None:
+        """Validate a single WHERE AST node for JOIN column refs."""
+        # NOT node: recurse into operand
+        if node.get("type") == "not":
+            operand = node.get("operand")
+            if isinstance(operand, dict):
+                SharedExecutor._validate_join_where_node(operand, validate_fn)
+            return
+        # Compound or precedence-grouped node: recurse
+        if "conditions" in node and node.get("type") != "not":
+            for child in node["conditions"]:
+                SharedExecutor._validate_join_where_node(child, validate_fn)
+            return
+        # Atomic condition: validate column reference
+        col_ref = str(node.get("column", ""))
+        if "." in col_ref:
+            src, col_name = col_ref.split(".", 1)
+            validate_fn(src, col_name, "WHERE")
+
     def _matches_where(self, row: dict[str, Any], where: dict[str, Any]) -> bool:
+        node_type = where.get("type")
+        if node_type == "not":
+            return not self._matches_where(row, where["operand"])
         if "conditions" in where:
             conditions = where["conditions"]
             conjunctions = where["conjunctions"]
-            results = [self._evaluate_condition(row, conditions[0])]
+            results = [self._matches_where(row, conditions[0])]
             for idx, conj in enumerate(conjunctions):
-                next_result = self._evaluate_condition(row, conditions[idx + 1])
+                next_result = self._matches_where(row, conditions[idx + 1])
                 if conj == "AND":
                     results[-1] = results[-1] and next_result
                 else:
@@ -600,11 +635,7 @@ class SharedExecutor:
         # Validate WHERE columns
         where_raw = parsed.get("where")
         if where_raw:
-            for condition in where_raw.get("conditions", []):
-                col_ref = str(condition.get("column", ""))
-                if "." in col_ref:
-                    src, col_name = col_ref.split(".", 1)
-                    _validate_column_ref(src, col_name, "WHERE")
+            self._validate_join_where_refs(where_raw, _validate_column_ref)
 
         # Validate ORDER BY column
         order_by_raw = parsed.get("order_by")
@@ -769,11 +800,28 @@ class SharedExecutor:
         )
 
     def _resolve_subqueries(self, where: dict[str, Any]) -> None:
+        """Recursively resolve subqueries in the WHERE tree."""
         for condition in where.get("conditions", []):
-            value = condition.get("value")
-            if isinstance(value, dict) and value.get("type") == "subquery":
-                subquery_result = self.execute(value["query"])
-                condition["value"] = tuple(row[0] for row in subquery_result.rows if row)
+            self._resolve_subquery_node(condition)
+
+    def _resolve_subquery_node(self, node: dict[str, Any]) -> None:
+        """Resolve subqueries in a single WHERE AST node."""
+        # NOT node: recurse into operand
+        if node.get("type") == "not":
+            operand = node.get("operand")
+            if isinstance(operand, dict):
+                self._resolve_subquery_node(operand)
+            return
+        # Compound or precedence-grouped node: recurse into conditions
+        if "conditions" in node and node.get("type") != "not":
+            for child in node["conditions"]:
+                self._resolve_subquery_node(child)
+            return
+        # Atomic condition: resolve subquery value
+        value = node.get("value")
+        if isinstance(value, dict) and value.get("type") == "subquery":
+            subquery_result = self.execute(value["query"])
+            node["value"] = tuple(row[0] for row in subquery_result.rows if row)
 
     def _execute_aggregate_select(
         self,
@@ -999,6 +1047,14 @@ class SharedExecutor:
                 if left == right:
                     return True
             return False
+        if operator == "NOT IN":
+            if row_value is None:
+                return False
+            for candidate in value:
+                left, right = self._coerce_for_compare(row_value, candidate)
+                if left == right:
+                    return False
+            return True
         if operator == "BETWEEN":
             if row_value is None:
                 return False
@@ -1008,6 +1064,15 @@ class SharedExecutor:
             left_low, right_low = self._coerce_for_compare(row_value, low)
             left_high, right_high = self._coerce_for_compare(row_value, high)
             return bool(left_low >= right_low and left_high <= right_high)
+        if operator == "NOT BETWEEN":
+            if row_value is None:
+                return False
+            low, high = value
+            if low is None or high is None:
+                return False
+            left_low, right_low = self._coerce_for_compare(row_value, low)
+            left_high, right_high = self._coerce_for_compare(row_value, high)
+            return not bool(left_low >= right_low and left_high <= right_high)
         if operator == "LIKE":
             if row_value is None:
                 return False
@@ -1015,6 +1080,13 @@ class SharedExecutor:
                 raise NotImplementedError("Unsupported LIKE pattern type")
             regex = "^" + re.escape(value).replace(r"%", ".*").replace(r"_", ".") + "$"
             return bool(re.match(regex, str(row_value)))
+        if operator == "NOT LIKE":
+            if row_value is None:
+                return False
+            if not isinstance(value, str):
+                raise NotImplementedError("Unsupported LIKE pattern type")
+            regex = "^" + re.escape(value).replace(r"%", ".*").replace(r"_", ".") + "$"
+            return not bool(re.match(regex, str(row_value)))
 
         if row_value is None or value is None:
             return False

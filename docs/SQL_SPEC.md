@@ -1,6 +1,6 @@
 # excel-dbapi SQL Specification
 
-> Version: 0.4.1  
+> Version: 0.5.0  
 > Status: **Normative** — this document defines the SQL subset that excel-dbapi supports.  
 > Last updated: 2026-04-13
 
@@ -375,9 +375,13 @@ DELETE FROM table [WHERE conditions]
 | `IS NULL` | `WHERE name IS NULL` | NULL check |
 | `IS NOT NULL` | `WHERE name IS NOT NULL` | Non-NULL check |
 | `IN` | `WHERE name IN ('Alice', 'Bob')` | Set membership |
+| `NOT IN` | `WHERE name NOT IN ('Alice', 'Bob')` | Negated set membership |
 | `IN` subquery | `WHERE id IN (SELECT id FROM admins WHERE role = 'admin')` | Set membership from subquery |
+| `NOT IN` subquery | `WHERE id NOT IN (SELECT id FROM admins)` | Negated set membership from subquery |
 | `BETWEEN` | `WHERE score BETWEEN 70 AND 90` | Inclusive range |
+| `NOT BETWEEN` | `WHERE score NOT BETWEEN 70 AND 90` | Negated inclusive range |
 | `LIKE` | `WHERE name LIKE 'A%'` | Pattern matching |
+| `NOT LIKE` | `WHERE name NOT LIKE 'A%'` | Negated pattern matching |
 
 #### 7.2.1 LIKE Patterns
 
@@ -415,9 +419,14 @@ Example: `WHERE name LIKE 'A%'` matches "Alice", "Ann", "A".
 - Mixed `AND`/`OR`: evaluated left-to-right with `AND` binding tighter than `OR`.
   - `a AND b OR c` = `(a AND b) OR c`
   - `a OR b AND c` = `a OR (b AND c)`
-- `NOT` operator is **not supported**.
-- Parenthesized expressions in WHERE (e.g., `WHERE (x = 1)`) are **not supported** 
-  and raise `ValueError`. Exceptions: parentheses in `IN (...)` literal lists and `IN (SELECT ...)` are allowed.
+- `NOT` operator: negates a single condition or a parenthesized group.
+  - `WHERE NOT x = 1` — negates the condition
+  - `WHERE NOT (x = 1 OR y = 2)` — negates the parenthesized group
+  - `NOT NOT x = 1` — double negation is allowed
+- Parenthesized expressions control grouping and precedence.
+  - `WHERE (x = 1 OR y = 2) AND z = 3` — OR evaluated before AND
+  - `WHERE (a = 1 AND b = 2) OR (c = 3 AND d = 4)` — two grouped ANDs with OR
+  - Nested parentheses are supported: `WHERE ((x = 1))`
 
 ### 7.4 Type Coercion
 
@@ -489,7 +498,6 @@ For UPDATE with WHERE:
 | Sheet already exists (CREATE) | `ValueError` | `Sheet '{name}' already exists` |
 | Param count mismatch | `ValueError` | `Not enough / Too many parameters` |
 | Unsupported grammar | `ValueError` | `Unsupported SQL grammar: {feature}` |
-| Parenthesized WHERE | `ValueError` | `Unsupported SQL grammar: parenthesized expressions` |
 | Aggregate in WHERE clause | `ValueError` | `Aggregate functions are not allowed in WHERE clause; use HAVING instead` |
 | Invalid HAVING column reference | `ValueError` | `HAVING column '{column}' must be a GROUP BY column or aggregate` |
 | Read-only backend mutation | `NotSupportedError` | `{action} is not supported by the read-only backend` |
@@ -546,13 +554,17 @@ join_clause    = { [ "INNER" | "LEFT" [ "OUTER" ] | "RIGHT" [ "OUTER" ] ] "JOIN"
 join_cond      = qualified_col "=" qualified_col ;
 alias          = identifier ;
 
-where_expr    = condition { ("AND" | "OR") condition } ;
+where_expr    = or_expr ;
+or_expr       = and_expr { "OR" and_expr } ;
+and_expr      = not_expr { "AND" not_expr } ;
+not_expr      = "NOT" not_expr | factor ;
+factor        = "(" or_expr ")" | condition ;
 condition     = column operator value
               | column "IS" [ "NOT" ] "NULL"
-              | column "IN" "(" value_list ")"
-              | column "IN" "(" subquery_select ")"
-              | column "BETWEEN" value "AND" value
-              | column "LIKE" pattern ;
+              | column [ "NOT" ] "IN" "(" value_list ")"
+              | column [ "NOT" ] "IN" "(" subquery_select ")"
+              | column [ "NOT" ] "BETWEEN" value "AND" value
+              | column [ "NOT" ] "LIKE" pattern ;
 
 subquery_select = "SELECT" column "FROM" table [ "WHERE" where_expr ] ;
 

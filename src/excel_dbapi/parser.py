@@ -285,15 +285,21 @@ def _parse_columns(columns_token: str) -> List[Any]:
 
 
 def _values_to_bind_from_condition(condition: Dict[str, Any]) -> List[Any]:
+    # Handle compound/not nodes recursively
+    node_type = condition.get("type")
+    if node_type == "not":
+        return _where_values_to_bind(condition["operand"])
+    if node_type == "compound" or "conditions" in condition:
+        return _where_values_to_bind(condition)
     operator = str(condition["operator"]).upper()
     if operator in {"IS", "IS NOT"}:
         return []
-    if operator == "IN":
+    if operator in {"IN", "NOT IN"}:
         value = condition["value"]
         if isinstance(value, dict) and value.get("type") == "subquery":
             return []
         return list(value)
-    if operator == "BETWEEN":
+    if operator in {"BETWEEN", "NOT BETWEEN"}:
         low, high = condition["value"]
         return [low, high]
     return [condition["value"]]
@@ -302,17 +308,23 @@ def _values_to_bind_from_condition(condition: Dict[str, Any]) -> List[Any]:
 def _apply_bound_values_to_condition(
     condition: Dict[str, Any], bound_values: List[Any], offset: int
 ) -> int:
+    # Handle compound/not nodes recursively
+    node_type = condition.get("type")
+    if node_type == "not":
+        return _bind_where_conditions(condition["operand"], bound_values, offset)
+    if node_type == "compound" or "conditions" in condition:
+        return _bind_where_conditions(condition, bound_values, offset)
     operator = str(condition["operator"]).upper()
     if operator in {"IS", "IS NOT"}:
         return 0
-    if operator == "IN":
+    if operator in {"IN", "NOT IN"}:
         value = condition["value"]
         if isinstance(value, dict) and value.get("type") == "subquery":
             return 0
         size = len(value)
         condition["value"] = tuple(bound_values[offset : offset + size])
         return size
-    if operator == "BETWEEN":
+    if operator in {"BETWEEN", "NOT BETWEEN"}:
         condition["value"] = (bound_values[offset], bound_values[offset + 1])
         return 2
     condition["value"] = bound_values[offset]
@@ -320,6 +332,12 @@ def _apply_bound_values_to_condition(
 
 
 def _where_values_to_bind(where: Dict[str, Any]) -> List[Any]:
+    node_type = where.get("type")
+    if node_type == "not":
+        return _where_values_to_bind(where["operand"])
+    if "conditions" not in where:
+        # Single atomic condition
+        return _values_to_bind_from_condition(where)
     values: List[Any] = []
     for condition in where["conditions"]:
         values.extend(_values_to_bind_from_condition(condition))
@@ -329,6 +347,12 @@ def _where_values_to_bind(where: Dict[str, Any]) -> List[Any]:
 def _bind_where_conditions(
     where: Dict[str, Any], bound_values: List[Any], offset: int
 ) -> int:
+    node_type = where.get("type")
+    if node_type == "not":
+        return _bind_where_conditions(where["operand"], bound_values, offset)
+    if "conditions" not in where:
+        # Single atomic condition
+        return _apply_bound_values_to_condition(where, bound_values, offset)
     consumed = 0
     for condition in where["conditions"]:
         used = _apply_bound_values_to_condition(
@@ -362,192 +386,36 @@ def _parse_where_expression(
                 raise ValueError(
                     "Aggregate functions are not allowed in WHERE clause; use HAVING instead"
                 )
-    for token_index, token in enumerate(tokens):
-        if token.startswith("("):
-            if token_index == 0 or tokens[token_index - 1].upper() != "IN":
-                raise ValueError(
-                    "Unsupported SQL grammar: parenthesized expressions in WHERE clause"
-                )
     if len(tokens) < 3:
-        raise ValueError("Invalid WHERE clause format")
-    conditions: List[Dict[str, Any]] = []
-    conjunctions: List[str] = []
-    index = 0
-    while index < len(tokens):
-        if index + 1 >= len(tokens):
+        # Could be: NOT col = val (3+ tokens), (col = val) (5+ tokens)
+        # Check for NOT with at least 2 following tokens
+        if not (
+            len(tokens) >= 1
+            and tokens[0].upper() == "NOT"
+        ) and not (
+            len(tokens) >= 1
+            and tokens[0] == "("
+        ):
             raise ValueError("Invalid WHERE clause format")
-        column = tokens[index]
-        operator = tokens[index + 1].upper()
 
-        # Handle IS NULL / IS NOT NULL
-        if operator == "IS":
-            if index + 2 < len(tokens) and tokens[index + 2].upper() == "NOT":
-                if index + 3 < len(tokens) and tokens[index + 3].upper() == "NULL":
-                    conditions.append(
-                        {"column": column, "operator": "IS NOT", "value": None}
-                    )
-                    index += 4
-                else:
-                    raise ValueError(
-                        "Invalid WHERE clause format: expected NULL after IS NOT"
-                    )
-            elif index + 2 < len(tokens) and tokens[index + 2].upper() == "NULL":
-                conditions.append({"column": column, "operator": "IS", "value": None})
-                index += 3
-            else:
-                raise ValueError(
-                    "Invalid WHERE clause format: expected NULL or NOT after IS"
-                )
-        elif operator == "BETWEEN":
-            if index + 4 >= len(tokens):
-                raise ValueError("Invalid WHERE clause format")
-            if tokens[index + 3].upper() != "AND":
-                raise ValueError(
-                    "Invalid WHERE clause format: expected AND in BETWEEN clause"
-                )
-            low_value = _parse_value(tokens[index + 2])
-            high_value = _parse_value(tokens[index + 4])
-            conditions.append(
-                {
-                    "column": column,
-                    "operator": "BETWEEN",
-                    "value": (low_value, high_value),
-                }
-            )
-            index += 5
-        elif operator == "IN":
-            if index + 2 >= len(tokens):
-                raise ValueError("Invalid WHERE clause format")
-            in_start = index + 2
-            in_end = in_start
-            paren_depth = 0
-            while in_end < len(tokens):
-                token = tokens[in_end]
-                if token == "(":
-                    paren_depth += 1
-                elif token == ")":
-                    if paren_depth == 0:
-                        raise ValueError(
-                            "Invalid WHERE clause format: malformed IN clause"
-                        )
-                    paren_depth -= 1
-                    if paren_depth == 0:
-                        break
-                in_end += 1
-            if in_end >= len(tokens):
-                raise ValueError(
-                    "Invalid WHERE clause format: expected ')' in IN clause"
-                )
+    index = 0
+    result = _parse_or_expression(
+        tokens, index, allow_subqueries=allow_subqueries
+    )
+    where_expression = result[0]
+    end_index = result[1]
 
-            in_values_text = " ".join(tokens[in_start : in_end + 1]).strip()
-            if not in_values_text.startswith("(") or not in_values_text.endswith(")"):
-                raise ValueError("Invalid WHERE clause format: malformed IN clause")
+    # Validate we consumed all tokens
+    if end_index < len(tokens):
+        raise ValueError("Invalid WHERE clause format")
 
-            raw_values = in_values_text[1:-1].strip()
-            if not raw_values:
-                raise ValueError(
-                    "Invalid WHERE clause format: IN clause cannot be empty"
-                )
+    # Ensure top-level result is always in flat format for backward compatibility
+    # Single atomic conditions get wrapped in {"conditions": [...], "conjunctions": []}
+    if "conditions" not in where_expression and where_expression.get("type") != "not":
+        where_expression = {"conditions": [where_expression], "conjunctions": []}
+    elif where_expression.get("type") == "not":
+        where_expression = {"conditions": [where_expression], "conjunctions": []}
 
-            raw_tokens = raw_values.split()
-            if raw_tokens and raw_tokens[0].upper() == "SELECT":
-                if not allow_subqueries:
-                    raise ValueError("Subqueries are not supported in this context")
-
-                if "?" in _tokenize(raw_values):
-                    raise ValueError(
-                        "Parameterized subqueries are not supported; use literal values"
-                    )
-
-                # Reject JOINs inside subqueries before other checks
-                subquery_tokens = _tokenize(raw_values)
-                for raw_token in subquery_tokens:
-                    if raw_token.startswith("'") or raw_token.startswith('"'):
-                        continue
-                    if raw_token.upper() == "JOIN":
-                        raise ValueError("JOIN is not supported in subqueries")
-
-                for raw_token in subquery_tokens:
-                    if raw_token.startswith("'") or raw_token.startswith('"'):
-                        continue
-                    if re.fullmatch(
-                        r"[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*",
-                        raw_token,
-                    ):
-                        raise ValueError("Correlated subqueries are not supported")
-
-                subquery_parsed = _parse_select(
-                    raw_values,
-                    params=None,
-                    _allow_subqueries=False,
-                )
-
-                if subquery_parsed.get("having") is not None:
-                    raise ValueError("HAVING is not supported in subqueries")
-                if subquery_parsed.get("order_by") is not None:
-                    raise ValueError("ORDER BY is not supported in subqueries")
-                if subquery_parsed.get("offset") is not None:
-                    raise ValueError("OFFSET is not supported in subqueries")
-                if subquery_parsed.get("group_by") is not None:
-                    raise ValueError("GROUP BY is not supported in subqueries")
-                if subquery_parsed.get("limit") is not None:
-                    raise ValueError("LIMIT is not supported in subqueries")
-                if subquery_parsed.get("joins"):
-                    raise ValueError("JOIN is not supported in subqueries")
-
-                subquery_columns = subquery_parsed["columns"]
-                if subquery_columns == ["*"] or len(subquery_columns) != 1:
-                    raise ValueError(
-                        "Subquery in WHERE ... IN must select exactly one column"
-                    )
-
-                conditions.append(
-                    {
-                        "column": column,
-                        "operator": "IN",
-                        "value": {"type": "subquery", "query": subquery_parsed},
-                    }
-                )
-            else:
-                parsed_values = tuple(
-                    _parse_value(token) for token in _split_csv(raw_values)
-                )
-                if len(parsed_values) == 0:
-                    raise ValueError(
-                        "Invalid WHERE clause format: IN clause cannot be empty"
-                    )
-
-                conditions.append(
-                    {
-                        "column": column,
-                        "operator": "IN",
-                        "value": parsed_values,
-                    }
-                )
-            index = in_end + 1
-        elif operator == "LIKE":
-            if index + 2 >= len(tokens):
-                raise ValueError("Invalid WHERE clause format")
-            value = _parse_value(tokens[index + 2])
-            conditions.append({"column": column, "operator": "LIKE", "value": value})
-            index += 3
-        else:
-            if index + 2 >= len(tokens):
-                raise ValueError("Invalid WHERE clause format")
-            value = _parse_value(tokens[index + 2])
-            conditions.append(
-                {"column": column, "operator": tokens[index + 1], "value": value}
-            )
-            index += 3
-
-        if index < len(tokens):
-            conj = tokens[index].upper()
-            if conj not in {"AND", "OR"}:
-                raise ValueError("Invalid WHERE clause format")
-            conjunctions.append(conj)
-            index += 1
-
-    where_expression = {"conditions": conditions, "conjunctions": conjunctions}
     values_to_bind = _where_values_to_bind(where_expression)
     if bind_params and (
         params is not None or any(_is_placeholder(value) for value in values_to_bind)
@@ -556,6 +424,336 @@ def _parse_where_expression(
         _bind_where_conditions(where_expression, bound, 0)
 
     return where_expression
+
+
+def _parse_or_expression(
+    tokens: List[str],
+    index: int,
+    allow_subqueries: bool = False,
+) -> tuple[Dict[str, Any], int]:
+    """Parse an OR expression (lowest precedence)."""
+    left, index = _parse_and_expression(tokens, index, allow_subqueries=allow_subqueries)
+    conditions: List[Dict[str, Any]] = [left]
+    conjunctions: List[str] = []
+
+    while index < len(tokens) and tokens[index].upper() == "OR":
+        conjunctions.append("OR")
+        index += 1
+        right, index = _parse_and_expression(
+            tokens, index, allow_subqueries=allow_subqueries
+        )
+        conditions.append(right)
+
+    if len(conditions) == 1:
+        return conditions[0], index
+
+    return {"conditions": conditions, "conjunctions": conjunctions}, index
+
+
+def _parse_and_expression(
+    tokens: List[str],
+    index: int,
+    allow_subqueries: bool = False,
+) -> tuple[Dict[str, Any], int]:
+    """Parse an AND expression (higher precedence than OR)."""
+    left, index = _parse_not_expression(tokens, index, allow_subqueries=allow_subqueries)
+    conditions: List[Dict[str, Any]] = [left]
+    conjunctions: List[str] = []
+
+    while index < len(tokens) and tokens[index].upper() == "AND":
+        # Peek: is this a BETWEEN ... AND ... ?  If so, stop.
+        # BETWEEN's AND is consumed by _parse_atomic_condition already,
+        # so if we're here it's a real conjunction.
+        conjunctions.append("AND")
+        index += 1
+        right, index = _parse_not_expression(
+            tokens, index, allow_subqueries=allow_subqueries
+        )
+        conditions.append(right)
+
+    if len(conditions) == 1:
+        return conditions[0], index
+
+    return {"conditions": conditions, "conjunctions": conjunctions}, index
+
+
+def _parse_not_expression(
+    tokens: List[str],
+    index: int,
+    allow_subqueries: bool = False,
+) -> tuple[Dict[str, Any], int]:
+    """Parse a NOT expression or pass through to factor."""
+    if index < len(tokens) and tokens[index].upper() == "NOT":
+        # Peek ahead: is this a unary NOT or part of col NOT IN/LIKE/BETWEEN?
+        # Unary NOT: NOT appears at position where we expect a condition start,
+        # i.e., followed by ( or a column name.  But we're called from
+        # _parse_and_expression which already consumed the column,
+        # so if we reach here NOT is always unary.
+        index += 1
+        operand, index = _parse_not_expression(
+            tokens, index, allow_subqueries=allow_subqueries
+        )
+        return {"type": "not", "operand": operand}, index
+
+    return _parse_factor(tokens, index, allow_subqueries=allow_subqueries)
+
+
+def _parse_factor(
+    tokens: List[str],
+    index: int,
+    allow_subqueries: bool = False,
+) -> tuple[Dict[str, Any], int]:
+    """Parse a parenthesized group or an atomic condition."""
+    if index >= len(tokens):
+        raise ValueError("Invalid WHERE clause format")
+
+    # Parenthesized expression
+    if tokens[index] == "(":
+        index += 1  # consume '('
+        expr, index = _parse_or_expression(
+            tokens, index, allow_subqueries=allow_subqueries
+        )
+        if index >= len(tokens) or tokens[index] != ")":
+            raise ValueError("Invalid WHERE clause format: unmatched parenthesis")
+        index += 1  # consume ')'
+        # Wrap single conditions in compound so nesting is explicit
+        if "conditions" not in expr and expr.get("type") != "not":
+            expr = {"type": "compound", "conditions": [expr], "conjunctions": []}
+        elif "conditions" in expr and "type" not in expr:
+            expr = dict(expr, type="compound")
+        elif expr.get("type") == "not":
+            expr = {"type": "compound", "conditions": [expr], "conjunctions": []}
+        return expr, index
+
+    # Atomic condition: col OP value
+    return _parse_atomic_condition(tokens, index, allow_subqueries=allow_subqueries)
+
+
+def _parse_atomic_condition(
+    tokens: List[str],
+    index: int,
+    allow_subqueries: bool = False,
+) -> tuple[Dict[str, Any], int]:
+    """Parse a single condition: col OP value."""
+    if index + 1 >= len(tokens):
+        raise ValueError("Invalid WHERE clause format")
+
+    column = tokens[index]
+    operator_token = tokens[index + 1].upper()
+
+    # IS NULL / IS NOT NULL
+    if operator_token == "IS":
+        if index + 2 < len(tokens) and tokens[index + 2].upper() == "NOT":
+            if index + 3 < len(tokens) and tokens[index + 3].upper() == "NULL":
+                return (
+                    {"column": column, "operator": "IS NOT", "value": None},
+                    index + 4,
+                )
+            raise ValueError(
+                "Invalid WHERE clause format: expected NULL after IS NOT"
+            )
+        if index + 2 < len(tokens) and tokens[index + 2].upper() == "NULL":
+            return (
+                {"column": column, "operator": "IS", "value": None},
+                index + 3,
+            )
+        raise ValueError(
+            "Invalid WHERE clause format: expected NULL or NOT after IS"
+        )
+
+    # NOT IN / NOT LIKE / NOT BETWEEN (operator-level NOT)
+    if operator_token == "NOT":
+        if index + 2 < len(tokens):
+            next_token = tokens[index + 2].upper()
+            if next_token == "IN":
+                return _parse_in_condition(
+                    tokens, column, index + 3, allow_subqueries, negated=True
+                )
+            if next_token == "LIKE":
+                if index + 3 >= len(tokens):
+                    raise ValueError("Invalid WHERE clause format")
+                value = _parse_value(tokens[index + 3])
+                return (
+                    {"column": column, "operator": "NOT LIKE", "value": value},
+                    index + 4,
+                )
+            if next_token == "BETWEEN":
+                return _parse_between_condition(
+                    tokens, column, index + 3, negated=True
+                )
+        raise ValueError("Invalid WHERE clause format: expected IN, LIKE, or BETWEEN after NOT")
+
+    # BETWEEN
+    if operator_token == "BETWEEN":
+        return _parse_between_condition(tokens, column, index + 2, negated=False)
+
+    # IN
+    if operator_token == "IN":
+        return _parse_in_condition(
+            tokens, column, index + 2, allow_subqueries, negated=False
+        )
+
+    # LIKE
+    if operator_token == "LIKE":
+        if index + 2 >= len(tokens):
+            raise ValueError("Invalid WHERE clause format")
+        value = _parse_value(tokens[index + 2])
+        return (
+            {"column": column, "operator": "LIKE", "value": value},
+            index + 3,
+        )
+
+    # Standard comparison: =, !=, <>, >, >=, <, <=
+    if index + 2 >= len(tokens):
+        raise ValueError("Invalid WHERE clause format")
+    value = _parse_value(tokens[index + 2])
+    return (
+        {"column": column, "operator": tokens[index + 1], "value": value},
+        index + 3,
+    )
+
+
+def _parse_between_condition(
+    tokens: List[str],
+    column: str,
+    value_start: int,
+    negated: bool,
+) -> tuple[Dict[str, Any], int]:
+    """Parse BETWEEN low AND high."""
+    if value_start + 2 >= len(tokens):
+        raise ValueError("Invalid WHERE clause format")
+    if tokens[value_start + 1].upper() != "AND":
+        raise ValueError(
+            "Invalid WHERE clause format: expected AND in BETWEEN clause"
+        )
+    low_value = _parse_value(tokens[value_start])
+    high_value = _parse_value(tokens[value_start + 2])
+    op = "NOT BETWEEN" if negated else "BETWEEN"
+    return (
+        {"column": column, "operator": op, "value": (low_value, high_value)},
+        value_start + 3,
+    )
+
+
+def _parse_in_condition(
+    tokens: List[str],
+    column: str,
+    paren_start: int,
+    allow_subqueries: bool,
+    negated: bool,
+) -> tuple[Dict[str, Any], int]:
+    """Parse IN (values...) or IN (SELECT ...)."""
+    if paren_start >= len(tokens):
+        raise ValueError("Invalid WHERE clause format")
+
+    in_start = paren_start
+    in_end = in_start
+    paren_depth = 0
+    while in_end < len(tokens):
+        token = tokens[in_end]
+        if token == "(":
+            paren_depth += 1
+        elif token == ")":
+            if paren_depth == 0:
+                raise ValueError("Invalid WHERE clause format: malformed IN clause")
+            paren_depth -= 1
+            if paren_depth == 0:
+                break
+        in_end += 1
+    if in_end >= len(tokens):
+        raise ValueError(
+            "Invalid WHERE clause format: expected ')' in IN clause"
+        )
+
+    in_values_text = " ".join(tokens[in_start : in_end + 1]).strip()
+    if not in_values_text.startswith("(") or not in_values_text.endswith(")"):
+        raise ValueError("Invalid WHERE clause format: malformed IN clause")
+
+    raw_values = in_values_text[1:-1].strip()
+    if not raw_values:
+        raise ValueError(
+            "Invalid WHERE clause format: IN clause cannot be empty"
+        )
+
+    op = "NOT IN" if negated else "IN"
+
+    raw_tokens = raw_values.split()
+    if raw_tokens and raw_tokens[0].upper() == "SELECT":
+        if not allow_subqueries:
+            raise ValueError("Subqueries are not supported in this context")
+
+        if "?" in _tokenize(raw_values):
+            raise ValueError(
+                "Parameterized subqueries are not supported; use literal values"
+            )
+
+        # Reject JOINs inside subqueries before other checks
+        subquery_tokens = _tokenize(raw_values)
+        for raw_token in subquery_tokens:
+            if raw_token.startswith("'") or raw_token.startswith('"'):
+                continue
+            if raw_token.upper() == "JOIN":
+                raise ValueError("JOIN is not supported in subqueries")
+
+        for raw_token in subquery_tokens:
+            if raw_token.startswith("'") or raw_token.startswith('"'):
+                continue
+            if re.fullmatch(
+                r"[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*",
+                raw_token,
+            ):
+                raise ValueError("Correlated subqueries are not supported")
+
+        subquery_parsed = _parse_select(
+            raw_values,
+            params=None,
+            _allow_subqueries=False,
+        )
+
+        if subquery_parsed.get("having") is not None:
+            raise ValueError("HAVING is not supported in subqueries")
+        if subquery_parsed.get("order_by") is not None:
+            raise ValueError("ORDER BY is not supported in subqueries")
+        if subquery_parsed.get("offset") is not None:
+            raise ValueError("OFFSET is not supported in subqueries")
+        if subquery_parsed.get("group_by") is not None:
+            raise ValueError("GROUP BY is not supported in subqueries")
+        if subquery_parsed.get("limit") is not None:
+            raise ValueError("LIMIT is not supported in subqueries")
+        if subquery_parsed.get("joins"):
+            raise ValueError("JOIN is not supported in subqueries")
+
+        subquery_columns = subquery_parsed["columns"]
+        if subquery_columns == ["*"] or len(subquery_columns) != 1:
+            raise ValueError(
+                "Subquery in WHERE ... IN must select exactly one column"
+            )
+
+        return (
+            {
+                "column": column,
+                "operator": op,
+                "value": {"type": "subquery", "query": subquery_parsed},
+            },
+            in_end + 1,
+        )
+    else:
+        parsed_values = tuple(
+            _parse_value(token) for token in _split_csv(raw_values)
+        )
+        if len(parsed_values) == 0:
+            raise ValueError(
+                "Invalid WHERE clause format: IN clause cannot be empty"
+            )
+
+        return (
+            {
+                "column": column,
+                "operator": op,
+                "value": parsed_values,
+            },
+            in_end + 1,
+        )
 
 
 def _is_select_clause_token(token: str) -> bool:
@@ -678,11 +876,61 @@ def _validate_join_column_reference(
 
 
 def _is_subquery_condition(where: Dict[str, Any]) -> bool:
+    """Recursively check if any condition contains a subquery value."""
     for condition in where.get("conditions", []):
-        value = condition.get("value")
-        if isinstance(value, dict) and value.get("type") == "subquery":
+        if _is_subquery_condition_node(condition):
             return True
     return False
+
+
+def _is_subquery_condition_node(node: Dict[str, Any]) -> bool:
+    """Check a single AST node (possibly recursive) for subqueries."""
+    # NOT node: recurse into operand
+    if node.get("type") == "not":
+        operand = node.get("operand")
+        if isinstance(operand, dict):
+            return _is_subquery_condition_node(operand)
+        return False
+    # Compound or precedence-grouped node: recurse into conditions
+    if "conditions" in node and node.get("type") != "not":
+        for child in node["conditions"]:
+            if _is_subquery_condition_node(child):
+                return True
+        return False
+    # Atomic condition: check value
+    value = node.get("value")
+    if isinstance(value, dict) and value.get("type") == "subquery":
+        return True
+    return False
+
+def _validate_join_where_columns(
+    where: Dict[str, Any], join_sources: set[str]
+) -> None:
+    """Recursively validate all column references in a WHERE tree for JOIN queries."""
+    for condition in where.get("conditions", []):
+        _validate_join_where_node(condition, join_sources)
+
+
+def _validate_join_where_node(
+    node: Dict[str, Any], join_sources: set[str]
+) -> None:
+    """Validate a single WHERE AST node for JOIN column references."""
+    # NOT node: recurse into operand
+    if node.get("type") == "not":
+        operand = node.get("operand")
+        if isinstance(operand, dict):
+            _validate_join_where_node(operand, join_sources)
+        return
+    # Compound or precedence-grouped node: recurse into conditions
+    if "conditions" in node and node.get("type") != "not":
+        for child in node["conditions"]:
+            _validate_join_where_node(child, join_sources)
+        return
+    # Atomic condition: validate column reference
+    column_ref = str(node.get("column", ""))
+    if column_ref:
+        parsed_column = _parse_qualified_column_reference(column_ref)
+        _validate_join_column_reference(parsed_column, join_sources, "WHERE")
 
 
 def _parse_select(
@@ -1103,10 +1351,7 @@ def _parse_select(
             _validate_join_column_reference(column, join_sources, "SELECT")
 
         if where is not None:
-            for condition in where.get("conditions", []):
-                column_ref = str(condition.get("column", ""))
-                parsed_column = _parse_qualified_column_reference(column_ref)
-                _validate_join_column_reference(parsed_column, join_sources, "WHERE")
+            _validate_join_where_columns(where, join_sources)
 
         if order_by is not None:
             parsed_order_column = _parse_qualified_column_reference(str(order_by["column"]))
