@@ -64,6 +64,7 @@ class ExcelCursor:
             "INSERT",
             "CREATE",
             "DROP",
+            "ALTER",
             "UPDATE",
             "DELETE",
         }:
@@ -104,6 +105,7 @@ class ExcelCursor:
             "INSERT",
             "CREATE",
             "DROP",
+            "ALTER",
             "UPDATE",
             "DELETE",
         }:

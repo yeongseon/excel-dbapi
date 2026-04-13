@@ -2686,6 +2686,59 @@ def _parse_drop(query: str) -> Dict[str, Any]:
     }
 
 
+def _parse_alter(query: str) -> Dict[str, Any]:
+    tokens = _tokenize(query.strip())
+    if len(tokens) < 6 or tokens[0].upper() != "ALTER" or tokens[1].upper() != "TABLE":
+        raise ValueError(f"Invalid ALTER TABLE format: {query}")
+
+    table = tokens[2]
+    operation = tokens[3].upper()
+
+    if operation == "ADD":
+        if len(tokens) != 7 or tokens[4].upper() != "COLUMN":
+            raise ValueError(f"Invalid ALTER TABLE format: {query}")
+        type_name = tokens[6].upper()
+        if type_name == "FLOAT":
+            type_name = "REAL"
+        supported_types = {"TEXT", "INTEGER", "REAL", "BOOLEAN", "DATE", "DATETIME"}
+        if type_name not in supported_types:
+            raise ValueError(f"Unsupported ALTER TABLE column type: {tokens[6]}")
+        return {
+            "action": "ALTER",
+            "table": table,
+            "operation": "ADD_COLUMN",
+            "column": tokens[5],
+            "type_name": type_name,
+        }
+
+    if operation == "DROP":
+        if len(tokens) != 6 or tokens[4].upper() != "COLUMN":
+            raise ValueError(f"Invalid ALTER TABLE format: {query}")
+        return {
+            "action": "ALTER",
+            "table": table,
+            "operation": "DROP_COLUMN",
+            "column": tokens[5],
+        }
+
+    if operation == "RENAME":
+        if (
+            len(tokens) != 8
+            or tokens[4].upper() != "COLUMN"
+            or tokens[6].upper() != "TO"
+        ):
+            raise ValueError(f"Invalid ALTER TABLE format: {query}")
+        return {
+            "action": "ALTER",
+            "table": table,
+            "operation": "RENAME_COLUMN",
+            "old_column": tokens[5],
+            "new_column": tokens[7],
+        }
+
+    raise ValueError(f"Invalid ALTER TABLE format: {query}")
+
+
 def _strip_outer_parens(tokens: List[str]) -> List[str]:
     """Strip one layer of outer parentheses from a token list.
 
@@ -2942,6 +2995,8 @@ def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str,
         parsed = _parse_update(query, params)
     elif action == "DELETE":
         parsed = _parse_delete(query, params)
+    elif action == "ALTER":
+        parsed = _parse_alter(query)
     else:
         raise ValueError(f"Unsupported SQL action: {action}")
 

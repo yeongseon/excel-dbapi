@@ -22,6 +22,7 @@ database engine.
 | `DELETE`  | ✅ With optional WHERE |
 | `CREATE TABLE` | ✅ Creates a new worksheet with headers |
 | `DROP TABLE`   | ✅ Removes a worksheet |
+| `ALTER TABLE`  | ✅ `ADD COLUMN`, `DROP COLUMN`, `RENAME COLUMN` |
 
 ### 1.2 Non-Goals (Explicitly Unsupported)
 
@@ -33,7 +34,6 @@ The following SQL features are **rejected at parse time** with `ValueError`:
 - Subqueries except `WHERE col [NOT] IN (SELECT single_col FROM table [WHERE ...])` and `INSERT INTO ... SELECT ...`
 - Common Table Expressions (CTEs / `WITH`)
 - Window functions (`OVER`, `PARTITION BY`)
-- `ALTER TABLE`
 - `CREATE INDEX` / `DROP INDEX`
 - `RETURNING`
 - `SELECT ... FOR UPDATE`
@@ -525,6 +525,35 @@ DROP TABLE name
 - Removes the worksheet from the workbook.
 - If the worksheet does not exist, raises `ValueError`.
 
+### 8.3 ALTER TABLE
+
+```
+ALTER TABLE name ADD COLUMN column_name type_name
+ALTER TABLE name DROP COLUMN column_name
+ALTER TABLE name RENAME COLUMN old_name TO new_name
+```
+
+**Rules**:
+- `COLUMN` keyword is required for all ALTER variants.
+- `ADD COLUMN` appends the new column to the end of the header list.
+- Existing rows receive `NULL` for newly added columns.
+- `DROP COLUMN` removes the column from headers and all row values at that position.
+- `RENAME COLUMN` changes only the header text; row values are preserved.
+
+**Supported types for `ADD COLUMN`**:
+- `TEXT`, `INTEGER`, `REAL`, `FLOAT`, `BOOLEAN`, `DATE`, `DATETIME`
+- `FLOAT` is normalized to `REAL`.
+
+**Error conditions**:
+- Invalid syntax or missing `COLUMN` keyword raises `ValueError`.
+- Unknown `ADD COLUMN` type raises `ValueError`.
+- Altering a missing table raises `ValueError`.
+- Adding an existing column raises `ValueError`.
+- Dropping a non-existent column raises `ValueError`.
+- Dropping the only remaining column raises `ValueError`.
+- Renaming from a non-existent source column raises `ValueError`.
+- Renaming to an already existing target column raises `ValueError`.
+
 ---
 
 ## 9. Parameter Binding
@@ -587,7 +616,7 @@ Within CASE expressions, placeholders bind in SQL order:
 ## Appendix A: Grammar (Informational EBNF)
 
 ```ebnf
-statement     = compound_select | select | insert | update | delete | create | drop ;
+statement     = compound_select | select | insert | update | delete | create | drop | alter ;
 
 compound_select = select compound_op select { compound_op select } ;
 compound_op   = ( "UNION" [ "ALL" ] ) | "INTERSECT" | "EXCEPT" ;
@@ -614,6 +643,10 @@ delete        = "DELETE" "FROM" table [ "WHERE" where_expr ] ;
 
 create        = "CREATE" "TABLE" table "(" column_def { "," column_def } ")" ;
 drop          = "DROP" "TABLE" table ;
+alter         = "ALTER" "TABLE" table alter_op ;
+alter_op      = ( "ADD" "COLUMN" column type_name )
+              | ( "DROP" "COLUMN" column )
+              | ( "RENAME" "COLUMN" column "TO" column ) ;
 
 select_columns = "*" | select_item { "," select_item } ;
 select_item    = column | aggregate ;

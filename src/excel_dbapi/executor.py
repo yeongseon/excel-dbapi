@@ -8,7 +8,9 @@ from .exceptions import ProgrammingError
 from .parser import _parse_column_expression, parse_sql
 from .sanitize import sanitize_cell_value, sanitize_row
 
-_READONLY_ACTIONS = frozenset({"INSERT", "UPDATE", "DELETE", "CREATE", "DROP"})
+_READONLY_ACTIONS = frozenset(
+    {"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"}
+)
 
 
 class SharedExecutor:
@@ -264,6 +266,55 @@ class SharedExecutor:
             if resolved_table is None:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
             self.backend.drop_sheet(resolved_table)
+            return ExecutionResult(
+                action=action,
+                rows=[],
+                description=[],
+                rowcount=0,
+                lastrowid=None,
+            )
+
+        if action == "ALTER":
+            if resolved_table is None:
+                raise ValueError(f"Sheet '{table}' not found in Excel")
+            operation = parsed.get("operation")
+            data = self.backend.read_sheet(resolved_table)
+
+            if operation == "ADD_COLUMN":
+                col = parsed["column"]
+                if col in data.headers:
+                    raise ValueError(f"Column '{col}' already exists in '{table}'")
+                data.headers.append(col)
+                for row in data.rows:
+                    row.append(None)
+                self.backend.write_sheet(resolved_table, data)
+            elif operation == "DROP_COLUMN":
+                col = parsed["column"]
+                if col not in data.headers:
+                    raise ValueError(f"Column '{col}' not found in '{table}'")
+                if len(data.headers) == 1:
+                    raise ValueError(
+                        f"Cannot drop the only column '{col}' from '{table}'"
+                    )
+                idx = data.headers.index(col)
+                data.headers.pop(idx)
+                for row in data.rows:
+                    if idx < len(row):
+                        row.pop(idx)
+                self.backend.write_sheet(resolved_table, data)
+            elif operation == "RENAME_COLUMN":
+                old_col = parsed["old_column"]
+                new_col = parsed["new_column"]
+                if old_col not in data.headers:
+                    raise ValueError(f"Column '{old_col}' not found in '{table}'")
+                if new_col in data.headers:
+                    raise ValueError(f"Column '{new_col}' already exists in '{table}'")
+                idx = data.headers.index(old_col)
+                data.headers[idx] = new_col
+                self.backend.write_sheet(resolved_table, data)
+            else:
+                raise ValueError(f"Unsupported ALTER operation: {operation}")
+
             return ExecutionResult(
                 action=action,
                 rows=[],
