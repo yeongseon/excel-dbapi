@@ -7,13 +7,13 @@ from typing import Any
 
 import httpx
 
-from ...exceptions import OperationalError
+from ...exceptions import InterfaceError, OperationalError
 from .auth import TokenProvider
 
 _BASE_URL = "https://graph.microsoft.com/v1.0"
 _RETRYABLE = frozenset({429, 503, 504})
-_MAX_RETRIES = 3
-_BACKOFF_BASE = 1.0  # seconds
+_DEFAULT_MAX_RETRIES = 3
+_DEFAULT_BACKOFF_FACTOR = 0.5  # seconds
 _MAX_RETRY_AFTER = 60.0  # cap Retry-After to prevent excessive waits
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
@@ -47,6 +47,8 @@ class GraphClient:
         *,
         transport: httpx.BaseTransport | None = None,
         timeout: float = 30.0,
+        max_retries: int = _DEFAULT_MAX_RETRIES,
+        backoff_factor: float = _DEFAULT_BACKOFF_FACTOR,
     ) -> None:
         kwargs: dict[str, Any] = {
             "base_url": _BASE_URL,
@@ -57,6 +59,8 @@ class GraphClient:
         self._http = httpx.Client(**kwargs)
         self._token_provider = token_provider
         self._session_id: str | None = None
+        self._max_retries = max(0, max_retries)
+        self._backoff_factor = max(0.0, backoff_factor)
 
     # -- session management --------------------------------------------------
 
@@ -100,19 +104,25 @@ class GraphClient:
         """Only retry safe (idempotent read) methods automatically."""
         return method.upper() in _SAFE_METHODS
 
+    @staticmethod
+    def _format_error_message(status_code: int, message: str, body: str) -> str:
+        if body:
+            return f"Graph API error {status_code}: {message}. Response body: {body}"
+        return f"Graph API error {status_code}: {message}"
+
     def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
         headers = {**self._build_headers(), **kwargs.pop("headers", {})}
         can_retry = self._is_retryable(method)
         last_exc: Exception | None = None
-        max_attempts = (_MAX_RETRIES + 1) if can_retry else 1
+        max_attempts = (self._max_retries + 1) if can_retry else 1
 
         for attempt in range(max_attempts):
             try:
                 resp = self._http.request(method, path, headers=headers, **kwargs)
             except httpx.TransportError as exc:
                 last_exc = exc
-                if can_retry and attempt < _MAX_RETRIES:
-                    time.sleep(_BACKOFF_BASE * (2**attempt))
+                if can_retry and attempt < self._max_retries:
+                    time.sleep(self._backoff_factor * (2**attempt))
                     continue
                 raise OperationalError(f"Graph API request failed: {exc}") from exc
 
@@ -120,6 +130,30 @@ class GraphClient:
                 try:
                     resp.raise_for_status()
                 except httpx.HTTPStatusError as exc:
+                    if resp.status_code == 401:
+                        raise InterfaceError(
+                            self._format_error_message(
+                                401,
+                                "Authentication expired or invalid. Re-authenticate and retry.",
+                                resp.text,
+                            )
+                        ) from exc
+                    if resp.status_code == 403:
+                        raise InterfaceError(
+                            self._format_error_message(
+                                403,
+                                "Insufficient permissions to access workbook. Check Graph API scopes: Files.ReadWrite.All",
+                                resp.text,
+                            )
+                        ) from exc
+                    if resp.status_code == 404:
+                        raise OperationalError(
+                            self._format_error_message(
+                                404,
+                                "Workbook not found. Check drive_id and item_id.",
+                                resp.text,
+                            )
+                        ) from exc
                     raise OperationalError(
                         f"Graph API error {resp.status_code}: {resp.text}"
                     ) from exc
@@ -133,13 +167,15 @@ class GraphClient:
 
             retry_after = _parse_retry_after(resp.headers.get("Retry-After"))
             wait = (
-                retry_after if retry_after is not None else _BACKOFF_BASE * (2**attempt)
+                retry_after
+                if retry_after is not None
+                else self._backoff_factor * (2**attempt)
             )
-            if attempt < _MAX_RETRIES:
+            if attempt < self._max_retries:
                 time.sleep(wait)
             else:
                 raise OperationalError(
-                    f"Graph API error {resp.status_code} after {_MAX_RETRIES} retries"
+                    f"Graph API error {resp.status_code} after {self._max_retries} retries"
                 )
 
         # Should not reach here, but satisfy type checker
