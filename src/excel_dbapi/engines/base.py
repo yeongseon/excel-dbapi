@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import errno
+import os
 from typing import Any
 
 
@@ -28,6 +30,42 @@ class WorkbookBackend(ABC):
         self.file_path = file_path
         self.create = create
         self.sanitize_formulas = sanitize_formulas
+        _is_local_path = not ("://" in file_path)
+        self._file_locking_enabled = bool(options.get("file_locking", _is_local_path))
+        self._lock_fd: int | None = None
+        self._lock_path = f"{self.file_path}.lock"
+
+    def _acquire_lock(self) -> None:
+        from ..exceptions import OperationalError
+
+        if not self._file_locking_enabled or self._lock_fd is not None:
+            return
+
+        try:
+            lock_fd = os.open(self._lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            os.write(lock_fd, str(os.getpid()).encode("ascii", "strict"))
+            self._lock_fd = lock_fd
+        except OSError as exc:
+            if exc.errno == errno.EEXIST:
+                raise OperationalError("File is locked by another process") from exc
+            raise OperationalError(str(exc)) from exc
+
+    def _release_lock(self) -> None:
+        if self._lock_fd is None:
+            return
+
+        lock_fd = self._lock_fd
+        self._lock_fd = None
+        os.close(lock_fd)
+        try:
+            os.unlink(self._lock_path)
+        except FileNotFoundError:
+            pass
+
+    def ensure_write_lock(self) -> None:
+        if not self._file_locking_enabled:
+            return
+        self._acquire_lock()
 
     @abstractmethod
     def load(self) -> None:
@@ -70,7 +108,7 @@ class WorkbookBackend(ABC):
         pass
 
     def close(self) -> None:
-        """Release backend resources.  Default is a no-op."""
+        self._release_lock()
 
     def get_workbook(self) -> Any:
         from ..exceptions import NotSupportedError

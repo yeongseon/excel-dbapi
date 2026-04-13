@@ -131,6 +131,8 @@ class ExcelConnection:
         self._executor = SharedExecutor(
             self.engine, sanitize_formulas=sanitize_formulas
         )
+        if not self.autocommit:
+            self.engine.ensure_write_lock()
         self._snapshot: Any = self.engine.snapshot()
 
     @check_closed
@@ -157,9 +159,15 @@ class ExcelConnection:
     def execute(
         self, query: str, params: Optional[tuple[Any, ...]] = None
     ) -> ExecutionResult:
+        self._ensure_write_lock_for_query(query)
         result = self._executor.execute_with_params(query, params)
         self._finalize_autocommit(result.action)
         return result
+
+    def _ensure_write_lock_for_query(self, query: str) -> None:
+        action = query.strip().split(None, 1)[0].upper() if query.strip() else ""
+        if action in _MUTATING_ACTIONS:
+            self.engine.ensure_write_lock()
 
     def _finalize_autocommit(self, action: str) -> None:
         """Save and snapshot if autocommit is enabled and action is mutating.
