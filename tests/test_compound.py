@@ -457,26 +457,29 @@ def test_compound_in_clause_param_slicing(tmp_path: Path) -> None:
 
 
 def test_compound_quoted_question_mark_not_counted(tmp_path: Path) -> None:
-    """A '?' inside a string literal is not counted as a placeholder.
+    """A '?' inside a string literal in WHERE is not counted as a placeholder.
 
-    Regression test for Bug #3 edge case.
+    Regression test for Bug #3 edge case: quoted question marks should
+    not be counted as parameter placeholders.
     """
     file_path = tmp_path / "compound_quoted_qmark.xlsx"
     _create_compound_workbook(file_path)
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        # The literal '?' in the first branch is NOT a placeholder.
-        # Only the ? in WHERE id = ? is a placeholder (1 per branch = 2 total).
+        # WHERE name = '?' uses a literal '?' string, NOT a placeholder.
+        # Only the ? in WHERE id = ? is a real placeholder (1 total).
         cursor.execute(
-            "SELECT id FROM t1 WHERE id = ? "
+            "SELECT id FROM t1 WHERE name = '?' "
             "UNION "
             "SELECT id FROM t2 WHERE id = ?",
-            (1, 2),
+            (2,),
         )
         rows = cursor.fetchall()
         ids = sorted(r[0] for r in rows)
-        assert ids == [1, 2]
+        # t1 has no name='?' rows (names are 'a','b','c','d'),
+        # t2 WHERE id=2 -> {2}
+        assert ids == [2]
 
 
 def test_compound_from_with_subquery_depth(tmp_path: Path) -> None:
