@@ -524,18 +524,16 @@ def test_parse_join_rejects_subquery_with_join():
         parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)")
 
 
-def test_parse_join_rejects_group_by():
-    with pytest.raises(ValueError, match="GROUP BY is not supported with JOIN"):
-        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id")
+def test_parse_join_accepts_group_by():
+    parsed = parse_sql("SELECT a.id, COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id")
+    assert parsed["group_by"] == ["a.id"]
 
 
-def test_parse_join_rejects_having():
-    # HAVING requires GROUP BY, which is also rejected with JOIN.
-    # GROUP BY rejection fires first.
-    with pytest.raises(ValueError, match="GROUP BY is not supported with JOIN"):
-        parse_sql(
-            "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id HAVING COUNT(a.id) > 1"
-        )
+def test_parse_join_accepts_having():
+    parsed = parse_sql(
+        "SELECT a.id, COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id HAVING COUNT(*) > 1"
+    )
+    assert parsed["having"] is not None
 
 
 def test_parse_join_rejects_distinct():

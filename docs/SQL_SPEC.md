@@ -29,7 +29,7 @@ The following SQL features are **rejected at parse time** with `ValueError`:
 
 - `NATURAL JOIN` (INNER, LEFT, RIGHT, FULL OUTER, and CROSS JOIN are supported)
 - Mixed `SELECT *, col` with JOIN (bare `SELECT *` is supported; see §4.8)
-- `GROUP BY`, `HAVING`, aggregates in JOIN queries
+- `GROUP BY` / aggregate arguments in JOIN queries that use bare (unqualified) columns (for example `GROUP BY dept`, `SUM(amount)`)
 - Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])` and `INSERT INTO ... SELECT ...`
 - Common Table Expressions (CTEs / `WITH`)
 - Window functions (`OVER`, `PARTITION BY`)
@@ -107,6 +107,8 @@ SELECT [DISTINCT] columns FROM table
 SELECT qualified_columns FROM table [ [AS] alias ]
   { [ INNER | LEFT [OUTER] | RIGHT [OUTER] ] JOIN table [ [AS] alias ] ON condition { AND condition } }
   [WHERE conditions]
+  [GROUP BY qualified_column { "," qualified_column }]
+  [HAVING conditions]
   [ORDER BY qualified_column [ASC|DESC] { "," qualified_column [ASC|DESC] }]
   [LIMIT n]
   [OFFSET n]
@@ -148,6 +150,8 @@ SELECT qualified_columns FROM table [ [AS] alias ]
 **Mixed columns**: When non-aggregate columns appear alongside aggregates, `GROUP BY` is required. Non-aggregate columns must appear in `GROUP BY`.
 
 **Aggregate arguments**: Aggregate calls accept only a bare column name (e.g., `SUM(score)`) or `*` for `COUNT(*)`. Expressions such as `COUNT(DISTINCT name)` and `SUM(score + 1)` are not supported.
+
+In JOIN queries, aggregate arguments must use qualified column names (for example `SUM(t2.amount)`), except `COUNT(*)`.
 
 #### 3.2.2 Arithmetic Expressions
 
@@ -275,7 +279,9 @@ Any other ordering raises `ValueError`.
 - `FULL OUTER JOIN` preserves all rows from both sides, filling NULLs where no match exists.
 - For chained JOINs, each ON clause may reference columns from any previously joined source and the current right source.
 - `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET` work with JOIN queries.
-- `GROUP BY`, `HAVING`, and aggregates are **not supported** in JOIN queries.
+- `GROUP BY`, `HAVING`, and aggregates are supported in JOIN queries.
+- JOIN + GROUP BY requires qualified column names in `GROUP BY` (`GROUP BY t1.dept`, not `GROUP BY dept`).
+- JOIN aggregates require qualified arguments (for example `SUM(t2.amount)`), except `COUNT(*)`.
 
 **Execution**:
 - INNER JOIN returns only rows where the ON condition matches in both tables.

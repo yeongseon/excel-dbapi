@@ -191,10 +191,9 @@ def test_join_source_invalid_reference() -> None:
         parse_sql("SELECT c.id FROM t1 a JOIN t2 b ON a.id = b.id")
 
 
-def test_join_aggregate_not_supported() -> None:
-    """Aggregate functions in JOIN queries not supported."""
-    with pytest.raises(ValueError, match="Aggregate functions are not supported with JOIN"):
-        parse_sql("SELECT COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id")
+def test_join_aggregate_supported() -> None:
+    parsed = parse_sql("SELECT COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"] is not None
 
 
 # =============================================================================
@@ -356,9 +355,11 @@ def test_join_with_select_star_allowed() -> None:
     assert parsed["columns"] == ["*"]
 
 
-def test_join_with_having_rejected() -> None:
-    with pytest.raises(ValueError):
-        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id HAVING COUNT(*) > 1")
+def test_join_with_having_supported() -> None:
+    parsed = parse_sql(
+        "SELECT a.id, COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id HAVING COUNT(*) > 1"
+    )
+    assert parsed["having"] is not None
 
 
 def test_join_with_subquery_where_rejected() -> None:

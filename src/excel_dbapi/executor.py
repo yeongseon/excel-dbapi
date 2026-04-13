@@ -766,6 +766,9 @@ class SharedExecutor:
         source_headers_ordered: list[tuple[str, list[str]]] = [
             (str(from_source["ref"]), left_headers),
         ]
+        ref_to_table: dict[str, str] = {
+            str(from_source["ref"]): str(from_source["table"]),
+        }
         join_inputs: list[tuple[dict[str, Any], TableData]] = []
         known_sources = {str(from_source["table"]), str(from_source["ref"])}
 
@@ -806,6 +809,7 @@ class SharedExecutor:
             source_headers[right_ref] = right_headers
             source_headers[right_table_name] = right_headers
             source_headers_ordered.append((right_ref, list(right_data.headers)))
+            ref_to_table[right_ref] = right_table_name
 
             join_on = join_spec.get("on")
             on_clauses = (
@@ -831,6 +835,17 @@ class SharedExecutor:
                         str(expression["name"]),
                         "SELECT",
                     )
+                    return
+                if expression_type == "aggregate":
+                    arg = str(expression.get("arg", ""))
+                    if arg == "*":
+                        return
+                    if "." not in arg:
+                        raise ValueError(
+                            "Aggregate arguments in JOIN queries must be qualified column names or *"
+                        )
+                    source, name = arg.split(".", 1)
+                    _validate_column_ref(source, name, "SELECT")
                     return
                 if expression_type == "literal":
                     return
@@ -869,6 +884,8 @@ class SharedExecutor:
             for item in order_by:
                 col_ref = str(item["column"])
                 if col_ref.startswith("__expr__:"):
+                    continue
+                if self._aggregate_spec_from_label(col_ref) is not None:
                     continue
                 if "." in col_ref:
                     src, col_name = col_ref.split(".", 1)
@@ -916,9 +933,40 @@ class SharedExecutor:
                 row for row in joined_rows_flat if self._matches_where(row, where)
             ]
 
+        columns = parsed["columns"]
+        aggregate_query = (
+            any(self._is_aggregate_column(self._unwrap_alias(col)) for col in columns)
+            if columns != ["*"]
+            else False
+        )
+        group_by = parsed.get("group_by")
+        having = parsed.get("having")
+
+        if columns == ["*"] and (aggregate_query or group_by is not None):
+            raise ValueError("SELECT * is not supported with GROUP BY or aggregate functions")
+
+        if aggregate_query or group_by is not None:
+            flattened_headers: list[str] = []
+            for source_ref, ordered_headers in source_headers_ordered:
+                for col_name in ordered_headers:
+                    flattened_headers.append(f"{source_ref}.{col_name}")
+                table_name = ref_to_table.get(source_ref, source_ref)
+                if table_name != source_ref:
+                    for col_name in ordered_headers:
+                        flattened_headers.append(f"{table_name}.{col_name}")
+
+            return self._execute_aggregate_select(
+                action,
+                parsed,
+                flattened_headers,
+                joined_rows_flat,
+                columns,
+                group_by,
+                having,
+            )
+
         selected_columns: list[str] = []
         output_names: list[str] = []
-        columns = parsed["columns"]
         if columns == ["*"]:
             for source_ref, ordered_headers in source_headers_ordered:
                 for col_name in ordered_headers:
@@ -1200,7 +1248,7 @@ class SharedExecutor:
                 output_sources.append(label)
                 continue
 
-            column_name = str(inner)
+            column_name = self._source_key(column)
             if column_name not in headers:
                 raise ValueError(
                     f"Unknown column(s): {column_name}. Available columns: {headers}"
@@ -1374,10 +1422,12 @@ class SharedExecutor:
             return None
         if distinct_modifier and func != "COUNT":
             raise ValueError("DISTINCT is only supported with COUNT")
-        if arg != "*" and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", arg):
+        if arg != "*" and not re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?", arg
+        ):
             raise ValueError(
                 f"Unsupported aggregate expression: {func}({arg}). "
-                "Only bare column names and * are supported"
+                "Only bare or qualified column names and * are supported"
             )
         return func, arg, bool(distinct_modifier)
 

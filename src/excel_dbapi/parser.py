@@ -1656,12 +1656,15 @@ def _parse_select(
     if joins_value is not None:
         if distinct:
             raise ValueError("DISTINCT is not supported with JOIN")
-        if group_by is not None:
-            raise ValueError("GROUP BY is not supported with JOIN")
-        if having is not None:
-            raise ValueError("HAVING is not supported with JOIN")
         if where is not None and _is_subquery_condition(where):
             raise ValueError("Subqueries are not supported with JOIN")
+
+        if group_by is not None:
+            for group_column in group_by:
+                if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, group_column):
+                    raise ValueError(
+                        "GROUP BY in JOIN queries requires qualified column names"
+                    )
 
         join_sources = {
             str(from_entry["table"]),
@@ -1694,7 +1697,14 @@ def _parse_select(
                     expression = column.get("expression")
 
                 if isinstance(expression, dict) and expression.get("type") == "aggregate":
-                    raise ValueError("Aggregate functions are not supported with JOIN")
+                    arg = str(expression.get("arg", "")).strip()
+                    if arg != "*" and not re.fullmatch(
+                        _QUALIFIED_IDENTIFIER_PATTERN, arg
+                    ):
+                        raise ValueError(
+                            "Aggregate arguments in JOIN queries must be qualified column names or *"
+                        )
+                    continue
                 _validate_join_column_reference(expression, join_sources, "SELECT")
 
         if where is not None:
@@ -1704,6 +1714,19 @@ def _parse_select(
             for item in order_by:
                 order_column = str(item["column"])
                 if order_column in select_aliases:
+                    continue
+                aggregate_match = re.fullmatch(
+                    r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
+                    order_column,
+                )
+                if aggregate_match:
+                    arg = aggregate_match.group(3).strip()
+                    if arg != "*" and not re.fullmatch(
+                        _QUALIFIED_IDENTIFIER_PATTERN, arg
+                    ):
+                        raise ValueError(
+                            "Aggregate arguments in JOIN queries must be qualified column names or *"
+                        )
                     continue
                 parsed_order_column = _parse_qualified_column_reference(order_column)
                 _validate_join_column_reference(parsed_order_column, join_sources, "ORDER BY")
