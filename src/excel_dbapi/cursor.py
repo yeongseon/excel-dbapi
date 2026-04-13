@@ -83,9 +83,7 @@ class ExcelCursor:
         total_rowcount = 0
         last_rowid = None
         last_action = None
-        snapshot = None
-        if not self.connection.autocommit:
-            snapshot = self.connection.engine.snapshot()
+        snapshot = self.connection.engine.snapshot()
         for params in seq_of_params:
             try:
                 result: ExecutionResult = (
@@ -94,28 +92,22 @@ class ExcelCursor:
                     )
                 )
             except ValueError as exc:
-                if snapshot is not None:
-                    self.connection.engine.restore(snapshot)
+                self.connection.engine.restore(snapshot)
                 raise ProgrammingError(str(exc)) from exc
             except NotImplementedError as exc:
-                if snapshot is not None:
-                    self.connection.engine.restore(snapshot)
+                self.connection.engine.restore(snapshot)
                 raise NotSupportedError(str(exc)) from exc
             except (KeyError, TypeError, IndexError) as exc:
-                if snapshot is not None:
-                    self.connection.engine.restore(snapshot)
+                self.connection.engine.restore(snapshot)
                 raise ProgrammingError(str(exc)) from exc
             except OSError as exc:
-                if snapshot is not None:
-                    self.connection.engine.restore(snapshot)
+                self.connection.engine.restore(snapshot)
                 raise OperationalError(str(exc)) from exc
             except DatabaseError:
-                if snapshot is not None:
-                    self.connection.engine.restore(snapshot)
+                self.connection.engine.restore(snapshot)
                 raise
             except Exception as exc:
-                if snapshot is not None:
-                    self.connection.engine.restore(snapshot)
+                self.connection.engine.restore(snapshot)
                 raise DatabaseError(str(exc)) from exc
             total_rowcount += result.rowcount
             last_rowid = result.lastrowid

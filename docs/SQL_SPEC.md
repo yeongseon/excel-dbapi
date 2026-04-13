@@ -633,8 +633,8 @@ Within CASE expressions, placeholders bind in SQL order:
 | INSERT into headless sheet | `ValueError` | `Cannot insert into sheet without headers` |
 | Empty IN clause | `ValueError` | `IN clause cannot be empty` |
 | Unsupported JOIN variant | `ValueError` | `Unsupported SQL syntax: {type} JOIN` |
-| Invalid header (empty/None) | `DataError` | `Empty or None header at position {i}` |
-| Duplicate headers | `DataError` | `Duplicate headers (case-insensitive): {names}` |
+| Invalid header (empty/None) | `DataError` | `Empty or None header at column index {idx}` |
+| Duplicate header (case-insensitive) | `DataError` | `Duplicate header: {h!r} (conflicts with {existing!r})` |
 
 ---
 

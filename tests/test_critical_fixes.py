@@ -484,3 +484,53 @@ class TestExecutemanyMidBatchRestore:
         assert len(result.rows) == 1
         assert result.rows[0] == (1, "Original")
         conn.close()
+
+
+class TestExecutemanyAutocommitRestore:
+    """Regression: executemany with autocommit=True must also restore on failure."""
+
+    def test_autocommit_true_mid_batch_failure_restores(self, tmp_path: Path) -> None:
+        """Under autocommit=True, a mid-batch failure restores the snapshot.
+
+        Previously snapshot was only taken when autocommit=False, leaving
+        partial mutations in memory under autocommit=True.
+        """
+        fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Original"]])
+        conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
+        original = conn._executor.execute_with_params
+        call_count = 0
+
+        def fail_on_second(query: str, params: Any = None) -> Any:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise ValueError("bad value")
+            return original(query, params)
+
+        conn._executor.execute_with_params = fail_on_second  # type: ignore[assignment]
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="bad value"):
+            cursor.executemany(
+                "INSERT INTO users VALUES (?, ?)",
+                [(2, "Second"), (3, "Third")],
+            )
+        # After error + snapshot restore, only original row should exist
+        conn._executor.execute_with_params = original  # type: ignore[assignment]
+        result = conn.execute("SELECT * FROM users")
+        assert len(result.rows) == 1
+        assert result.rows[0] == (1, "Original")
+        conn.close()
+
+
+class TestHeaderWhitespaceTrimming:
+    """Regression: _normalize_headers strips leading/trailing whitespace."""
+
+    def test_whitespace_trimmed_from_headers(self) -> None:
+        """Headers with leading/trailing whitespace are trimmed."""
+        result = _normalize_headers(["  id  ", " name ", "age"])
+        assert result == ["id", "name", "age"]
+
+    def test_trimmed_duplicates_detected(self) -> None:
+        """After trimming, duplicate headers are detected."""
+        with pytest.raises(DataError, match="Duplicate header"):
+            _normalize_headers(["  id  ", "id", "name"])

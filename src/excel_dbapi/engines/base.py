@@ -96,7 +96,7 @@ def _normalize_headers(raw: list[Any]) -> list[str]:
             raise DataError(
                 f"Empty or None header at column index {idx}"
             )
-        headers.append(str(value))
+        headers.append(str(value).strip())
 
     seen: set[str] = set()
     lower_map: dict[str, str] = {}
