@@ -237,6 +237,109 @@ class SharedExecutor:
                 )
                 sanitized_rows.append(sanitized_row)
 
+            on_conflict = parsed.get("on_conflict")
+            if on_conflict is not None:
+                target_cols = on_conflict["target_columns"]
+                for target_col in target_cols:
+                    if target_col not in headers:
+                        raise ValueError(f"ON CONFLICT column '{target_col}' not found in headers")
+
+                target_indices = [headers.index(target_col) for target_col in target_cols]
+                action_name = str(on_conflict.get("action", "")).upper()
+                upsert_updates = on_conflict.get("set", [])
+                if action_name == "UPDATE":
+                    for update in upsert_updates:
+                        if update["column"] not in headers:
+                            raise ValueError(
+                                f"Unknown column: {update['column']}. Available columns: {headers}"
+                            )
+
+                rowcount = 0
+                for sanitized_row in sanitized_rows:
+                    conflict_row: list[Any] | None = None
+                    for existing_row in table_data.rows:
+                        is_conflict = True
+                        for target_index in target_indices:
+                            existing_value = (
+                                existing_row[target_index]
+                                if target_index < len(existing_row)
+                                else None
+                            )
+                            incoming_value = (
+                                sanitized_row[target_index]
+                                if target_index < len(sanitized_row)
+                                else None
+                            )
+                            if existing_value is None or incoming_value is None:
+                                # SQL semantics: NULL never matches NULL for conflict detection
+                                is_conflict = False
+                                break
+                            left, right = self._coerce_for_compare(existing_value, incoming_value)
+                            if left != right:
+                                is_conflict = False
+                                break
+                        if is_conflict:
+                            conflict_row = existing_row
+                            break
+
+                    if conflict_row is None:
+                        table_data.rows.append(list(sanitized_row))
+                        rowcount += 1
+                        continue
+
+                    if action_name == "NOTHING":
+                        continue
+
+                    if action_name != "UPDATE":
+                        raise ValueError(
+                            f"Invalid ON CONFLICT action: {on_conflict.get('action')}"
+                        )
+
+                    row_map = self._row_from_values(headers, conflict_row)
+                    excluded_map = self._row_from_values(headers, sanitized_row)
+
+                    def _resolve_upsert_column(column_name: str) -> Any:
+                        if column_name.startswith("excluded."):
+                            return excluded_map.get(column_name.split(".", 1)[1])
+                        return row_map.get(column_name)
+
+                    for update in upsert_updates:
+                        col_index = headers.index(update["column"])
+                        raw_value = update["value"]
+                        if isinstance(raw_value, dict) and raw_value.get("type") in {
+                            "alias",
+                            "case",
+                            "binary_op",
+                            "unary_op",
+                            "literal",
+                            "column",
+                        }:
+                            evaluated = self._eval_expression(
+                                raw_value,
+                                row_map,
+                                _resolve_upsert_column,
+                            )
+                        else:
+                            evaluated = raw_value
+                        value = (
+                            sanitize_cell_value(evaluated)
+                            if self.sanitize_formulas
+                            else evaluated
+                        )
+                        if col_index >= len(conflict_row):
+                            conflict_row.extend([None] * (col_index - len(conflict_row) + 1))
+                        conflict_row[col_index] = value
+                    rowcount += 1
+
+                self.backend.write_sheet(resolved_table, table_data)
+                return ExecutionResult(
+                    action=action,
+                    rows=[],
+                    description=[],
+                    rowcount=rowcount,
+                    lastrowid=None,
+                )
+
             # All rows validated — now append atomically
             last_row = None
             for sanitized_row in sanitized_rows:
@@ -1832,7 +1935,10 @@ class SharedExecutor:
             return self._eval_expression(expr.get("expression"), row, resolve_column)
 
         if expr_type == "column":
-            column_key = f"{expr['source']}.{expr['name']}"
+            source = expr.get("source", expr.get("table"))
+            if source is None:
+                raise ProgrammingError("Column expression is missing source/table")
+            column_key = f"{source}.{expr['name']}"
             return resolve_column(column_key)
 
         if expr_type == "literal":

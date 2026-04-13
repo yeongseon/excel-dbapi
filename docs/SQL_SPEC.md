@@ -17,7 +17,7 @@ database engine.
 | Statement | Supported |
 |-----------|-----------|
 | `SELECT`  | ✅ Single-table with DISTINCT / WHERE / GROUP BY / HAVING / multi-column ORDER BY / LIMIT / OFFSET / Aggregates; INNER/LEFT/RIGHT JOIN with chained JOIN clauses |
-| `INSERT`  | ✅ Single-row and multi-row VALUES with optional column list; INSERT...SELECT |
+| `INSERT`  | ✅ Single-row and multi-row VALUES with optional column list; INSERT...SELECT; UPSERT via `ON CONFLICT ... DO NOTHING/DO UPDATE` |
 | `UPDATE`  | ✅ With SET assignments and optional WHERE |
 | `DELETE`  | ✅ With optional WHERE |
 | `CREATE TABLE` | ✅ Creates a new worksheet with headers |
@@ -366,6 +366,8 @@ SELECT ... FROM ...
 INSERT INTO table [(columns)] VALUES (values)
 INSERT INTO table [(columns)] VALUES (v1, v2), (v3, v4), ...
 INSERT INTO table [(columns)] SELECT columns FROM source [WHERE ...]
+INSERT INTO table [(columns)] VALUES (...) ON CONFLICT (col1 [, col2 ...]) DO NOTHING
+INSERT INTO table [(columns)] VALUES (...) ON CONFLICT (col1 [, col2 ...]) DO UPDATE SET col = expr [, ...]
 ```
 
 ### 4.2 Forms
@@ -386,9 +388,35 @@ INSERT INTO table [(columns)] SELECT columns FROM source [WHERE ...]
 - For INSERT...SELECT, column count of the SELECT result must match the target column count.
 - If SELECT returns zero rows, no rows are inserted and `rowcount` is 0.
 - Parameter binding in multi-row VALUES works across all tuples: `VALUES (?, ?), (?, ?)` with 4 params.
+- UPSERT is supported with `ON CONFLICT (columns)`.
+- `DO NOTHING` skips conflicting rows.
+- `DO UPDATE SET ...` updates the first conflicting row and counts as an affected row.
+- `excluded.column` in `DO UPDATE` resolves to the incoming row value.
+- In multi-row INSERT, conflict handling is evaluated independently per row.
 - Formula injection defense: values starting with `=`, `+`, `-`, `@`, `\t`, `\r`
   are prefixed with `'` by default (configurable via `sanitize_formulas=False`).
 
+### 4.4 UPSERT (INSERT ... ON CONFLICT)
+
+```sql
+INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)
+ON CONFLICT (col1) DO NOTHING
+
+INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)
+ON CONFLICT (col1) DO UPDATE SET col2 = excluded.col2, col3 = ?
+
+INSERT INTO table (col1, col2) SELECT a, b FROM other_table
+ON CONFLICT (col1) DO UPDATE SET col2 = excluded.col2
+```
+
+- `ON CONFLICT (columns)` specifies the conflict target columns.
+- `DO NOTHING` skips conflicting rows.
+- `DO UPDATE SET` updates conflicting rows.
+- `excluded.column` references the value from the row being inserted.
+- Multi-row INSERT checks each incoming row independently for conflicts.
+- **NULL semantics**: `NULL` values in conflict target columns never match. Two rows with `NULL` in the target column are not considered conflicting (consistent with SQL standard where `NULL ≠ NULL`).
+- **Parameter binding order**: For `VALUES ... ON CONFLICT ... DO UPDATE SET col = ?`, VALUES placeholders are bound first, then SET placeholders. For `INSERT ... SELECT ... ON CONFLICT ... DO UPDATE SET col = ?`, SELECT placeholders are bound first, then SET placeholders.
+- **Bare identifiers in SET**: In `SET col = name`, `name` is treated as a string literal `'name'`, not a column reference. Use `excluded.col` to reference the incoming row's column value.
 ---
 
 ## 5. UPDATE
@@ -684,7 +712,10 @@ select        = "SELECT" [ "DISTINCT" ] select_columns "FROM" table_ref
 
 insert        = "INSERT" "INTO" table [ "(" column_list ")" ]
                 ( "VALUES" value_tuple { "," value_tuple }
-                | select ) ;
+                | select )
+                [ "ON" "CONFLICT" "(" column_list ")"
+                  ( "DO" "NOTHING"
+                  | "DO" "UPDATE" "SET" assignment { "," assignment } ) ] ;
 
 value_tuple   = "(" value_list ")" ;
 

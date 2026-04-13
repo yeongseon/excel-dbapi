@@ -2496,6 +2496,219 @@ def _bind_params(values: List[Any], params: Optional[tuple[Any, ...]]) -> List[A
     return bound
 
 
+def _split_insert_on_conflict_clause(remainder: str) -> tuple[str, Optional[str]]:
+    tokens = _tokenize(remainder.strip())
+    if not tokens:
+        return "", None
+
+    depth = 0
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "(":
+            depth += 1
+        elif token == ")":
+            if depth > 0:
+                depth -= 1
+        elif (
+            depth == 0
+            and token.upper() == "ON"
+            and index + 1 < len(tokens)
+            and tokens[index + 1].upper() == "CONFLICT"
+        ):
+            before = " ".join(tokens[:index]).strip()
+            on_conflict = " ".join(tokens[index:]).strip()
+            return before, on_conflict
+        index += 1
+
+    return remainder.strip(), None
+
+
+def _annotate_column_tables(expression: Any) -> None:
+    if not isinstance(expression, dict):
+        return
+
+    expression_type = expression.get("type")
+    if expression_type == "column":
+        source = expression.get("source")
+        if isinstance(source, str):
+            expression["table"] = source
+        elif isinstance(expression.get("table"), str):
+            expression["source"] = expression["table"]
+        return
+
+    if expression_type == "alias":
+        _annotate_column_tables(expression.get("expression"))
+        return
+
+    if expression_type == "unary_op":
+        _annotate_column_tables(expression.get("operand"))
+        return
+
+    if expression_type == "binary_op":
+        _annotate_column_tables(expression.get("left"))
+        _annotate_column_tables(expression.get("right"))
+        return
+
+    if expression_type == "case":
+        _annotate_column_tables(expression.get("value"))
+        for when_branch in expression.get("whens", []):
+            if not isinstance(when_branch, dict):
+                continue
+            _annotate_column_tables(when_branch.get("match"))
+            _annotate_column_tables(when_branch.get("condition"))
+            _annotate_column_tables(when_branch.get("result"))
+        _annotate_column_tables(expression.get("else"))
+        return
+
+    if "conditions" in expression:
+        for condition in expression["conditions"]:
+            _annotate_column_tables(condition)
+        return
+
+    if expression_type == "not":
+        _annotate_column_tables(expression.get("operand"))
+        return
+
+    for key in ("column", "value"):
+        _annotate_column_tables(expression.get(key))
+
+
+def _parse_upsert_assignment_value(value_text: str) -> Any:
+    stripped = value_text.strip()
+    if not stripped:
+        raise ValueError("Invalid ON CONFLICT clause format")
+
+    is_expression = bool(re.match(r"(?i)^CASE\b", stripped)) or bool(
+        re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, stripped)
+    )
+    if not is_expression:
+        expression_tokens = _tokenize_expression(stripped)
+        is_expression = any(token in {"+", "-", "*", "/", "(", ")"} for token in expression_tokens)
+
+    if is_expression:
+        parsed = _parse_column_expression(
+            stripped,
+            allow_wildcard=False,
+            allow_aggregates=False,
+        )
+        _annotate_column_tables(parsed)
+        return parsed
+
+    return _parse_value(stripped)
+
+
+def _parse_on_conflict_clause(
+    clause: str,
+    query: str,
+    params: Optional[tuple[Any, ...]],
+) -> Dict[str, Any]:
+    tokens = _tokenize(clause.strip())
+    if len(tokens) < 5:
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+    if tokens[0].upper() != "ON" or tokens[1].upper() != "CONFLICT":
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+
+    index = 2
+    if index >= len(tokens) or tokens[index] != "(":
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+
+    index += 1
+    depth = 1
+    target_tokens: List[str] = []
+    while index < len(tokens) and depth > 0:
+        token = tokens[index]
+        if token == "(":
+            depth += 1
+            target_tokens.append(token)
+        elif token == ")":
+            depth -= 1
+            if depth > 0:
+                target_tokens.append(token)
+        else:
+            target_tokens.append(token)
+        index += 1
+
+    if depth != 0:
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+
+    target_columns = _parse_columns(" ".join(target_tokens))
+    invalid_target_columns = [
+        col for col in target_columns if not isinstance(col, str) or col == "*"
+    ]
+    if invalid_target_columns:
+        raise ValueError("ON CONFLICT target supports only bare column names")
+
+    if index >= len(tokens) or tokens[index].upper() != "DO":
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+    index += 1
+
+    if index >= len(tokens):
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+
+    action = tokens[index].upper()
+    index += 1
+
+    if action == "NOTHING":
+        if index != len(tokens):
+            raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+        if params is not None:
+            _bind_params([], params)
+        return {
+            "target_columns": target_columns,
+            "action": "NOTHING",
+        }
+
+    if action != "UPDATE":
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+
+    if index >= len(tokens) or tokens[index].upper() != "SET":
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+    index += 1
+
+    set_part = " ".join(tokens[index:]).strip()
+    if not set_part:
+        raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+
+    assignments = []
+    raw_assignments = _split_csv(set_part)
+    for assignment in raw_assignments:
+        if "=" not in assignment:
+            raise ValueError(f"Invalid ON CONFLICT clause format: {query}")
+        col, value = assignment.split("=", 1)
+        assignments.append(
+            {
+                "column": col.strip(),
+                "value": _parse_upsert_assignment_value(value),
+            }
+        )
+
+    values_to_bind: List[Any] = []
+    for item in assignments:
+        assignment_value = item["value"]
+        if isinstance(assignment_value, dict):
+            values_to_bind.extend(_expression_values_to_bind(assignment_value))
+        else:
+            values_to_bind.append(assignment_value)
+
+    if params is not None or any(_is_placeholder(value) for value in values_to_bind):
+        bound = _bind_params(values_to_bind, params)
+        consumed = 0
+        for item in assignments:
+            assignment_value = item["value"]
+            if isinstance(assignment_value, dict):
+                consumed += _bind_expression_values(assignment_value, bound, consumed)
+            else:
+                item["value"] = bound[consumed]
+                consumed += 1
+
+    return {
+        "target_columns": target_columns,
+        "action": "UPDATE",
+        "set": assignments,
+    }
+
+
 def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, Any]:
     stripped = query.strip()
     upper = stripped.upper()
@@ -2543,12 +2756,24 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     if not remainder:
         raise ValueError(f"Invalid INSERT format: {query}")
 
-    remainder_upper = remainder.upper()
+    source_part, on_conflict_clause = _split_insert_on_conflict_clause(remainder)
+    if not source_part:
+        raise ValueError(f"Invalid INSERT format: {query}")
+
+    remainder_upper = source_part.upper()
+    remaining_params: Optional[tuple[Any, ...]] = None
     if remainder_upper.startswith("SELECT"):
-        subquery = _parse_select(remainder, params)
+        select_params = params
+        if params is not None and on_conflict_clause is not None:
+            select_param_count = _count_unquoted_placeholders(source_part)
+            select_params = params[:select_param_count]
+            remaining_params = params[select_param_count:]
+        subquery = _parse_select(source_part, select_params)
+        if remaining_params is None:
+            remaining_params = () if params is not None else None
         values: Any = {"type": "subquery", "query": subquery}
     elif remainder_upper.startswith("VALUES"):
-        values_part = remainder[len("VALUES") :].strip()
+        values_part = source_part[len("VALUES") :].strip()
         if not values_part:
             raise ValueError(f"Invalid INSERT format: {query}")
 
@@ -2637,18 +2862,28 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
                 row_params = params[param_index : param_index + needed]
                 bound_rows.append(_bind_params(parsed_row, row_params))
                 param_index += needed
-            if param_index < len(params):
-                raise ValueError("Too many parameters for placeholders")
+            remaining_params = params[param_index:]
             values = bound_rows
     else:
         raise ValueError(f"Invalid INSERT format: {query}")
 
-    return {
+    on_conflict = None
+    if on_conflict_clause is not None:
+        on_conflict = _parse_on_conflict_clause(on_conflict_clause, query, remaining_params)
+        remaining_params = () if params is not None else None
+
+    if params is not None and remaining_params is not None and len(remaining_params) > 0:
+        raise ValueError("Too many parameters for placeholders")
+
+    result: Dict[str, Any] = {
         "action": "INSERT",
         "table": table,
         "columns": columns,
         "values": values,
     }
+    if on_conflict is not None:
+        result["on_conflict"] = on_conflict
+    return result
 
 
 def _parse_create(query: str) -> Dict[str, Any]:
