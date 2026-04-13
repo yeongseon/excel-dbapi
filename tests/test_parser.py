@@ -365,9 +365,16 @@ def test_rejects_window_over():
         parse_sql("SELECT COUNT(*) OVER () FROM users")
 
 
-def test_rejects_arithmetic_in_select():
-    with pytest.raises(ValueError, match="Unsupported column expression"):
-        parse_sql("SELECT age + 1 FROM users")
+def test_parses_arithmetic_in_select():
+    parsed = parse_sql("SELECT age + 1 FROM users")
+    assert parsed["columns"] == [
+        {
+            "type": "binary_op",
+            "op": "+",
+            "left": "age",
+            "right": {"type": "literal", "value": 1},
+        }
+    ]
 
 
 def test_rejects_aggregate_arithmetic_in_select():

@@ -121,9 +121,10 @@ SELECT qualified_columns FROM table [ [AS] alias ]
 | Aggregate | `SELECT COUNT(*) FROM Sheet1` | Aggregate function call |
 | Mixed | `SELECT name, COUNT(*) FROM Sheet1 GROUP BY name` | Plain + aggregate columns |
 | Qualified | `SELECT a.id, b.name FROM Sheet1 a JOIN Sheet2 b ON a.id = b.id` | Table-qualified columns (required in JOIN) |
+| Arithmetic expression | `SELECT price * qty AS total FROM Sheet1` | Row-level arithmetic with `+`, `-`, `*`, `/`, unary `-`, and parentheses |
 
 - Column aliases (`AS`) are **not supported**.
-- Arithmetic expressions in SELECT list are **not supported** (no `col + 1`, no `UPPER(name)`).
+- Function expressions in SELECT list are **not supported** (for example `UPPER(name)`).
 
 #### 3.2.1 Aggregate Functions
 
@@ -147,6 +148,38 @@ SELECT qualified_columns FROM table [ [AS] alias ]
 **Mixed columns**: When non-aggregate columns appear alongside aggregates, `GROUP BY` is required. Non-aggregate columns must appear in `GROUP BY`.
 
 **Aggregate arguments**: Aggregate calls accept only a bare column name (e.g., `SUM(score)`) or `*` for `COUNT(*)`. Expressions such as `COUNT(DISTINCT name)` and `SUM(score + 1)` are not supported.
+
+#### 3.2.2 Arithmetic Expressions
+
+Arithmetic expressions are evaluated per-row in the `SELECT` list.
+
+**Supported operators**:
+- Binary: `+`, `-`, `*`, `/`
+- Unary: leading `-` (negation)
+- Parentheses for grouping: `(a + b) * 2`
+
+**Precedence and associativity**:
+1. Unary `-`
+2. `*`, `/`
+3. `+`, `-`
+4. Left-associative for binary operators
+
+**Operands**:
+- Bare column names (single-table)
+- Qualified columns (`source.column`) in JOIN queries
+- Numeric literals (integer and float)
+
+**NULL propagation**:
+- If any operand in a binary arithmetic operation is `NULL`, the result is `NULL`.
+- Unary negation of `NULL` returns `NULL`.
+
+**Error behavior**:
+- Division by zero raises `ProgrammingError`.
+- Non-numeric operands raise `ProgrammingError`.
+
+**Current limitations**:
+- Arithmetic expressions are supported only in the `SELECT` list (not in `WHERE`, `GROUP BY`, `HAVING`, or `ORDER BY` expressions).
+- Aggregate arguments still accept only bare column names or `*` (for example, `SUM(a * b)` is rejected).
 
 ### 3.3 WHERE Clause
 

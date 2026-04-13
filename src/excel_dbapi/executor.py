@@ -4,6 +4,7 @@ from typing import Any, Callable, Optional
 
 from .engines.base import TableData, WorkbookBackend
 from .engines.result import Description, ExecutionResult
+from .exceptions import ProgrammingError
 from .parser import parse_sql
 from .sanitize import sanitize_cell_value, sanitize_row
 
@@ -300,6 +301,8 @@ class SharedExecutor:
                 return f"{column['func']}({column['arg']})"
             if column.get("type") == "column":
                 return f"{column['source']}.{column['name']}"
+            if column.get("type") in {"binary_op", "unary_op", "literal"}:
+                return SharedExecutor._expression_label(column)
         return str(column)
 
     @staticmethod
@@ -312,7 +315,72 @@ class SharedExecutor:
                 return f"{inner['func']}({inner['arg']})"
             if inner.get("type") == "column":
                 return f"{inner['source']}.{inner['name']}"
+            if inner.get("type") in {"binary_op", "unary_op", "literal"}:
+                return f"__expr__:{SharedExecutor._expression_to_sql(inner)}"
         return str(inner)
+
+    @staticmethod
+    def _expression_to_sql(expression: Any) -> str:
+        if isinstance(expression, dict):
+            expression_type = expression.get("type")
+            if expression_type == "alias":
+                return SharedExecutor._expression_to_sql(expression.get("expression"))
+            if expression_type == "column":
+                return f"{expression['source']}.{expression['name']}"
+            if expression_type == "aggregate":
+                return f"{expression['func']}({expression['arg']})"
+            if expression_type == "literal":
+                return str(expression.get("value"))
+            if expression_type == "unary_op":
+                operand_sql = SharedExecutor._expression_to_sql(expression.get("operand"))
+                return f"-{operand_sql}"
+            if expression_type == "binary_op":
+                left_sql = SharedExecutor._expression_to_sql(expression.get("left"))
+                right_sql = SharedExecutor._expression_to_sql(expression.get("right"))
+                return f"({left_sql} {expression['op']} {right_sql})"
+        return str(expression)
+
+    @staticmethod
+    def _expression_label(expression: Any) -> str:
+        expression_sql = SharedExecutor._expression_to_sql(expression)
+        if expression_sql.startswith("(") and expression_sql.endswith(")"):
+            return expression_sql[1:-1]
+        return expression_sql
+
+    @staticmethod
+    def _contains_arithmetic_expression(column: Any) -> bool:
+        inner = SharedExecutor._unwrap_alias(column)
+        if not isinstance(inner, dict):
+            return False
+        expression_type = inner.get("type")
+        if expression_type in {"binary_op", "unary_op", "literal"}:
+            return True
+        if expression_type == "alias":
+            return SharedExecutor._contains_arithmetic_expression(inner.get("expression"))
+        return False
+
+    @staticmethod
+    def _collect_expression_column_refs(expression: Any) -> set[str]:
+        refs: set[str] = set()
+        if isinstance(expression, str):
+            refs.add(expression)
+            return refs
+        if not isinstance(expression, dict):
+            return refs
+
+        expression_type = expression.get("type")
+        if expression_type == "alias":
+            return SharedExecutor._collect_expression_column_refs(expression.get("expression"))
+        if expression_type == "column":
+            refs.add(f"{expression['source']}.{expression['name']}")
+            return refs
+        if expression_type == "binary_op":
+            refs.update(SharedExecutor._collect_expression_column_refs(expression.get("left")))
+            refs.update(SharedExecutor._collect_expression_column_refs(expression.get("right")))
+            return refs
+        if expression_type == "unary_op":
+            refs.update(SharedExecutor._collect_expression_column_refs(expression.get("operand")))
+        return refs
 
     @staticmethod
     def _build_alias_map(columns: list[Any]) -> dict[str, str]:
@@ -754,10 +822,31 @@ class SharedExecutor:
             join_inputs.append((join_spec, right_data))
 
         # Validate SELECT columns
-        for column in parsed["columns"]:
-            inner = self._unwrap_alias(column)
-            if isinstance(inner, dict) and inner.get("type") == "column":
-                _validate_column_ref(str(inner["source"]), str(inner["name"]), "SELECT")
+        def _validate_join_select_expression(expression: Any) -> None:
+            if isinstance(expression, dict):
+                expression_type = expression.get("type")
+                if expression_type == "column":
+                    _validate_column_ref(
+                        str(expression["source"]),
+                        str(expression["name"]),
+                        "SELECT",
+                    )
+                    return
+                if expression_type == "literal":
+                    return
+                if expression_type == "unary_op":
+                    _validate_join_select_expression(expression.get("operand"))
+                    return
+                if expression_type == "binary_op":
+                    _validate_join_select_expression(expression.get("left"))
+                    _validate_join_select_expression(expression.get("right"))
+                    return
+            raise ValueError("JOIN queries require qualified column names in SELECT")
+
+        if parsed["columns"] != ["*"]:
+            for column in parsed["columns"]:
+                inner = self._unwrap_alias(column)
+                _validate_join_select_expression(inner)
 
         # Validate WHERE columns
         where_raw = parsed.get("where")
@@ -779,6 +868,8 @@ class SharedExecutor:
         if order_by:
             for item in order_by:
                 col_ref = str(item["column"])
+                if col_ref.startswith("__expr__:"):
+                    continue
                 if "." in col_ref:
                     src, col_name = col_ref.split(".", 1)
                     _validate_column_ref(src, col_name, "ORDER BY")
@@ -825,20 +916,6 @@ class SharedExecutor:
                 row for row in joined_rows_flat if self._matches_where(row, where)
             ]
 
-        if order_by:
-            joined_rows_flat = self._apply_order_by(
-                joined_rows_flat,
-                order_by,
-                value_getter=lambda r, col: r.get(col),
-            )
-
-        offset = parsed.get("offset") or 0
-        limit = parsed.get("limit")
-        if offset:
-            joined_rows_flat = joined_rows_flat[offset:]
-        if limit is not None:
-            joined_rows_flat = joined_rows_flat[:limit]
-
         selected_columns: list[str] = []
         output_names: list[str] = []
         columns = parsed["columns"]
@@ -847,20 +924,63 @@ class SharedExecutor:
                 for col_name in ordered_headers:
                     selected_columns.append(f"{source_ref}.{col_name}")
                     output_names.append(f"{source_ref}.{col_name}")
-        else:
-            for column in columns:
-                inner = self._unwrap_alias(column)
-                if not isinstance(inner, dict) or inner.get("type") != "column":
-                    raise ValueError("JOIN queries require qualified column names in SELECT")
-                source = str(inner["source"])
-                name = str(inner["name"])
-                selected_columns.append(f"{source}.{name}")
-                output_names.append(self._output_name(column))
+            if order_by:
+                joined_rows_flat = self._apply_order_by(
+                    joined_rows_flat,
+                    order_by,
+                    value_getter=lambda r, col: r.get(col),
+                )
 
-        rows_out = [
-            tuple(row.get(column_name) for column_name in selected_columns)
-            for row in joined_rows_flat
-        ]
+            offset = parsed.get("offset") or 0
+            limit = parsed.get("limit")
+            if offset:
+                joined_rows_flat = joined_rows_flat[offset:]
+            if limit is not None:
+                joined_rows_flat = joined_rows_flat[:limit]
+
+            rows_out = [
+                tuple(row.get(column_name) for column_name in selected_columns)
+                for row in joined_rows_flat
+            ]
+        else:
+            selected_columns = [self._source_key(column) for column in columns]
+            output_names = [self._output_name(column) for column in columns]
+
+            projected_rows: list[dict[str, Any]] = []
+            for row in joined_rows_flat:
+                projected_row = dict(row)
+                for column, key in zip(columns, selected_columns):
+                    inner = self._unwrap_alias(column)
+                    projected_row[key] = self._eval_expression(
+                        inner,
+                        row,
+                        lambda col_name: row.get(col_name),
+                    )
+                projected_rows.append(projected_row)
+
+            if order_by:
+                available_columns = set(selected_columns)
+                for source_ref, ordered_headers in source_headers_ordered:
+                    for col_name in ordered_headers:
+                        available_columns.add(f"{source_ref}.{col_name}")
+                projected_rows = self._apply_order_by(
+                    projected_rows,
+                    order_by,
+                    value_getter=lambda r, col: r.get(col),
+                    available_columns=available_columns,
+                )
+
+            offset = parsed.get("offset") or 0
+            limit = parsed.get("limit")
+            if offset:
+                projected_rows = projected_rows[offset:]
+            if limit is not None:
+                projected_rows = projected_rows[:limit]
+
+            rows_out = [
+                tuple(row.get(column_name) for column_name in selected_columns)
+                for row in projected_rows
+            ]
         description: Description = [
             (column_name, None, None, None, None, None, None)
             for column_name in output_names
@@ -902,6 +1022,9 @@ class SharedExecutor:
         # --- Non-aggregate path ---
         selected_columns: list[str]
         output_names: list[str]
+        needs_expression_projection = any(
+            self._contains_arithmetic_expression(column) for column in columns
+        )
         if columns == ["*"]:
             selected_columns = list(headers)
             output_names = list(headers)
@@ -909,7 +1032,17 @@ class SharedExecutor:
             selected_columns = [self._source_key(column) for column in columns]
             output_names = [self._output_name(column) for column in columns]
 
-        missing = [col for col in selected_columns if col not in headers]
+        missing: list[str]
+        if columns == ["*"]:
+            missing = [col for col in selected_columns if col not in headers]
+        elif needs_expression_projection:
+            referenced_columns: set[str] = set()
+            for column in columns:
+                inner = self._unwrap_alias(column)
+                referenced_columns.update(self._collect_expression_column_refs(inner))
+            missing = sorted(col for col in referenced_columns if col not in headers)
+        else:
+            missing = [col for col in selected_columns if col not in headers]
         if missing:
             raise ValueError(
                 f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}"
@@ -927,21 +1060,59 @@ class SharedExecutor:
             order_by = resolved_order_by
 
         if order_by:
-            rows = self._apply_order_by(
-                rows,
-                order_by,
-                value_getter=lambda r, col: r.get(col),
-                available_columns=set(headers),
-            )
+            if needs_expression_projection and columns != ["*"]:
+                pass
+            else:
+                rows = self._apply_order_by(
+                    rows,
+                    order_by,
+                    value_getter=lambda r, col: r.get(col),
+                    available_columns=set(headers),
+                )
 
-        offset = parsed.get("offset") or 0
-        limit = parsed.get("limit")
-        if offset:
-            rows = rows[offset:]
-        if limit is not None:
-            rows = rows[:limit]
+        if needs_expression_projection and columns != ["*"]:
+            projected_rows: list[dict[str, Any]] = []
+            for row in rows:
+                projected_row = dict(row)
+                for column, key in zip(columns, selected_columns):
+                    inner = self._unwrap_alias(column)
+                    projected_row[key] = self._eval_expression(
+                        inner,
+                        row,
+                        lambda col_name: row.get(col_name),
+                    )
+                projected_rows.append(projected_row)
 
-        rows_out = [tuple(row.get(col) for col in selected_columns) for row in rows]
+            if order_by:
+                available_columns = set(headers)
+                available_columns.update(selected_columns)
+                projected_rows = self._apply_order_by(
+                    projected_rows,
+                    order_by,
+                    value_getter=lambda r, col: r.get(col),
+                    available_columns=available_columns,
+                )
+
+            offset = parsed.get("offset") or 0
+            limit = parsed.get("limit")
+            if offset:
+                projected_rows = projected_rows[offset:]
+            if limit is not None:
+                projected_rows = projected_rows[:limit]
+
+            rows_out = [
+                tuple(projected_row.get(col) for col in selected_columns)
+                for projected_row in projected_rows
+            ]
+        else:
+            offset = parsed.get("offset") or 0
+            limit = parsed.get("limit")
+            if offset:
+                rows = rows[offset:]
+            if limit is not None:
+                rows = rows[:limit]
+
+            rows_out = [tuple(row.get(col) for col in selected_columns) for row in rows]
 
         distinct = parsed.get("distinct", False)
         if distinct:
@@ -1248,6 +1419,69 @@ class SharedExecutor:
         if aggregate == "MAX":
             return max(numeric_values)
         raise ValueError(f"Unsupported aggregate function: {func}")
+
+    def _eval_expression(
+        self,
+        expr: Any,
+        row: dict[str, Any],
+        resolve_column: Callable[[str], Any],
+    ) -> Any:
+        if isinstance(expr, str):
+            return resolve_column(expr)
+
+        if not isinstance(expr, dict):
+            return expr
+
+        expr_type = expr.get("type")
+        if expr_type == "alias":
+            return self._eval_expression(expr.get("expression"), row, resolve_column)
+
+        if expr_type == "column":
+            column_key = f"{expr['source']}.{expr['name']}"
+            return resolve_column(column_key)
+
+        if expr_type == "literal":
+            return expr.get("value")
+
+        if expr_type == "unary_op":
+            if expr.get("op") != "-":
+                raise ProgrammingError(f"Unsupported unary operator: {expr.get('op')}")
+            operand_value = self._eval_expression(expr.get("operand"), row, resolve_column)
+            if operand_value is None:
+                return None
+            numeric_operand = self._to_number(operand_value)
+            if numeric_operand is None:
+                raise ProgrammingError("Arithmetic expression requires numeric operands")
+            return -numeric_operand
+
+        if expr_type == "binary_op":
+            operator = str(expr.get("op"))
+            left_value = self._eval_expression(expr.get("left"), row, resolve_column)
+            right_value = self._eval_expression(expr.get("right"), row, resolve_column)
+            if left_value is None or right_value is None:
+                return None
+
+            left_number = self._to_number(left_value)
+            right_number = self._to_number(right_value)
+            if left_number is None or right_number is None:
+                raise ProgrammingError("Arithmetic expression requires numeric operands")
+
+            if operator == "+":
+                return left_number + right_number
+            if operator == "-":
+                return left_number - right_number
+            if operator == "*":
+                return left_number * right_number
+            if operator == "/":
+                if right_number == 0:
+                    raise ProgrammingError("Division by zero in arithmetic expression")
+                return left_number / right_number
+            raise ProgrammingError(f"Unsupported arithmetic operator: {operator}")
+
+        if expr_type == "aggregate":
+            raise ProgrammingError("Aggregate expressions are not supported in row-level arithmetic")
+
+        raise ProgrammingError(f"Unsupported expression type: {expr_type}")
 
     def _evaluate_condition(
         self, row: dict[str, Any], condition: dict[str, Any]

@@ -268,6 +268,10 @@ def _parse_columns(columns_token: str) -> List[Any]:
         return ["*"]
 
     def _parse_column_expression(expression: str) -> Any:
+        expression = expression.strip()
+        if not expression:
+            raise ValueError("Invalid column expression")
+
         if re.search(r"(?i)\bOVER\s*\(", expression):
             raise ValueError("Unsupported SQL syntax: OVER")
         match = re.fullmatch(
@@ -304,17 +308,183 @@ def _parse_columns(columns_token: str) -> List[Any]:
                 aggregate["distinct"] = True
             return aggregate
 
-        if expression != "*" and not re.fullmatch(
-            rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", expression
-        ):
-            raise ValueError(
-                f"Unsupported column expression: {expression}. "
-                "Only bare column names, *, and aggregate functions are supported"
-            )
+        if expression == "*":
+            return expression
+
         if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression):
             source, name = expression.split(".", 1)
             return {"type": "column", "source": source, "name": name}
-        return expression
+
+        if re.fullmatch(_IDENTIFIER_PATTERN, expression):
+            return expression
+
+        def _tokenize_expression(text: str) -> list[str]:
+            tokens: list[str] = []
+            current: list[str] = []
+            in_single = False
+            in_double = False
+            index = 0
+            while index < len(text):
+                char = text[index]
+
+                if in_single:
+                    current.append(char)
+                    if char == "'":
+                        if index + 1 < len(text) and text[index + 1] == "'":
+                            current.append(text[index + 1])
+                            index += 1
+                        else:
+                            in_single = False
+                    index += 1
+                    continue
+
+                if in_double:
+                    current.append(char)
+                    if char == '"':
+                        if index + 1 < len(text) and text[index + 1] == '"':
+                            current.append(text[index + 1])
+                            index += 1
+                        else:
+                            in_double = False
+                    index += 1
+                    continue
+
+                if char.isspace():
+                    if current:
+                        tokens.append("".join(current))
+                        current = []
+                    index += 1
+                    continue
+
+                if char in {"+", "-", "*", "/", "(", ")"}:
+                    if current:
+                        tokens.append("".join(current))
+                        current = []
+                    tokens.append(char)
+                    index += 1
+                    continue
+
+                if char == "'":
+                    current.append(char)
+                    in_single = True
+                    index += 1
+                    continue
+
+                if char == '"':
+                    current.append(char)
+                    in_double = True
+                    index += 1
+                    continue
+
+                current.append(char)
+                index += 1
+
+            if current:
+                tokens.append("".join(current))
+
+            return _collapse_aggregate_tokens(tokens)
+
+        def _parse_numeric_literal(token: str) -> int | float | None:
+            if token.startswith(("'", '"')) and token.endswith(("'", '"')):
+                return None
+            try:
+                return int(token)
+            except ValueError:
+                pass
+            try:
+                return float(token)
+            except ValueError:
+                return None
+
+        tokens = _tokenize_expression(expression)
+        position = 0
+
+        def _peek() -> str | None:
+            if position >= len(tokens):
+                return None
+            return tokens[position]
+
+        def _consume(expected: str | None = None) -> str:
+            nonlocal position
+            token = _peek()
+            if token is None:
+                raise ValueError(f"Unsupported column expression: {expression}")
+            if expected is not None and token != expected:
+                raise ValueError(f"Unsupported column expression: {expression}")
+            position += 1
+            return token
+
+        def _parse_atom() -> Any:
+            token = _peek()
+            if token is None:
+                raise ValueError(f"Unsupported column expression: {expression}")
+
+            if token == "(":
+                _consume("(")
+                parsed = _parse_expression()
+                if _peek() != ")":
+                    raise ValueError(f"Unsupported column expression: {expression}")
+                _consume(")")
+                return parsed
+
+            _consume()
+            numeric = _parse_numeric_literal(token)
+            if numeric is not None:
+                return {"type": "literal", "value": numeric}
+
+            if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, token):
+                source, name = token.split(".", 1)
+                return {"type": "column", "source": source, "name": name}
+
+            if re.fullmatch(_IDENTIFIER_PATTERN, token):
+                return token
+
+            if re.fullmatch(
+                r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
+                token,
+            ):
+                raise ValueError(
+                    "Unsupported column expression: aggregate functions cannot be used inside arithmetic expressions"
+                )
+
+            raise ValueError(
+                f"Unsupported column expression: {expression}. "
+                "Only bare column names, qualified column names, numeric literals, arithmetic operators (+, -, *, /), and aggregate functions are supported"
+            )
+
+        def _parse_factor() -> Any:
+            token = _peek()
+            if token == "-":
+                _consume("-")
+                return {"type": "unary_op", "op": "-", "operand": _parse_factor()}
+            return _parse_atom()
+
+        def _parse_term() -> Any:
+            left = _parse_factor()
+            while True:
+                op = _peek()
+                if op not in {"*", "/"}:
+                    break
+                _consume(op)
+                right = _parse_factor()
+                left = {"type": "binary_op", "op": op, "left": left, "right": right}
+            return left
+
+        def _parse_expression() -> Any:
+            left = _parse_term()
+            while True:
+                op = _peek()
+                if op not in {"+", "-"}:
+                    break
+                _consume(op)
+                right = _parse_term()
+                left = {"type": "binary_op", "op": op, "left": left, "right": right}
+            return left
+
+        parsed_expression = _parse_expression()
+        if _peek() is not None:
+            raise ValueError(f"Unsupported column expression: {expression}")
+        return parsed_expression
 
     def _is_valid_alias_name(alias_name: str) -> bool:
         if not re.fullmatch(_IDENTIFIER_PATTERN, alias_name):
@@ -969,12 +1139,28 @@ def _validate_join_column_reference(
     allowed_sources: set[str],
     context: str,
 ) -> None:
-    if not isinstance(column, dict) or column.get("type") != "column":
-        raise ValueError(f"{context} requires qualified column names in JOIN queries")
-    source = str(column.get("source", ""))
-    name = str(column.get("name", ""))
-    if source not in allowed_sources or not name:
-        raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
+    if isinstance(column, dict):
+        column_type = column.get("type")
+        if column_type == "alias":
+            _validate_join_column_reference(column.get("expression"), allowed_sources, context)
+            return
+        if column_type == "column":
+            source = str(column.get("source", ""))
+            name = str(column.get("name", ""))
+            if source not in allowed_sources or not name:
+                raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
+            return
+        if column_type == "literal":
+            return
+        if column_type == "unary_op":
+            _validate_join_column_reference(column.get("operand"), allowed_sources, context)
+            return
+        if column_type == "binary_op":
+            _validate_join_column_reference(column.get("left"), allowed_sources, context)
+            _validate_join_column_reference(column.get("right"), allowed_sources, context)
+            return
+
+    raise ValueError(f"{context} requires qualified column names in JOIN queries")
 
 
 def _is_subquery_condition(where: Dict[str, Any]) -> bool:
