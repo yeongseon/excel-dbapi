@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+from collections import Counter
 from typing import Any, cast
 
 from excel_dbapi.engines.base import TableData
@@ -26,13 +27,14 @@ def has_table(connection: Any, table_name: str) -> bool:
 
 
 def get_columns(
-    connection: Any, table_name: str, sample_size: int = 100
+    connection: Any, table_name: str, sample_size: int | None = 100
 ) -> list[dict[str, Any]]:
     """Return column metadata by sampling data rows."""
     data = connection.engine.read_sheet(table_name)
     columns: list[dict[str, Any]] = []
+    sampled_rows = data.rows if sample_size is None else data.rows[:sample_size]
     for index, header in enumerate(data.headers):
-        col_values = [row[index] for row in data.rows[:sample_size] if index < len(row)]
+        col_values = [row[index] for row in sampled_rows if index < len(row)]
         inferred = _infer_type(col_values)
         columns.append(
             {
@@ -51,32 +53,38 @@ def _infer_type(values: list[Any]) -> dict[str, Any]:
         return {"type": "TEXT", "nullable": True}
 
     nullable = len(non_null) < len(values)
-    types = set()
-    for value in non_null:
-        if isinstance(value, bool):
-            types.add("BOOLEAN")
-        elif isinstance(value, int):
-            types.add("INTEGER")
-        elif isinstance(value, float):
-            types.add("FLOAT")
-        elif isinstance(value, datetime.datetime):
-            types.add("DATETIME")
-        elif isinstance(value, datetime.date):
-            types.add("DATE")
-        else:
-            types.add("TEXT")
+    type_names = [_classify_value_type(value) for value in non_null]
+    counts = Counter(type_names)
+    unique_types = set(counts)
 
-    if types == {"INTEGER"}:
-        return {"type": "INTEGER", "nullable": nullable}
-    if types <= {"INTEGER", "FLOAT"}:
+    if len(unique_types) == 1:
+        return {"type": type_names[0], "nullable": nullable}
+
+    if unique_types <= {"INTEGER", "FLOAT"}:
         return {"type": "FLOAT", "nullable": nullable}
-    if types == {"BOOLEAN"}:
-        return {"type": "BOOLEAN", "nullable": nullable}
-    if types == {"DATE"}:
-        return {"type": "DATE", "nullable": nullable}
-    if types == {"DATETIME"} or types == {"DATE", "DATETIME"}:
+
+    if unique_types <= {"DATE", "DATETIME"}:
         return {"type": "DATETIME", "nullable": nullable}
+
+    dominant_type, dominant_count = counts.most_common(1)[0]
+    if dominant_count / len(non_null) > 0.8:
+        return {"type": dominant_type, "nullable": nullable}
+
     return {"type": "TEXT", "nullable": nullable}
+
+
+def _classify_value_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, int):
+        return "INTEGER"
+    if isinstance(value, float):
+        return "FLOAT"
+    if isinstance(value, datetime.datetime):
+        return "DATETIME"
+    if isinstance(value, datetime.date):
+        return "DATE"
+    return "TEXT"
 
 
 def write_table_metadata(
