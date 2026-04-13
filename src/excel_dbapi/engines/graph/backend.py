@@ -7,7 +7,7 @@ from typing import Any, cast
 import httpx
 
 from ...exceptions import NotSupportedError, OperationalError
-from ..base import TableData, WorkbookBackend
+from ..base import TableData, WorkbookBackend, _normalize_headers
 from .auth import TokenProvider, normalize_token_provider
 from .client import GraphClient
 from .locator import GraphWorkbookLocator, parse_msgraph_dsn
@@ -142,7 +142,7 @@ class GraphBackend(WorkbookBackend):
         if not values:
             return TableData(headers=[], rows=[])
 
-        headers = [str(h) if h is not None else "" for h in values[0]]
+        headers = _normalize_headers(values[0])
         rows = [list(row) for row in values[1:]]
         return TableData(headers=headers, rows=rows)
 

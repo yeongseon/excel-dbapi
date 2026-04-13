@@ -1,4 +1,5 @@
 import copy
+from datetime import date, datetime, time
 import re
 from typing import Any, Callable
 
@@ -2107,6 +2108,14 @@ class SharedExecutor:
         raise NotImplementedError(f"Unsupported operator: {operator}")
 
     def _coerce_for_compare(self, left: Any, right: Any) -> tuple[Any, Any]:
+        if isinstance(left, bool) and isinstance(right, bool):
+            return int(left), int(right)
+
+        left_temporal = self._coerce_temporal_value(left)
+        right_temporal = self._coerce_temporal_value(right)
+        if left_temporal is not None and right_temporal is not None:
+            return left_temporal, right_temporal
+
         left_num = self._to_number(left)
         right_num = self._to_number(right)
         if left_num is not None and right_num is not None:
@@ -2117,11 +2126,82 @@ class SharedExecutor:
 
     def _sort_key(self, value: Any) -> tuple[int, Any]:
         if value is None:
-            return (1, "")
+            return (1, (0, ""))
+
+        if isinstance(value, bool):
+            return (0, (1, int(value)))
+
+        temporal = self._coerce_temporal_value(value)
+        if temporal is not None:
+            return (0, (2, temporal))
+
         numeric = self._to_number(value)
         if numeric is not None:
-            return (0, numeric)
-        return (0, str(value))
+            return (0, (0, numeric))
+
+        if isinstance(value, str):
+            return (0, (3, value))
+
+        return (0, (4, str(value)))
+
+    @staticmethod
+    def _coerce_temporal_value(value: Any) -> datetime | None:
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None) if value.tzinfo is not None else value
+        if isinstance(value, date):
+            return datetime.combine(value, time.min)
+        if isinstance(value, str):
+            return SharedExecutor._parse_datetime_string(value)
+        return None
+
+    @staticmethod
+    def _parse_datetime_string(value: str) -> datetime | None:
+        text = value.strip()
+        if not text:
+            return None
+
+        normalized = text
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+
+        try:
+            parsed_datetime = datetime.fromisoformat(normalized)
+        except ValueError:
+            parsed_datetime = None
+
+        if parsed_datetime is not None:
+            return (
+                parsed_datetime.replace(tzinfo=None)
+                if parsed_datetime.tzinfo is not None
+                else parsed_datetime
+            )
+
+        try:
+            parsed_date = date.fromisoformat(text)
+        except ValueError:
+            parsed_date = None
+
+        if parsed_date is not None:
+            return datetime.combine(parsed_date, time.min)
+
+        formats = (
+            "%Y/%m/%d",
+            "%Y/%m/%d %H:%M:%S",
+            "%Y/%m/%d %H:%M",
+            "%m/%d/%Y",
+            "%m/%d/%Y %H:%M:%S",
+            "%m/%d/%Y %H:%M",
+            "%d/%m/%Y",
+            "%d/%m/%Y %H:%M:%S",
+            "%d/%m/%Y %H:%M",
+        )
+        for date_format in formats:
+            try:
+                return datetime.strptime(text, date_format)
+            except ValueError:
+                continue
+
+        return None
 
     def _to_number(self, value: Any) -> float | None:
         if isinstance(value, bool):
