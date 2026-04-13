@@ -373,14 +373,17 @@ def test_right_join_accepted() -> None:
     assert parsed["joins"][0]["type"] == "RIGHT"
 
 
-def test_full_outer_join_rejected() -> None:
-    with pytest.raises(ValueError, match="Unsupported SQL syntax: FULL"):
-        parse_sql("SELECT a.id FROM t1 a FULL OUTER JOIN t2 b ON a.id = b.id")
+def test_full_outer_join_accepted() -> None:
+    parsed = parse_sql("SELECT a.id FROM t1 a FULL OUTER JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"] is not None
+    assert parsed["joins"][0]["type"] == "FULL"
 
 
-def test_cross_join_rejected() -> None:
-    with pytest.raises(ValueError, match="Unsupported SQL syntax: CROSS"):
-        parse_sql("SELECT a.id FROM t1 a CROSS JOIN t2 b")
+def test_cross_join_accepted() -> None:
+    parsed = parse_sql("SELECT a.id FROM t1 a CROSS JOIN t2 b")
+    assert parsed["joins"] is not None
+    assert parsed["joins"][0]["type"] == "CROSS"
+    assert parsed["joins"][0]["on"] is None
 
 
 # =============================================================================

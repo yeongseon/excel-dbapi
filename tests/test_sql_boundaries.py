@@ -24,14 +24,15 @@ def test_rejects_nulls_last():
         parse_sql("SELECT * FROM users ORDER BY id ASC NULLS LAST")
 
 
-def test_rejects_cross_join():
-    with pytest.raises(ValueError, match="Unsupported SQL syntax: CROSS JOIN"):
-        parse_sql("SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id")
+def test_accepts_cross_join_without_on():
+    parsed = parse_sql("SELECT a.id FROM t1 a CROSS JOIN t2 b")
+    assert parsed["joins"][0]["type"] == "CROSS"
+    assert parsed["joins"][0]["on"] is None
 
 
-def test_rejects_full_outer_join():
-    with pytest.raises(ValueError, match="Unsupported SQL syntax: FULL JOIN"):
-        parse_sql("SELECT a.id FROM t1 a FULL OUTER JOIN t2 b ON a.id = b.id")
+def test_accepts_full_outer_join():
+    parsed = parse_sql("SELECT a.id FROM t1 a FULL OUTER JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"][0]["type"] == "FULL"
 
 
 def test_allows_join_with_select_star():

@@ -1150,8 +1150,19 @@ def _parse_select(
                 raise ValueError("Unsupported SQL syntax: RIGHT")
             join_type = "RIGHT"
             token_index += 1
-        elif join_token in {"FULL", "CROSS"}:
-            raise ValueError(f"Unsupported SQL syntax: {join_token} JOIN")
+        elif join_token == "FULL":
+            token_index += 1
+            if token_index < len(tokens) and tokens[token_index].upper() == "OUTER":
+                token_index += 1
+            if token_index >= len(tokens) or tokens[token_index].upper() != "JOIN":
+                raise ValueError("Unsupported SQL syntax: FULL")
+            join_type = "FULL"
+            token_index += 1
+        elif join_token == "CROSS":
+            if token_index + 1 >= len(tokens) or tokens[token_index + 1].upper() != "JOIN":
+                raise ValueError("Unsupported SQL syntax: CROSS")
+            join_type = "CROSS"
+            token_index += 2
         else:
             break
 
@@ -1185,9 +1196,22 @@ def _parse_select(
                 f"use distinct aliases for each table"
             )
 
-        if token_index >= len(tokens) or tokens[token_index].upper() != "ON":
-            raise ValueError("JOIN requires ON condition")
-        token_index += 1
+        if join_type == "CROSS":
+            if token_index < len(tokens) and tokens[token_index].upper() == "ON":
+                raise ValueError("CROSS JOIN does not accept ON condition")
+            joins.append(
+                {
+                    "type": join_type,
+                    "source": join_source,
+                    "on": None,
+                }
+            )
+            known_source_refs.update(right_sources)
+            continue
+        else:
+            if token_index >= len(tokens) or tokens[token_index].upper() != "ON":
+                raise ValueError("JOIN requires ON condition")
+            token_index += 1
 
         on_start = token_index
         while token_index < len(tokens):
@@ -1224,20 +1248,6 @@ def _parse_select(
         if _is_quoted_token(token):
             continue
         upper = token.upper()
-        if upper in {"FULL", "CROSS"}:
-            next_token = (
-                clause_tokens[idx + 1].upper()
-                if idx + 1 < len(clause_tokens)
-                else ""
-            )
-            if next_token == "OUTER":
-                next_token = (
-                    clause_tokens[idx + 2].upper()
-                    if idx + 2 < len(clause_tokens)
-                    else ""
-                )
-            if next_token == "JOIN":
-                raise ValueError(f"Unsupported SQL syntax: {upper} JOIN")
     where = None
     group_by = None
     having = None

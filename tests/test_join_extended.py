@@ -475,3 +475,347 @@ def test_select_star_with_alias_and_no_alias_description(tmp_path: Path) -> None
         "t2.val2",
     ]
     assert len(rows) == 2  # ids 1 and 2 match
+
+
+def test_full_outer_join_basic(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_basic.xlsx"
+    _create_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, a.val1, b.id, b.val2 "
+        "FROM t1 a FULL OUTER JOIN t2 b ON a.id = b.id "
+        "ORDER BY a.id",
+    )
+    assert rows == [
+        (1, "a1", 1, "b1"),
+        (2, "a2", 2, "b2"),
+        (4, "a4", None, None),
+        (None, None, 3, "b3"),
+    ]
+
+
+def test_full_join_without_outer_keyword(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_join_no_outer_keyword.xlsx"
+    _create_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id FROM t1 a FULL JOIN t2 b ON a.id = b.id ORDER BY a.id",
+    )
+    assert rows == [(1, 1), (2, 2), (4, None), (None, 3)]
+
+
+def test_full_outer_join_all_match(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_all_match.xlsx"
+    _create_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, a.val1, d.id, d.val4 "
+        "FROM t1 a FULL OUTER JOIN t4 d ON a.id = d.id "
+        "ORDER BY a.id",
+    )
+    assert rows == [(1, "a1", 1, "d1"), (2, "a2", 2, "d2"), (4, "a4", 4, "d4")]
+
+
+def test_full_outer_join_no_match(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_no_match.xlsx"
+    workbook = Workbook()
+
+    t1 = workbook.active
+    assert t1 is not None
+    t1.title = "t1"
+    t1.append(["id", "val1"])
+    t1.append([1, "a1"])
+    t1.append([2, "a2"])
+
+    t2 = workbook.create_sheet("t2")
+    t2.append(["id", "val2"])
+    t2.append([3, "b3"])
+    t2.append([4, "b4"])
+    workbook.save(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, a.val1, b.id, b.val2 FROM t1 a FULL JOIN t2 b ON a.id = b.id ORDER BY a.id",
+    )
+    assert rows == [
+        (1, "a1", None, None),
+        (2, "a2", None, None),
+        (None, None, 3, "b3"),
+        (None, None, 4, "b4"),
+    ]
+
+
+def test_full_outer_join_with_where(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_with_where.xlsx"
+    _create_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id "
+        "FROM t1 a FULL JOIN t2 b ON a.id = b.id "
+        "WHERE b.id IS NULL OR a.id = 1 "
+        "ORDER BY a.id",
+    )
+    assert rows == [(1, 1), (4, None)]
+
+
+def test_full_outer_join_with_select_star(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_select_star.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a FULL JOIN t2 b ON a.id = b.id ORDER BY a.id")
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert rows == [
+        (1, "a1", 1, "b1"),
+        (2, "a2", 2, "b2"),
+        (4, "a4", None, None),
+        (None, None, 3, "b3"),
+    ]
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_full_outer_join_chained(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_chained.xlsx"
+    _create_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id, c.val3 "
+        "FROM t1 a FULL JOIN t2 b ON a.id = b.id "
+        "INNER JOIN t3 c ON b.id = c.id "
+        "ORDER BY c.id",
+    )
+    assert rows == [(1, 1, "c1"), (None, 3, "c3")]
+
+
+def test_full_outer_join_description(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_description.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT a.id, a.val1, b.id, b.val2 FROM t1 a FULL JOIN t2 b ON a.id = b.id"
+        )
+        _ = cursor.fetchall()
+        description = cursor.description
+
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_full_outer_join_duplicate_keys(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_duplicate_keys.xlsx"
+    workbook = Workbook()
+
+    t1 = workbook.active
+    assert t1 is not None
+    t1.title = "t1"
+    t1.append(["id", "val1"])
+    t1.append([1, "a1"])
+    t1.append([1, "a2"])
+    t1.append([3, "a3"])
+
+    t2 = workbook.create_sheet("t2")
+    t2.append(["id", "val2"])
+    t2.append([1, "b1"])
+    t2.append([1, "b2"])
+    t2.append([2, "b2"])
+    workbook.save(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, a.val1, b.id, b.val2 FROM t1 a FULL JOIN t2 b ON a.id = b.id",
+    )
+    assert len(rows) == 6
+    assert rows.count((1, "a1", 1, "b1")) == 1
+    assert rows.count((1, "a1", 1, "b2")) == 1
+    assert rows.count((1, "a2", 1, "b1")) == 1
+    assert rows.count((1, "a2", 1, "b2")) == 1
+    assert rows.count((3, "a3", None, None)) == 1
+    assert rows.count((None, None, 2, "b2")) == 1
+
+
+def test_full_outer_join_null_keys(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_null_keys.xlsx"
+    workbook = Workbook()
+
+    t1 = workbook.active
+    assert t1 is not None
+    t1.title = "t1"
+    t1.append(["id", "val1"])
+    t1.append([1, "a1"])
+    t1.append([None, "a_null"])
+
+    t2 = workbook.create_sheet("t2")
+    t2.append(["id", "val2"])
+    t2.append([1, "b1"])
+    t2.append([None, "b_null"])
+    workbook.save(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, a.val1, b.id, b.val2 FROM t1 a FULL JOIN t2 b ON a.id = b.id",
+    )
+    assert len(rows) == 3
+    assert rows.count((1, "a1", 1, "b1")) == 1
+    assert rows.count((None, "a_null", None, None)) == 1
+    assert rows.count((None, None, None, "b_null")) == 1
+
+
+def test_full_outer_join_empty_left(tmp_path: Path) -> None:
+    file_path = tmp_path / "full_outer_join_empty_left.xlsx"
+    workbook = Workbook()
+
+    t1 = workbook.active
+    assert t1 is not None
+    t1.title = "t1"
+    t1.append(["id", "val1"])
+
+    t2 = workbook.create_sheet("t2")
+    t2.append(["id", "val2"])
+    t2.append([1, "b1"])
+    t2.append([2, "b2"])
+    workbook.save(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, a.val1, b.id, b.val2 FROM t1 a FULL JOIN t2 b ON a.id = b.id ORDER BY b.id",
+    )
+    assert rows == [(None, None, 1, "b1"), (None, None, 2, "b2")]
+
+
+def test_cross_join_basic(tmp_path: Path) -> None:
+    file_path = tmp_path / "cross_join_basic.xlsx"
+    _create_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, a.val1, b.id, b.val2 FROM t1 a CROSS JOIN t2 b ORDER BY a.id, b.id",
+    )
+    assert len(rows) == 9
+    assert rows[0] == (1, "a1", 1, "b1")
+    assert rows[-1] == (4, "a4", 3, "b3")
+
+
+def test_cross_join_with_where(tmp_path: Path) -> None:
+    file_path = tmp_path / "cross_join_with_where.xlsx"
+    _create_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id FROM t1 a CROSS JOIN t2 b "
+        "WHERE a.id = 1 AND b.id = 1 OR a.id = 2 AND b.id = 2 "
+        "ORDER BY a.id",
+    )
+    assert rows == [(1, 1), (2, 2)]
+
+
+def test_cross_join_with_select_star(tmp_path: Path) -> None:
+    file_path = tmp_path / "cross_join_select_star.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM t1 a CROSS JOIN t2 b ORDER BY a.id, b.id")
+        rows = cursor.fetchall()
+        description = cursor.description
+
+    assert len(rows) == 9
+    assert rows[0] == (1, "a1", 1, "b1")
+    assert rows[-1] == (4, "a4", 3, "b3")
+    assert description is not None
+    assert [col[0] for col in description] == ["a.id", "a.val1", "b.id", "b.val2"]
+
+
+def test_cross_join_empty_table(tmp_path: Path) -> None:
+    file_path = tmp_path / "cross_join_empty_table.xlsx"
+    workbook = Workbook()
+
+    t1 = workbook.active
+    assert t1 is not None
+    t1.title = "t1"
+    t1.append(["id", "val1"])
+    t1.append([1, "a1"])
+
+    t2 = workbook.create_sheet("t2")
+    t2.append(["id", "val2"])
+    workbook.save(file_path)
+
+    rows = _run_query(file_path, "SELECT a.id, b.id FROM t1 a CROSS JOIN t2 b")
+    assert rows == []
+
+
+def test_cross_join_single_row(tmp_path: Path) -> None:
+    file_path = tmp_path / "cross_join_single_row.xlsx"
+    workbook = Workbook()
+
+    t1 = workbook.active
+    assert t1 is not None
+    t1.title = "t1"
+    t1.append(["id", "val1"])
+    t1.append([1, "a1"])
+
+    t2 = workbook.create_sheet("t2")
+    t2.append(["id", "val2"])
+    t2.append([1, "b1"])
+    t2.append([2, "b2"])
+    t2.append([3, "b3"])
+    workbook.save(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id FROM t1 a CROSS JOIN t2 b ORDER BY b.id",
+    )
+    assert rows == [(1, 1), (1, 2), (1, 3)]
+
+
+def test_cross_join_chained(tmp_path: Path) -> None:
+    file_path = tmp_path / "cross_join_chained.xlsx"
+    _create_join_workbook(file_path)
+
+    rows = _run_query(
+        file_path,
+        "SELECT a.id, b.id, c.val3 "
+        "FROM t1 a CROSS JOIN t2 b "
+        "INNER JOIN t3 c ON b.id = c.id "
+        "ORDER BY a.id, b.id",
+    )
+    assert rows == [
+        (1, 1, "c1"),
+        (1, 3, "c3"),
+        (2, 1, "c1"),
+        (2, 3, "c3"),
+        (4, 1, "c1"),
+        (4, 3, "c3"),
+    ]
+
+
+def test_cross_join_rejects_on_clause(tmp_path: Path) -> None:
+    file_path = tmp_path / "cross_join_rejects_on_clause.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="CROSS JOIN does not accept ON condition"):
+            cursor.execute("SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id")
+
+
+def test_cross_join_on_rejected(tmp_path: Path) -> None:
+    file_path = tmp_path / "cross_join_on_rejected.xlsx"
+    _create_join_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="CROSS JOIN does not accept ON condition"):
+            cursor.execute(
+                "SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id WHERE a.id = b.id"
+            )

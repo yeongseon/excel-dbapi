@@ -27,7 +27,7 @@ database engine.
 
 The following SQL features are **rejected at parse time** with `ValueError`:
 
-- `FULL OUTER JOIN`, `CROSS JOIN`, `NATURAL JOIN` (INNER, LEFT, and RIGHT JOIN are supported)
+- `NATURAL JOIN` (INNER, LEFT, RIGHT, FULL OUTER, and CROSS JOIN are supported)
 - Mixed `SELECT *, col` with JOIN (bare `SELECT *` is supported; see §4.8)
 - `GROUP BY`, `HAVING`, aggregates in JOIN queries
 - Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])` and `INSERT INTO ... SELECT ...`
@@ -225,8 +225,8 @@ Any other ordering raises `ValueError`.
 | INNER JOIN | ✅ | `SELECT a.id, b.name FROM t1 a JOIN t2 b ON a.id = b.id` |
 | LEFT JOIN | ✅ | `SELECT a.id, b.name FROM t1 a LEFT JOIN t2 b ON a.id = b.id` |
 | RIGHT JOIN | ✅ | `SELECT a.id, b.name FROM t1 a RIGHT JOIN t2 b ON a.id = b.id` |
-| FULL OUTER JOIN | ❌ | Not supported |
-| CROSS JOIN | ❌ | Not supported |
+| FULL OUTER JOIN | ✅ | `A FULL OUTER JOIN B ON ...` (or `FULL JOIN`) |
+| CROSS JOIN | ✅ | `A CROSS JOIN B` (no ON clause; cartesian product) |
 | NATURAL JOIN | ❌ | Not supported |
 | Multiple JOINs | ✅ | `... JOIN t2 ... JOIN t3 ...` |
 
@@ -238,6 +238,8 @@ Any other ordering raises `ValueError`.
 - Subqueries (`WHERE ... IN (SELECT ...)`) are **not supported** with JOIN.
 - The ON clause requires at least one equality condition (e.g., `a.id = b.user_id`).
 - Multiple ON conditions are joined with `AND`.
+- `CROSS JOIN` produces a cartesian product of all rows; `ON` clause is rejected for CROSS JOIN.
+- `FULL OUTER JOIN` preserves all rows from both sides, filling NULLs where no match exists.
 - For chained JOINs, each ON clause may reference columns from any previously joined source and the current right source.
 - `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET` work with JOIN queries.
 - `GROUP BY`, `HAVING`, and aggregates are **not supported** in JOIN queries.

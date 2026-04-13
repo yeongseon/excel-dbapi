@@ -576,16 +576,18 @@ class SharedExecutor:
             self._build_source_row(right_source, right_headers, right_row_values)
             for right_row_values in right_data.rows
         ]
-        right_hash: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
-        for right_ns in right_rows:
-            key = build_key(right_ns, False)
-            right_hash.setdefault(key, []).append(right_ns)
+        join_type_upper = join_type.upper()
+        right_hash: dict[tuple[Any, ...], list[dict[str, dict[str, Any]]]] = {}
+        if join_type_upper != "CROSS":
+            for right_ns in right_rows:
+                key = build_key(right_ns, False)
+                right_hash.setdefault(key, []).append(right_ns)
 
         joined_rows: list[dict[str, dict[str, Any]]] = []
         right_null_values = [None for _ in right_headers]
         right_null_ns = self._build_source_row(right_source, right_headers, right_null_values)
 
-        if join_type.upper() == "RIGHT":
+        if join_type_upper == "RIGHT":
             left_hash: dict[tuple[Any, ...], list[dict[str, dict[str, Any]]]] = {}
             for left_ns in left_rows:
                 key = build_key(left_ns, True)
@@ -601,13 +603,50 @@ class SharedExecutor:
                 matches = left_hash.get(key, [])
                 if matches:
                     for left_ns in matches:
-                        combined_row: dict[str, dict[str, Any]] = {}
+                        combined_row = {}
                         combined_row.update(left_ns)
                         combined_row.update(right_ns)
                         joined_rows.append(combined_row)
                 else:
                     combined_row = {}
                     combined_row.update(left_null_ns)
+                    combined_row.update(right_ns)
+                    joined_rows.append(combined_row)
+        elif join_type_upper == "FULL":
+            left_null_ns = {
+                source: {column: None for column in columns}
+                for source, columns in left_headers_map.items()
+            }
+
+            matched_right_indices: set[int] = set()
+
+            for left_ns in left_rows:
+                key = build_key(left_ns, True)
+                matches = right_hash.get(key, [])
+                if matches:
+                    for right_ns in matches:
+                        matched_right_indices.add(id(right_ns))
+                        combined_row = {}
+                        combined_row.update(left_ns)
+                        combined_row.update(right_ns)
+                        joined_rows.append(combined_row)
+                else:
+                    combined_row = {}
+                    combined_row.update(left_ns)
+                    combined_row.update(right_null_ns)
+                    joined_rows.append(combined_row)
+
+            for right_ns in right_rows:
+                if id(right_ns) not in matched_right_indices:
+                    combined_row = {}
+                    combined_row.update(left_null_ns)
+                    combined_row.update(right_ns)
+                    joined_rows.append(combined_row)
+        elif join_type_upper == "CROSS":
+            for left_ns in left_rows:
+                for right_ns in right_rows:
+                    combined_row = {}
+                    combined_row.update(left_ns)
                     combined_row.update(right_ns)
                     joined_rows.append(combined_row)
         else:
@@ -620,7 +659,7 @@ class SharedExecutor:
                         combined_row.update(left_ns)
                         combined_row.update(right_ns)
                         joined_rows.append(combined_row)
-                elif join_type.upper() == "LEFT":
+                elif join_type_upper == "LEFT":
                     combined_row = {}
                     combined_row.update(left_ns)
                     combined_row.update(right_null_ns)
@@ -700,7 +739,13 @@ class SharedExecutor:
             source_headers[right_table_name] = right_headers
             source_headers_ordered.append((right_ref, list(right_data.headers)))
 
-            for clause in join_spec["on"]["clauses"]:
+            join_on = join_spec.get("on")
+            on_clauses = (
+                join_on.get("clauses", [])
+                if join_on is not None
+                else []
+            )
+            for clause in on_clauses:
                 for side in ("left", "right"):
                     col = clause[side]
                     _validate_column_ref(str(col["source"]), str(col["name"]), "ON")
@@ -750,13 +795,19 @@ class SharedExecutor:
 
         for join_spec, right_data in join_inputs:
             right_source = join_spec["source"]
+            join_on = join_spec.get("on")
+            join_on_clauses = (
+                join_on.get("clauses", [])
+                if join_on is not None
+                else []
+            )
             left_rows, left_headers_map = self._join_two_sources(
                 left_rows=left_rows,
                 left_headers_map=left_headers_map,
                 right_data=right_data,
                 right_source=right_source,
                 join_type=str(join_spec["type"]),
-                on_clauses=join_spec["on"]["clauses"],
+                on_clauses=join_on_clauses,
                 all_known_sources=all_known_sources,
             )
             all_known_sources.update(
