@@ -477,7 +477,7 @@ def test_compound_quoted_question_mark_not_counted(tmp_path: Path) -> None:
         )
         rows = cursor.fetchall()
         ids = sorted(r[0] for r in rows)
-        # t1 has no name='?' rows (names are 'a','b','c','d'),
+        # t1 has no name='?' rows (names are 'A','B',None,'B'),
         # t2 WHERE id=2 -> {2}
         assert ids == [2]
 
