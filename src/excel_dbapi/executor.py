@@ -189,6 +189,7 @@ class SharedExecutor:
         self.sanitize_formulas = sanitize_formulas
         self._subquery_cache: dict[int, Any] = {}
         self._outer_row_stack: list[dict[str, Any]] = []
+        self._cte_tables: dict[str, TableData] = {}
 
     def _ensure_writable(self, action: str) -> None:
         """Raise NotSupportedError if backend is read-only and action mutates data."""
@@ -218,6 +219,27 @@ class SharedExecutor:
         if _reset_subquery_cache:
             self._subquery_cache.clear()
 
+        ctes = parsed.get("ctes")
+        if isinstance(ctes, list) and ctes:
+            previous_ctes = dict(self._cte_tables)
+            try:
+                for cte in ctes:
+                    cte_name = cte.get("name")
+                    cte_query = cte.get("query")
+                    if not isinstance(cte_name, str) or not isinstance(cte_query, dict):
+                        raise ValueError("Invalid CTE definition")
+                    cte_result = self.execute(cte_query, _reset_subquery_cache=False)
+                    self._cte_tables[cte_name] = TableData(
+                        headers=[str(col[0]) for col in cte_result.description],
+                        rows=[list(row) for row in cte_result.rows],
+                    )
+
+                main_query = dict(parsed)
+                main_query.pop("ctes", None)
+                return self.execute(main_query, _reset_subquery_cache=False)
+            finally:
+                self._cte_tables = previous_ctes
+
         action = parsed["action"]
         self._ensure_writable(action)
 
@@ -228,20 +250,20 @@ class SharedExecutor:
         resolved_table = self._resolve_sheet_name(table)
 
         if action == "SELECT":
-            if resolved_table is None:
-                available = self.backend.list_sheets()
+            selected_table, selected_data = self._resolve_table_data(table)
+            if selected_table is None or selected_data is None:
+                available = self._available_table_names()
                 msg = f"Sheet '{table}' not found in Excel."
                 if available:
                     msg += f" Available sheets: {available}"
                 raise ValueError(msg)
             if parsed.get("joins") is not None:
-                return self._execute_join_select(action, parsed, resolved_table)
-            data = self.backend.read_sheet(resolved_table)
-            if not data.headers:
+                return self._execute_join_select(action, parsed, selected_table, selected_data)
+            if not selected_data.headers:
                 return ExecutionResult(
                     action=action, rows=[], description=[], rowcount=0, lastrowid=None
                 )
-            headers = list(data.headers)
+            headers = list(selected_data.headers)
             source_refs: set[str] = set()
             from_entry = parsed.get("from")
             if isinstance(from_entry, dict):
@@ -258,7 +280,7 @@ class SharedExecutor:
                     headers=headers,
                     source_refs=source_refs,
                 )
-                for row_values in data.rows
+                for row_values in selected_data.rows
             ]
             return self._execute_select(action, parsed, headers, rows)
 
@@ -731,7 +753,7 @@ class SharedExecutor:
             if column.get("type") == "alias":
                 return str(column["alias"])
             if column.get("type") == "aggregate":
-                return f"{column['func']}({column['arg']})"
+                return SharedExecutor._expression_label(column)
             if column.get("type") == "column":
                 return f"{column['source']}.{column['name']}"
             if column.get("type") in {
@@ -741,6 +763,7 @@ class SharedExecutor:
                 "function",
                 "cast",
                 "subquery",
+                "window_function",
             }:
                 return SharedExecutor._expression_label(column)
             if column.get("type") == "case":
@@ -754,7 +777,7 @@ class SharedExecutor:
             inner = column["expression"]
         if isinstance(inner, dict):
             if inner.get("type") == "aggregate":
-                return f"{inner['func']}({inner['arg']})"
+                return SharedExecutor._expression_to_sql(inner)
             if inner.get("type") == "column":
                 return f"{inner['source']}.{inner['name']}"
             if inner.get("type") in {
@@ -765,6 +788,7 @@ class SharedExecutor:
                 "function",
                 "cast",
                 "subquery",
+                "window_function",
             }:
                 return f"__expr__:{SharedExecutor._expression_to_sql(inner)}"
         return str(inner)
@@ -778,7 +802,68 @@ class SharedExecutor:
             if expression_type == "column":
                 return f"{expression['source']}.{expression['name']}"
             if expression_type == "aggregate":
-                return f"{expression['func']}({expression['arg']})"
+                func = str(expression.get("func", "")).upper()
+                arg = str(expression.get("arg", "")).strip()
+                aggregate_sql = (
+                    f"{func}(DISTINCT {arg})"
+                    if expression.get("distinct")
+                    else f"{func}({arg})"
+                )
+                filter_clause = expression.get("filter")
+                if isinstance(filter_clause, dict):
+                    filter_sql = SharedExecutor._where_to_sql(filter_clause)
+                    aggregate_sql = f"{aggregate_sql} FILTER (WHERE {filter_sql})"
+                return aggregate_sql
+            if expression_type == "window_function":
+                func = str(expression.get("func", "")).upper()
+                args = expression.get("args")
+                args_list = args if isinstance(args, list) else []
+                args_sql_parts = [
+                    SharedExecutor._expression_to_sql(argument)
+                    if isinstance(argument, dict)
+                    else str(argument)
+                    for argument in args_list
+                ]
+                args_sql = ", ".join(args_sql_parts)
+                if expression.get("distinct") and args_sql:
+                    args_sql = f"DISTINCT {args_sql}"
+
+                function_sql = f"{func}({args_sql})"
+                filter_clause = expression.get("filter")
+                if isinstance(filter_clause, dict):
+                    filter_sql = SharedExecutor._where_to_sql(filter_clause)
+                    function_sql = f"{function_sql} FILTER (WHERE {filter_sql})"
+
+                spec_parts: list[str] = []
+                partition_by = expression.get("partition_by")
+                if isinstance(partition_by, list) and partition_by:
+                    partition_sql = ", ".join(
+                        SharedExecutor._expression_to_sql(partition_expression)
+                        for partition_expression in partition_by
+                    )
+                    spec_parts.append(f"PARTITION BY {partition_sql}")
+
+                order_by = expression.get("order_by")
+                if isinstance(order_by, list) and order_by:
+                    order_parts: list[str] = []
+                    for order_item in order_by:
+                        if not isinstance(order_item, dict):
+                            continue
+                        order_expression = order_item.get("__expression__")
+                        if order_expression is not None:
+                            order_sql = SharedExecutor._expression_to_sql(order_expression)
+                        else:
+                            order_sql = str(order_item.get("column", ""))
+                            if order_sql.startswith("__expr__:"):
+                                order_sql = order_sql[len("__expr__:") :]
+                        direction = str(order_item.get("direction", "ASC")).upper()
+                        order_parts.append(f"{order_sql} {direction}")
+                    if order_parts:
+                        spec_parts.append("ORDER BY " + ", ".join(order_parts))
+
+                if spec_parts:
+                    return f"{function_sql} OVER ({' '.join(spec_parts)})"
+                return f"{function_sql} OVER ()"
             if expression_type == "literal":
                 return SharedExecutor._literal_to_sql(expression.get("value"))
             if expression_type == "unary_op":
@@ -927,6 +1012,7 @@ class SharedExecutor:
             "function",
             "cast",
             "subquery",
+            "window_function",
         }:
             return True
         if expression_type == "alias":
@@ -947,6 +1033,46 @@ class SharedExecutor:
             return SharedExecutor._collect_expression_column_refs(expression.get("expression"))
         if expression_type == "column":
             refs.add(f"{expression['source']}.{expression['name']}")
+            return refs
+        if expression_type == "aggregate":
+            arg = str(expression.get("arg", ""))
+            if arg and arg != "*":
+                refs.add(arg)
+            filter_clause = expression.get("filter")
+            if isinstance(filter_clause, dict):
+                refs.update(SharedExecutor._collect_where_column_refs(filter_clause))
+            return refs
+        if expression_type == "window_function":
+            args = expression.get("args")
+            if isinstance(args, list):
+                for argument in args:
+                    if isinstance(argument, str):
+                        if argument and argument != "*":
+                            refs.add(argument)
+                    else:
+                        refs.update(SharedExecutor._collect_expression_column_refs(argument))
+
+            partition_by = expression.get("partition_by")
+            if isinstance(partition_by, list):
+                for partition_expression in partition_by:
+                    refs.update(SharedExecutor._collect_expression_column_refs(partition_expression))
+
+            order_by = expression.get("order_by")
+            if isinstance(order_by, list):
+                for order_item in order_by:
+                    if not isinstance(order_item, dict):
+                        continue
+                    order_expression = order_item.get("__expression__")
+                    if order_expression is not None:
+                        refs.update(SharedExecutor._collect_expression_column_refs(order_expression))
+                        continue
+                    order_column = order_item.get("column")
+                    if isinstance(order_column, str) and order_column:
+                        refs.add(order_column)
+
+            filter_clause = expression.get("filter")
+            if isinstance(filter_clause, dict):
+                refs.update(SharedExecutor._collect_where_column_refs(filter_clause))
             return refs
         if expression_type == "binary_op":
             refs.update(SharedExecutor._collect_expression_column_refs(expression.get("left")))
@@ -1092,6 +1218,181 @@ class SharedExecutor:
                 )
 
         return expression_columns
+
+    @staticmethod
+    def _collect_window_expressions(
+        expression: Any,
+        collected: dict[str, dict[str, Any]],
+    ) -> None:
+        if not isinstance(expression, dict):
+            return
+
+        expression_type = expression.get("type")
+        if expression_type == "alias":
+            SharedExecutor._collect_window_expressions(expression.get("expression"), collected)
+            return
+
+        if expression_type == "window_function":
+            collected[SharedExecutor._source_key(expression)] = expression
+            return
+
+        if expression_type == "unary_op":
+            SharedExecutor._collect_window_expressions(expression.get("operand"), collected)
+            return
+
+        if expression_type == "binary_op":
+            SharedExecutor._collect_window_expressions(expression.get("left"), collected)
+            SharedExecutor._collect_window_expressions(expression.get("right"), collected)
+            return
+
+        if expression_type == "function":
+            args = expression.get("args")
+            if isinstance(args, list):
+                for argument in args:
+                    SharedExecutor._collect_window_expressions(argument, collected)
+            return
+
+        if expression_type == "cast":
+            SharedExecutor._collect_window_expressions(expression.get("value"), collected)
+            return
+
+        if expression_type == "case":
+            SharedExecutor._collect_window_expressions(expression.get("value"), collected)
+            for when_branch in expression.get("whens", []):
+                if not isinstance(when_branch, dict):
+                    continue
+                SharedExecutor._collect_window_expressions(when_branch.get("match"), collected)
+                SharedExecutor._collect_window_expressions(when_branch.get("result"), collected)
+            SharedExecutor._collect_window_expressions(expression.get("else"), collected)
+
+    def _apply_window_functions(
+        self,
+        rows: list[dict[str, Any]],
+        columns: list[Any],
+        order_by: list[dict[str, Any]] | None,
+    ) -> set[str]:
+        window_expressions: dict[str, dict[str, Any]] = {}
+
+        if columns != ["*"]:
+            for column in columns:
+                inner = self._unwrap_alias(column)
+                self._collect_window_expressions(inner, window_expressions)
+
+        if order_by:
+            for item in order_by:
+                expression = item.get("__expression__")
+                if expression is not None:
+                    self._collect_window_expressions(expression, window_expressions)
+
+        if not window_expressions:
+            return set()
+
+        for target_column, expression in window_expressions.items():
+            self._evaluate_window_expression(rows, expression, target_column=target_column)
+
+        return set(window_expressions.keys())
+
+    def _evaluate_window_expression(
+        self,
+        rows: list[dict[str, Any]],
+        expression: dict[str, Any],
+        *,
+        target_column: str,
+    ) -> None:
+        function_name = str(expression.get("func", "")).upper()
+        partition_by = expression.get("partition_by")
+        partition_expressions = partition_by if isinstance(partition_by, list) else []
+        order_by = self._normalize_order_by(expression.get("order_by")) or []
+
+        partitions: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
+        for row in rows:
+            partition_values = [
+                self._eval_expression(
+                    partition_expression,
+                    row,
+                    lambda col_name: row.get(col_name),
+                )
+                for partition_expression in partition_expressions
+            ]
+            partition_key = self._normalize_row_key(tuple(partition_values))
+            partitions.setdefault(partition_key, []).append(row)
+
+        distinct = bool(expression.get("distinct"))
+        filter_clause = expression.get("filter")
+        filter_condition = filter_clause if isinstance(filter_clause, dict) else None
+        args = expression.get("args")
+        args_list = args if isinstance(args, list) else []
+
+        for partition_rows in partitions.values():
+            ordered_rows = partition_rows
+            if order_by:
+                self._materialize_order_expression_columns(partition_rows, order_by)
+                ordered_rows = self._apply_order_by(
+                    partition_rows,
+                    order_by,
+                    value_getter=lambda candidate, column_name: candidate.get(column_name),
+                )
+
+            if function_name == "ROW_NUMBER":
+                for position, row in enumerate(ordered_rows, start=1):
+                    row[target_column] = position
+                continue
+
+            if function_name in {"RANK", "DENSE_RANK"}:
+                if not order_by:
+                    for row in ordered_rows:
+                        row[target_column] = 1
+                    continue
+
+                previous_key: tuple[Any, ...] | None = None
+                rank = 1
+                dense_rank = 1
+                for position, row in enumerate(ordered_rows, start=1):
+                    current_key = tuple(
+                        self._sort_key(row.get(str(item["column"])))
+                        for item in order_by
+                    )
+                    if previous_key is None:
+                        rank = 1
+                        dense_rank = 1
+                    elif current_key != previous_key:
+                        rank = position
+                        dense_rank += 1
+
+                    row[target_column] = rank if function_name == "RANK" else dense_rank
+                    previous_key = current_key
+                continue
+
+            if function_name in {"COUNT", "SUM", "AVG", "MIN", "MAX"}:
+                if not args_list:
+                    raise ProgrammingError(
+                        f"Window function {function_name} requires an argument"
+                    )
+                arg = str(args_list[0])
+                if not order_by:
+                    partition_value = self._compute_aggregate(
+                        function_name,
+                        arg,
+                        ordered_rows,
+                        distinct=distinct,
+                        filter_condition=filter_condition,
+                    )
+                    for row in ordered_rows:
+                        row[target_column] = partition_value
+                    continue
+
+                for position, row in enumerate(ordered_rows):
+                    frame_rows = ordered_rows[: position + 1]
+                    row[target_column] = self._compute_aggregate(
+                        function_name,
+                        arg,
+                        frame_rows,
+                        distinct=distinct,
+                        filter_condition=filter_condition,
+                    )
+                continue
+
+            raise ProgrammingError(f"Unsupported window function: {function_name}")
 
     def _execute_compound(self, parsed: dict[str, Any]) -> ExecutionResult:
         queries = parsed.get("queries")
@@ -1368,6 +1669,21 @@ class SharedExecutor:
                 flattened[f"{source}.{column}"] = value
         return flattened
 
+    def _matches_join_on_condition(
+        self,
+        left_ns: dict[str, dict[str, Any]],
+        right_ns: dict[str, dict[str, Any]],
+        on_condition: dict[str, Any] | None,
+    ) -> bool:
+        if on_condition is None:
+            return True
+
+        combined_row: dict[str, dict[str, Any]] = {}
+        combined_row.update(left_ns)
+        combined_row.update(right_ns)
+        flattened = self._build_scoped_row(self._flatten_join_row(combined_row))
+        return self._matches_where(flattened, on_condition)
+
     def _join_two_sources(
         self,
         left_rows: list[dict[str, dict[str, Any]]],
@@ -1375,111 +1691,26 @@ class SharedExecutor:
         right_data: TableData,
         right_source: dict[str, Any],
         join_type: str,
-        on_clauses: list[dict[str, Any]],
-        all_known_sources: set[str],
+        on_condition: dict[str, Any] | None,
     ) -> tuple[list[dict[str, dict[str, Any]]], dict[str, set[str]]]:
         right_headers = list(right_data.headers)
         right_sources = {str(right_source["table"]), str(right_source["ref"])}
-
-        # Sentinel: each NULL key gets a unique object so NULL != NULL per SQL standard.
-        _null_sentinel_counter = 0
-
-        def _normalize_key_value(val: Any) -> Any:
-            """Coerce key values for consistent hash matching."""
-            if val is None:
-                nonlocal _null_sentinel_counter
-                _null_sentinel_counter += 1
-                return object()
-            num = self._to_number(val)
-            if num is not None:
-                return num
-            return val
-
-        def build_key(
-            row_ns: dict[str, Any],
-            is_left_side: bool,
-        ) -> tuple[Any, ...]:
-            key_parts: list[Any] = []
-            for clause in on_clauses:
-                left_col = clause["left"]
-                right_col = clause["right"]
-                left_is_left = str(left_col["source"]) in all_known_sources
-                selected = left_col if left_is_left == is_left_side else right_col
-                raw_val = self._resolve_join_column(row_ns, selected)
-                key_parts.append(_normalize_key_value(raw_val))
-            return tuple(key_parts)
 
         right_rows = [
             self._build_source_row(right_source, right_headers, right_row_values)
             for right_row_values in right_data.rows
         ]
         join_type_upper = join_type.upper()
-        right_hash: dict[tuple[Any, ...], list[dict[str, dict[str, Any]]]] = {}
-        if join_type_upper != "CROSS":
-            for right_ns in right_rows:
-                key = build_key(right_ns, False)
-                right_hash.setdefault(key, []).append(right_ns)
 
         joined_rows: list[dict[str, dict[str, Any]]] = []
         right_null_values = [None for _ in right_headers]
         right_null_ns = self._build_source_row(right_source, right_headers, right_null_values)
+        left_null_ns = {
+            source: {column: None for column in columns}
+            for source, columns in left_headers_map.items()
+        }
 
-        if join_type_upper == "RIGHT":
-            left_hash: dict[tuple[Any, ...], list[dict[str, dict[str, Any]]]] = {}
-            for left_ns in left_rows:
-                key = build_key(left_ns, True)
-                left_hash.setdefault(key, []).append(left_ns)
-
-            left_null_ns = {
-                source: {column: None for column in columns}
-                for source, columns in left_headers_map.items()
-            }
-
-            for right_ns in right_rows:
-                key = build_key(right_ns, False)
-                matches = left_hash.get(key, [])
-                if matches:
-                    for left_ns in matches:
-                        combined_row = {}
-                        combined_row.update(left_ns)
-                        combined_row.update(right_ns)
-                        joined_rows.append(combined_row)
-                else:
-                    combined_row = {}
-                    combined_row.update(left_null_ns)
-                    combined_row.update(right_ns)
-                    joined_rows.append(combined_row)
-        elif join_type_upper == "FULL":
-            left_null_ns = {
-                source: {column: None for column in columns}
-                for source, columns in left_headers_map.items()
-            }
-
-            matched_right_indices: set[int] = set()
-
-            for left_ns in left_rows:
-                key = build_key(left_ns, True)
-                matches = right_hash.get(key, [])
-                if matches:
-                    for right_ns in matches:
-                        matched_right_indices.add(id(right_ns))
-                        combined_row = {}
-                        combined_row.update(left_ns)
-                        combined_row.update(right_ns)
-                        joined_rows.append(combined_row)
-                else:
-                    combined_row = {}
-                    combined_row.update(left_ns)
-                    combined_row.update(right_null_ns)
-                    joined_rows.append(combined_row)
-
-            for right_ns in right_rows:
-                if id(right_ns) not in matched_right_indices:
-                    combined_row = {}
-                    combined_row.update(left_null_ns)
-                    combined_row.update(right_ns)
-                    joined_rows.append(combined_row)
-        elif join_type_upper == "CROSS":
+        if join_type_upper == "CROSS":
             for left_ns in left_rows:
                 for right_ns in right_rows:
                     combined_row = {}
@@ -1487,19 +1718,34 @@ class SharedExecutor:
                     combined_row.update(right_ns)
                     joined_rows.append(combined_row)
         else:
+            matched_right_indices: set[int] = set()
+
             for left_ns in left_rows:
-                key = build_key(left_ns, True)
-                matches = right_hash.get(key, [])
-                if matches:
-                    for right_ns in matches:
-                        combined_row = {}
-                        combined_row.update(left_ns)
-                        combined_row.update(right_ns)
-                        joined_rows.append(combined_row)
-                elif join_type_upper == "LEFT":
+                left_matched = False
+                for right_index, right_ns in enumerate(right_rows):
+                    if not self._matches_join_on_condition(left_ns, right_ns, on_condition):
+                        continue
+
+                    left_matched = True
+                    matched_right_indices.add(right_index)
+                    combined_row = {}
+                    combined_row.update(left_ns)
+                    combined_row.update(right_ns)
+                    joined_rows.append(combined_row)
+
+                if not left_matched and join_type_upper in {"LEFT", "FULL"}:
                     combined_row = {}
                     combined_row.update(left_ns)
                     combined_row.update(right_null_ns)
+                    joined_rows.append(combined_row)
+
+            if join_type_upper in {"RIGHT", "FULL"}:
+                for right_index, right_ns in enumerate(right_rows):
+                    if right_index in matched_right_indices:
+                        continue
+                    combined_row = {}
+                    combined_row.update(left_null_ns)
+                    combined_row.update(right_ns)
                     joined_rows.append(combined_row)
 
         updated_headers_map = dict(left_headers_map)
@@ -1513,10 +1759,10 @@ class SharedExecutor:
         action: str,
         parsed: dict[str, Any],
         resolved_left_table: str,
+        left_data: TableData,
     ) -> ExecutionResult:
         joins = parsed.get("joins") or []
         from_source = parsed["from"]
-        left_data = self.backend.read_sheet(resolved_left_table)
         if not left_data.headers:
             return ExecutionResult(
                 action=action,
@@ -1554,15 +1800,14 @@ class SharedExecutor:
 
         for join_spec in joins:
             right_source = join_spec["source"]
-            resolved_right_table = self._resolve_sheet_name(str(right_source["table"]))
-            if resolved_right_table is None:
-                available = self.backend.list_sheets()
+            resolved_right_table, right_data = self._resolve_table_data(str(right_source["table"]))
+            if resolved_right_table is None or right_data is None:
+                available = self._available_table_names()
                 msg = f"Sheet '{right_source['table']}' not found in Excel."
                 if available:
                     msg += f" Available sheets: {available}"
                 raise ValueError(msg)
 
-            right_data = self.backend.read_sheet(resolved_right_table)
             if not right_data.headers:
                 return ExecutionResult(
                     action=action,
@@ -1581,15 +1826,8 @@ class SharedExecutor:
             ref_to_table[right_ref] = right_table_name
 
             join_on = join_spec.get("on")
-            on_clauses = (
-                join_on.get("clauses", [])
-                if join_on is not None
-                else []
-            )
-            for clause in on_clauses:
-                for side in ("left", "right"):
-                    col = clause[side]
-                    _validate_column_ref(str(col["source"]), str(col["name"]), "ON")
+            if join_on is not None:
+                SharedExecutor._validate_join_where_node(join_on, _validate_column_ref)
 
             known_sources.update({right_ref, right_table_name})
             join_inputs.append((join_spec, right_data))
@@ -1597,6 +1835,12 @@ class SharedExecutor:
         # Validate SELECT columns
         def _validate_join_select_expression(expression: Any) -> None:
             if expression is None:
+                return
+            if isinstance(expression, str):
+                if "." not in expression:
+                    raise ValueError("JOIN queries require qualified column names in SELECT")
+                source, name = expression.split(".", 1)
+                _validate_column_ref(source, name, "SELECT")
                 return
             if isinstance(expression, dict):
                 expression_type = expression.get("type")
@@ -1609,14 +1853,63 @@ class SharedExecutor:
                     return
                 if expression_type == "aggregate":
                     arg = str(expression.get("arg", ""))
-                    if arg == "*":
-                        return
-                    if "." not in arg:
-                        raise ValueError(
-                            "Aggregate arguments in JOIN queries must be qualified column names or *"
-                        )
-                    source, name = arg.split(".", 1)
-                    _validate_column_ref(source, name, "SELECT")
+                    if arg != "*":
+                        if "." not in arg:
+                            raise ValueError(
+                                "Aggregate arguments in JOIN queries must be qualified column names or *"
+                            )
+                        source, name = arg.split(".", 1)
+                        _validate_column_ref(source, name, "SELECT")
+
+                    filter_clause = expression.get("filter")
+                    if isinstance(filter_clause, dict):
+                        SharedExecutor._validate_join_where_node(filter_clause, _validate_column_ref)
+                    return
+                if expression_type == "window_function":
+                    args = expression.get("args")
+                    if isinstance(args, list):
+                        for argument in args:
+                            if isinstance(argument, str):
+                                if argument == "*":
+                                    continue
+                                if "." not in argument:
+                                    raise ValueError(
+                                        "Window function arguments in JOIN queries must be qualified column names or *"
+                                    )
+                                source, name = argument.split(".", 1)
+                                _validate_column_ref(source, name, "SELECT")
+                            else:
+                                _validate_join_select_expression(argument)
+
+                    partition_by = expression.get("partition_by")
+                    if isinstance(partition_by, list):
+                        for partition_expression in partition_by:
+                            _validate_join_select_expression(partition_expression)
+
+                    order_by_items = expression.get("order_by")
+                    if isinstance(order_by_items, list):
+                        for order_item in order_by_items:
+                            if not isinstance(order_item, dict):
+                                continue
+                            order_expression = order_item.get("__expression__")
+                            if order_expression is not None:
+                                _validate_join_select_expression(order_expression)
+                                continue
+
+                            order_column = order_item.get("column")
+                            if isinstance(order_column, str):
+                                if order_column.startswith("__expr__:"):
+                                    continue
+                                if "." not in order_column:
+                                    raise ValueError(
+                                        "Window function ORDER BY in JOIN queries requires qualified column names"
+                                    )
+                                source, name = order_column.split(".", 1)
+                                _validate_column_ref(source, name, "SELECT")
+
+                    filter_clause = expression.get("filter")
+                    if isinstance(filter_clause, dict):
+                        SharedExecutor._validate_join_where_node(filter_clause, _validate_column_ref)
                     return
                 if expression_type == "literal":
                     return
@@ -1697,30 +1990,16 @@ class SharedExecutor:
             str(from_source["table"]): set(left_headers),
             str(from_source["ref"]): set(left_headers),
         }
-        all_known_sources = {str(from_source["table"]), str(from_source["ref"])}
-
         for join_spec, right_data in join_inputs:
             right_source = join_spec["source"]
             join_on = join_spec.get("on")
-            join_on_clauses = (
-                join_on.get("clauses", [])
-                if join_on is not None
-                else []
-            )
             left_rows, left_headers_map = self._join_two_sources(
                 left_rows=left_rows,
                 left_headers_map=left_headers_map,
                 right_data=right_data,
                 right_source=right_source,
                 join_type=str(join_spec["type"]),
-                on_clauses=join_on_clauses,
-                all_known_sources=all_known_sources,
-            )
-            all_known_sources.update(
-                {
-                    str(right_source["table"]),
-                    str(right_source["ref"]),
-                }
+                on_condition=join_on,
             )
 
         joined_rows_flat = [
@@ -1733,6 +2012,8 @@ class SharedExecutor:
             joined_rows_flat = [
                 row for row in joined_rows_flat if self._matches_where(row, where)
             ]
+
+        window_columns = self._apply_window_functions(joined_rows_flat, parsed["columns"], order_by)
 
         columns = parsed["columns"]
         aggregate_query = (
@@ -1793,6 +2074,7 @@ class SharedExecutor:
                     for col_name in ordered_headers:
                         available_cols.add(f"{source_ref}.{col_name}")
                 available_cols.update(order_expression_columns)
+                available_cols.update(window_columns)
                 rows_for_output = self._apply_order_by(
                     rows_for_output,
                     order_by,
@@ -1844,6 +2126,7 @@ class SharedExecutor:
                     for col_name in ordered_headers:
                         available_columns.add(f"{source_ref}.{col_name}")
                 available_columns.update(order_expression_columns)
+                available_columns.update(window_columns)
                 projected_rows = self._apply_order_by(
                     projected_rows,
                     order_by,
@@ -1940,6 +2223,8 @@ class SharedExecutor:
                 resolved_order_by.append(resolved_item)
             order_by = resolved_order_by
 
+        window_columns = self._apply_window_functions(rows, columns, order_by)
+
         order_expression_columns: set[str] = set()
         if order_by:
             order_expression_columns = self._materialize_order_expression_columns(
@@ -1953,6 +2238,7 @@ class SharedExecutor:
             else:
                 available_columns = set(headers)
                 available_columns.update(order_expression_columns)
+                available_columns.update(window_columns)
                 rows = self._apply_order_by(
                     rows,
                     order_by,
@@ -1981,6 +2267,7 @@ class SharedExecutor:
                 available_columns = set(headers)
                 available_columns.update(selected_columns)
                 available_columns.update(expression_columns)
+                available_columns.update(window_columns)
                 projected_rows = self._apply_order_by(
                     projected_rows,
                     order_by,
@@ -2154,7 +2441,7 @@ class SharedExecutor:
 
         output_columns: list[str] = []
         output_sources: list[str] = []
-        required_aggregates: dict[str, tuple[str, str, bool]] = {}
+        required_aggregates: dict[str, tuple[str, str, bool, dict[str, Any] | None]] = {}
         for column in columns:
             inner = self._unwrap_alias(column)
             if self._is_aggregate_column(inner):
@@ -2166,10 +2453,13 @@ class SharedExecutor:
                         f"Unknown column: {raw_arg}. Available columns: {headers}"
                     )
                 label = self._aggregate_label(aggregate_column)
+                filter_clause = aggregate_column.get("filter")
+                filter_condition = filter_clause if isinstance(filter_clause, dict) else None
                 required_aggregates[label] = (
                     str(aggregate_column.get("func")),
                     arg,
                     bool(aggregate_column.get("distinct")),
+                    filter_condition,
                 )
                 output_columns.append(self._output_name(column))
                 output_sources.append(label)
@@ -2212,13 +2502,13 @@ class SharedExecutor:
                 aggregate_spec = self._aggregate_spec_from_label(ref)
                 if aggregate_spec is None:
                     continue
-                func, arg, distinct = aggregate_spec
+                func, arg, distinct, filter_condition = aggregate_spec
                 normalized_arg = self._normalize_single_source_aggregate_arg(arg, headers)
                 if normalized_arg != "*" and normalized_arg not in headers:
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
-                required_aggregates[ref] = (func, normalized_arg, distinct)
+                required_aggregates[ref] = (func, normalized_arg, distinct, filter_condition)
 
         alias_map = self._build_alias_map(columns)
         order_by_clause = self._normalize_order_by(parsed.get("order_by"))
@@ -2234,16 +2524,18 @@ class SharedExecutor:
         if order_by_clause is not None:
             for item in order_by_clause:
                 ref = str(item["column"])
+                if ref.startswith("__expr__:"):
+                    continue
                 aggregate_spec = self._aggregate_spec_from_label(ref)
                 if aggregate_spec is None:
                     continue
-                func, arg, distinct = aggregate_spec
+                func, arg, distinct, filter_condition = aggregate_spec
                 normalized_arg = self._normalize_single_source_aggregate_arg(arg, headers)
                 if normalized_arg != "*" and normalized_arg not in headers:
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
-                required_aggregates[ref] = (func, normalized_arg, distinct)
+                required_aggregates[ref] = (func, normalized_arg, distinct, filter_condition)
 
         if having is not None:
             for condition in having["conditions"]:
@@ -2281,24 +2573,26 @@ class SharedExecutor:
                 context_row: dict[str, Any] = dict(group_values[0]) if group_values else {}
                 for (group_key, _), group_value in zip(group_entries, grouped_key):
                     context_row[group_key] = group_value
-                for label, (func, arg, distinct) in required_aggregates.items():
+                for label, (func, arg, distinct, filter_condition) in required_aggregates.items():
                     context_row[label] = self._compute_aggregate(
                         func,
                         arg,
                         group_values,
                         distinct=distinct,
+                        filter_condition=filter_condition,
                     )
                 if having and not self._matches_where(context_row, having):
                     continue
                 grouped_rows.append(context_row)
         else:
             context_row_single: dict[str, Any] = {}
-            for label, (func, arg, distinct) in required_aggregates.items():
+            for label, (func, arg, distinct, filter_condition) in required_aggregates.items():
                 context_row_single[label] = self._compute_aggregate(
                     func,
                     arg,
                     rows,
                     distinct=distinct,
+                    filter_condition=filter_condition,
                 )
             if not having or self._matches_where(context_row_single, having):
                 grouped_rows.append(context_row_single)
@@ -2361,36 +2655,37 @@ class SharedExecutor:
         )
 
     def _aggregate_label(self, aggregate: dict[str, Any]) -> str:
-        func = str(aggregate["func"]).upper()
-        arg = str(aggregate["arg"])
-        if aggregate.get("distinct"):
-            return f"{func}(DISTINCT {arg})"
-        return f"{func}({arg})"
+        return self._expression_to_sql(aggregate)
 
     def _aggregate_spec_from_label(
         self, expression: str
-    ) -> tuple[str, str, bool] | None:
-        match = re.fullmatch(
-            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\((DISTINCT\s+)?([^\)]+)\)",
-            expression.strip(),
-        )
-        if not match:
+    ) -> tuple[str, str, bool, dict[str, Any] | None] | None:
+        expression_text = expression.strip()
+        if not expression_text or expression_text.startswith("__expr__:"):
             return None
-        func = match.group(1).upper()
-        distinct_modifier = match.group(2)
-        arg = match.group(3).strip()
+
+        try:
+            parsed_expression = _parse_column_expression(
+                expression_text,
+                allow_wildcard=False,
+                allow_aggregates=True,
+                allow_subqueries=False,
+            )
+        except ValueError as exc:
+            if "DISTINCT is only supported with COUNT" in str(exc):
+                raise
+            return None
+        if not isinstance(parsed_expression, dict) or parsed_expression.get("type") != "aggregate":
+            return None
+
+        func = str(parsed_expression.get("func", "")).upper()
+        arg = str(parsed_expression.get("arg", "")).strip()
         if not arg:
             return None
-        if distinct_modifier and func != "COUNT":
-            raise ValueError("DISTINCT is only supported with COUNT")
-        if arg != "*" and not re.fullmatch(
-            r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?", arg
-        ):
-            raise ValueError(
-                f"Unsupported aggregate expression: {func}({arg}). "
-                "Only bare or qualified column names and * are supported"
-            )
-        return func, arg, bool(distinct_modifier)
+
+        filter_clause = parsed_expression.get("filter")
+        filter_condition = filter_clause if isinstance(filter_clause, dict) else None
+        return func, arg, bool(parsed_expression.get("distinct")), filter_condition
 
     def _compute_aggregate(
         self,
@@ -2398,18 +2693,29 @@ class SharedExecutor:
         arg: str,
         rows: list[dict[str, Any]],
         distinct: bool = False,
+        filter_condition: dict[str, Any] | None = None,
     ) -> Any:
+        applicable_rows = rows
+        if filter_condition is not None:
+            applicable_rows = [row for row in rows if self._matches_where(row, filter_condition)]
+
         aggregate = func.upper()
         if aggregate == "COUNT":
             if distinct:
                 if arg == "*":
                     raise ValueError("COUNT(DISTINCT *) is not supported")
-                return len({row.get(arg) for row in rows if row.get(arg) is not None})
+                return len(
+                    {
+                        row.get(arg)
+                        for row in applicable_rows
+                        if row.get(arg) is not None
+                    }
+                )
             if arg == "*":
-                return len(rows)
-            return sum(1 for row in rows if row.get(arg) is not None)
+                return len(applicable_rows)
+            return sum(1 for row in applicable_rows if row.get(arg) is not None)
 
-        values = [row.get(arg) for row in rows if row.get(arg) is not None]
+        values = [row.get(arg) for row in applicable_rows if row.get(arg) is not None]
         if not values:
             return None
 
@@ -2581,6 +2887,9 @@ class SharedExecutor:
             value = self._eval_expression(expr.get("value"), row, resolve_column)
             target_type = str(expr.get("target_type", ""))
             return self._eval_cast(value, target_type)
+
+        if expr_type == "window_function":
+            return resolve_column(self._source_key(expr))
 
         if expr_type == "aggregate":
             raise ProgrammingError("Aggregate expressions are not supported in row-level arithmetic")
@@ -2852,3 +3161,25 @@ class SharedExecutor:
         sheets = self.backend.list_sheets()
         lowered = {name.lower(): name for name in sheets}
         return lowered.get(requested_name.lower())
+
+    def _resolve_cte_name(self, requested_name: str) -> str | None:
+        lowered = requested_name.lower()
+        for name in self._cte_tables:
+            if name.lower() == lowered:
+                return name
+        return None
+
+    def _resolve_table_data(self, requested_name: str) -> tuple[str | None, TableData | None]:
+        cte_name = self._resolve_cte_name(requested_name)
+        if cte_name is not None:
+            return cte_name, self._cte_tables.get(cte_name)
+
+        resolved_sheet = self._resolve_sheet_name(requested_name)
+        if resolved_sheet is None:
+            return None, None
+        return resolved_sheet, self.backend.read_sheet(resolved_sheet)
+
+    def _available_table_names(self) -> list[str]:
+        names = list(self.backend.list_sheets())
+        names.extend(self._cte_tables.keys())
+        return names

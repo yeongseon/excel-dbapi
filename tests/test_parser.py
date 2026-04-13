@@ -349,7 +349,7 @@ def test_aggregate_count_distinct():
     assert col["distinct"] is True
 
 def test_aggregate_rejects_expression():
-    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+    with pytest.raises(ValueError, match="Unsupported function: SUM"):
         parse_sql("SELECT SUM(age + 1) FROM users")
 
 
@@ -369,8 +369,12 @@ def test_aggregate_rejects_float_literal():
 
 
 def test_rejects_window_over():
-    with pytest.raises(ValueError):
-        parse_sql("SELECT COUNT(*) OVER () FROM users")
+    parsed = parse_sql("SELECT COUNT(*) OVER () FROM users")
+    assert parsed["action"] == "SELECT"
+    col = parsed["columns"][0]
+    assert col["type"] == "window_function"
+    assert col["func"] == "COUNT"
+    assert col["args"] == ["*"]
 
 
 def test_parses_arithmetic_in_select():
@@ -394,8 +398,15 @@ def test_rejects_aggregate_arithmetic_in_select():
 
 
 def test_rejects_aggregate_filter_in_select():
-    with pytest.raises(ValueError, match="Unsupported"):
-        parse_sql("SELECT COUNT(*) FILTER (WHERE id > 0) FROM users")
+    parsed = parse_sql("SELECT COUNT(*) FILTER (WHERE id > 0) FROM users")
+    assert parsed["action"] == "SELECT"
+    col = parsed["columns"][0]
+    assert col["type"] == "aggregate"
+    assert col["func"] == "COUNT"
+    assert col["arg"] == "*"
+    assert col["filter"]["conditions"][0]["column"] == "id"
+    assert col["filter"]["conditions"][0]["operator"] == ">"
+    assert col["filter"]["conditions"][0]["value"] == 0
 
 
 def test_parse_inner_join_basic():
@@ -408,15 +419,14 @@ def test_parse_inner_join_basic():
             "type": "INNER",
             "source": {"table": "Sheet2", "alias": "b", "ref": "b"},
             "on": {
-                "type": "and",
-                "clauses": [
+                "conditions": [
                     {
-                        "type": "binary_op",
-                        "op": "=",
-                        "left": {"type": "column", "source": "a", "name": "id"},
-                        "right": {"type": "column", "source": "b", "name": "id"},
+                        "column": {"type": "column", "source": "a", "name": "id"},
+                        "operator": "=",
+                        "value": {"type": "column", "source": "b", "name": "id"},
                     }
                 ],
+                "conjunctions": [],
             },
         }
     ]
@@ -475,9 +485,9 @@ def test_parse_join_with_mixed_aliases():
     parsed = parse_sql(
         "SELECT a.id FROM Sheet1 a INNER JOIN Sheet2 b ON Sheet1.id = b.id"
     )
-    clause = parsed["joins"][0]["on"]["clauses"][0]
-    assert clause["left"]["source"] == "Sheet1"
-    assert clause["right"]["source"] == "b"
+    clause = parsed["joins"][0]["on"]["conditions"][0]
+    assert clause["column"]["source"] == "Sheet1"
+    assert clause["value"]["source"] == "b"
 
 
 def test_parse_join_allows_select_star():
@@ -523,13 +533,16 @@ def test_parse_cross_join_rejects_on_clause():
 
 
 def test_parse_join_rejects_non_equality_on():
-    with pytest.raises(ValueError, match="supports only '='"):
-        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id > b.id")
+    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id > b.id")
+    assert parsed["joins"][0]["on"]["conditions"][0]["operator"] == ">"
 
 
 def test_parse_join_rejects_subquery_with_join():
-    with pytest.raises(ValueError, match="Subqueries are not supported with JOIN"):
-        parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)")
+    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)")
+    assert parsed["joins"] is not None
+    where_cond = parsed["where"]["conditions"][0]
+    assert where_cond["operator"] == "IN"
+    assert where_cond["value"]["type"] == "subquery"
 
 
 def test_parse_join_accepts_group_by():
@@ -544,9 +557,9 @@ def test_parse_join_accepts_having():
     assert parsed["having"] is not None
 
 
-def test_parse_join_rejects_distinct():
-    with pytest.raises(ValueError, match="DISTINCT is not supported with JOIN"):
-        parse_sql("SELECT DISTINCT a.id FROM t1 a JOIN t2 b ON a.id = b.id")
+def test_parse_join_accepts_distinct():
+    parsed = parse_sql("SELECT DISTINCT a.id FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["distinct"] is True
 
 
 def test_parse_join_with_as_alias_from():

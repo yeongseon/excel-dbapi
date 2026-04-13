@@ -549,47 +549,15 @@ def _parse_column_expression(
     if not expression:
         raise ValueError("Invalid column expression")
 
-    if re.search(r"(?i)\bOVER\s*\(", expression):
-        raise ValueError("Unsupported SQL syntax: OVER")
-
-    match = re.fullmatch(
-        r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
-        expression,
+    pretokenized = _collapse_aggregate_tokens(_tokenize(expression))
+    parsed_window_or_aggregate = _parse_window_or_aggregate_expression_tokens(
+        pretokenized,
+        allow_aggregates=allow_aggregates,
+        allow_subqueries=allow_subqueries,
+        outer_sources=outer_sources,
     )
-    if match:
-        if not allow_aggregates:
-            raise ValueError("Unsupported column expression: aggregate functions are not supported here")
-        func = match.group(1).upper()
-        distinct_modifier = match.group(2)
-        arg = match.group(3).strip()
-        if not arg:
-            raise ValueError("Invalid aggregate expression")
-        if distinct_modifier:
-            if func != "COUNT":
-                raise ValueError("DISTINCT is only supported with COUNT")
-            if arg == "*":
-                raise ValueError("Invalid aggregate expression")
-            if not re.fullmatch(
-                rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}",
-                arg,
-            ):
-                raise ValueError(
-                    f"Unsupported aggregate expression: COUNT(DISTINCT {arg}). "
-                    "Only bare and qualified column names are supported with DISTINCT"
-                )
-        if arg == "*" and func != "COUNT":
-            raise ValueError(f"{func} does not support *")
-        if arg != "*" and not re.fullmatch(
-            rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", arg
-        ):
-            raise ValueError(
-                f"Unsupported aggregate expression: {func}({arg}). "
-                "Only bare column names and * are supported"
-            )
-        aggregate: dict[str, Any] = {"type": "aggregate", "func": func, "arg": arg}
-        if distinct_modifier:
-            aggregate["distinct"] = True
-        return aggregate
+    if parsed_window_or_aggregate is not None:
+        return parsed_window_or_aggregate
 
     if expression == "*":
         if allow_wildcard:
@@ -697,6 +665,12 @@ def _parse_column_expression(
                 }
 
             if function_name not in _SCALAR_FUNCTION_NAMES:
+                if function_name in _AGGREGATE_FUNCTIONS:
+                    raise ValueError(
+                        f"Unsupported function: {token}. "
+                        f"Unsupported aggregate expression: {expression}. "
+                        "Only bare column names and * are supported"
+                    )
                 raise ValueError(f"Unsupported function: {token}")
 
             arguments: list[Any] = []
@@ -792,6 +766,7 @@ def _parse_column_expression(
 
 
 _AGGREGATE_FUNCTIONS = frozenset({"COUNT", "SUM", "AVG", "MIN", "MAX"})
+_WINDOW_FUNCTIONS = frozenset({"ROW_NUMBER", "RANK", "DENSE_RANK"})
 _SCALAR_FUNCTION_NAMES = frozenset(
     {
         "COALESCE",
@@ -817,9 +792,270 @@ _QUALIFIED_IDENTIFIER_PATTERN = (
 def _aggregate_expression_to_label(aggregate: dict[str, Any]) -> str:
     func = str(aggregate.get("func", "")).upper()
     arg = str(aggregate.get("arg", "")).strip()
-    if aggregate.get("distinct"):
-        return f"{func}(DISTINCT {arg})"
-    return f"{func}({arg})"
+    aggregate_sql = f"{func}(DISTINCT {arg})" if aggregate.get("distinct") else f"{func}({arg})"
+    filter_clause = aggregate.get("filter")
+    if isinstance(filter_clause, dict):
+        filter_sql = _where_to_sql_for_order_by(filter_clause)
+        aggregate_sql = f"{aggregate_sql} FILTER (WHERE {filter_sql})"
+    return aggregate_sql
+
+
+def _parse_aggregate_token(token: str) -> dict[str, Any] | None:
+    match = re.fullmatch(
+        r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
+        token,
+    )
+    if not match:
+        return None
+
+    func = match.group(1).upper()
+    distinct_modifier = match.group(2)
+    arg = match.group(3).strip()
+    if not arg:
+        raise ValueError("Invalid aggregate expression")
+    if distinct_modifier:
+        if func != "COUNT":
+            raise ValueError("DISTINCT is only supported with COUNT")
+        if arg == "*":
+            raise ValueError("Invalid aggregate expression")
+        if not re.fullmatch(
+            rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}",
+            arg,
+        ):
+            raise ValueError(
+                f"Unsupported aggregate expression: COUNT(DISTINCT {arg}). "
+                "Only bare and qualified column names are supported with DISTINCT"
+            )
+
+    if arg == "*" and func != "COUNT":
+        raise ValueError(f"{func} does not support *")
+    if arg != "*" and not re.fullmatch(
+        rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}",
+        arg,
+    ):
+        raise ValueError(
+            f"Unsupported aggregate expression: {func}({arg}). "
+            "Only bare column names and * are supported"
+        )
+
+    aggregate: dict[str, Any] = {"type": "aggregate", "func": func, "arg": arg}
+    if distinct_modifier:
+        aggregate["distinct"] = True
+    return aggregate
+
+
+def _parse_filter_clause_tokens(
+    tokens: list[str],
+    start_index: int,
+    *,
+    allow_subqueries: bool,
+    outer_sources: set[str] | None,
+) -> tuple[dict[str, Any] | None, int]:
+    if start_index >= len(tokens) or tokens[start_index].upper() != "FILTER":
+        return None, start_index
+
+    if start_index + 2 >= len(tokens) or tokens[start_index + 1] != "(":
+        raise ValueError("Invalid FILTER clause")
+    if tokens[start_index + 2].upper() != "WHERE":
+        raise ValueError("Invalid FILTER clause: expected WHERE")
+
+    filter_end = _find_matching_parenthesis(tokens, start_index + 1)
+    filter_tokens = tokens[start_index + 3 : filter_end]
+    if not filter_tokens:
+        raise ValueError("Invalid FILTER clause")
+
+    filter_text = " ".join(filter_tokens).strip()
+    filter_clause = _parse_where_expression(
+        filter_text,
+        params=None,
+        bind_params=False,
+        allow_aggregates=False,
+        allow_subqueries=allow_subqueries,
+        outer_sources=outer_sources,
+    )
+    return filter_clause, filter_end + 1
+
+
+def _find_top_level_window_clause_index(
+    tokens: list[str],
+    start_index: int,
+) -> int:
+    depth = 0
+    index = start_index
+    while index < len(tokens):
+        token = tokens[index]
+        upper = token.upper()
+        if token == "(":
+            depth += 1
+            index += 1
+            continue
+        if token == ")":
+            if depth > 0:
+                depth -= 1
+            index += 1
+            continue
+        if depth == 0 and (
+            (upper == "ORDER" and index + 1 < len(tokens) and tokens[index + 1].upper() == "BY")
+            or upper == "ROWS"
+        ):
+            return index
+        index += 1
+    return len(tokens)
+
+
+def _parse_window_spec_tokens(
+    tokens: list[str],
+    start_index: int,
+    *,
+    outer_sources: set[str] | None,
+) -> tuple[list[Any], list[dict[str, Any]], int]:
+    if start_index >= len(tokens) or tokens[start_index].upper() != "OVER":
+        raise ValueError("Invalid window function: missing OVER")
+    if start_index + 1 >= len(tokens) or tokens[start_index + 1] != "(":
+        raise ValueError("Invalid window specification")
+
+    spec_end = _find_matching_parenthesis(tokens, start_index + 1)
+    spec_tokens = tokens[start_index + 2 : spec_end]
+
+    partition_by: list[Any] = []
+    order_by: list[dict[str, Any]] = []
+    index = 0
+
+    if index < len(spec_tokens) and spec_tokens[index].upper() == "PARTITION":
+        if index + 1 >= len(spec_tokens) or spec_tokens[index + 1].upper() != "BY":
+            raise ValueError("Invalid window specification: expected BY after PARTITION")
+        partition_start = index + 2
+        partition_end = _find_top_level_window_clause_index(spec_tokens, partition_start)
+        partition_text = " ".join(spec_tokens[partition_start:partition_end]).strip()
+        if not partition_text:
+            raise ValueError("Invalid window specification: PARTITION BY requires expression")
+        partition_by = [
+            _parse_column_expression(
+                part,
+                allow_wildcard=False,
+                allow_aggregates=False,
+                allow_subqueries=False,
+                outer_sources=outer_sources,
+            )
+            for part in _split_csv(partition_text)
+            if part.strip()
+        ]
+        if not partition_by:
+            raise ValueError("Invalid window specification: PARTITION BY requires expression")
+        index = partition_end
+
+    if index < len(spec_tokens) and spec_tokens[index].upper() == "ORDER":
+        if index + 1 >= len(spec_tokens) or spec_tokens[index + 1].upper() != "BY":
+            raise ValueError("Invalid window specification: expected BY after ORDER")
+        order_start = index + 2
+        order_end = _find_top_level_window_clause_index(spec_tokens, order_start)
+        order_text = " ".join(spec_tokens[order_start:order_end]).strip()
+        if not order_text:
+            raise ValueError("Invalid window specification: ORDER BY requires expression")
+        order_by = list(
+            _parse_order_by_clause_text(
+                order_text,
+                allow_subqueries=False,
+                outer_sources=outer_sources,
+            )
+        )
+        index = order_end
+
+    if index < len(spec_tokens):
+        frame_tokens = [token.upper() for token in spec_tokens[index:]]
+        if frame_tokens != [
+            "ROWS",
+            "BETWEEN",
+            "UNBOUNDED",
+            "PRECEDING",
+            "AND",
+            "CURRENT",
+            "ROW",
+        ]:
+            raise ValueError("Unsupported window frame specification")
+
+    return partition_by, order_by, spec_end + 1
+
+
+def _parse_window_or_aggregate_expression_tokens(
+    tokens: list[str],
+    *,
+    allow_aggregates: bool,
+    allow_subqueries: bool,
+    outer_sources: set[str] | None,
+) -> Any | None:
+    if not tokens:
+        return None
+
+    aggregate_expression = _parse_aggregate_token(tokens[0])
+    if aggregate_expression is not None:
+        index = 1
+        filter_clause, index = _parse_filter_clause_tokens(
+            tokens,
+            index,
+            allow_subqueries=allow_subqueries,
+            outer_sources=outer_sources,
+        )
+        if filter_clause is not None:
+            aggregate_expression["filter"] = filter_clause
+
+        if index < len(tokens) and tokens[index].upper() == "OVER":
+            partition_by, order_by, index = _parse_window_spec_tokens(
+                tokens,
+                index,
+                outer_sources=outer_sources,
+            )
+            if index != len(tokens):
+                raise ValueError("Unsupported column expression")
+            window_function: dict[str, Any] = {
+                "type": "window_function",
+                "func": str(aggregate_expression["func"]),
+                "args": [str(aggregate_expression["arg"])],
+                "partition_by": partition_by,
+                "order_by": order_by,
+            }
+            if aggregate_expression.get("distinct"):
+                window_function["distinct"] = True
+            if filter_clause is not None:
+                window_function["filter"] = filter_clause
+            return window_function
+
+        if index == len(tokens):
+            if not allow_aggregates:
+                raise ValueError(
+                    "Unsupported column expression: aggregate functions are not supported here"
+                )
+            return aggregate_expression
+
+    if (
+        len(tokens) >= 4
+        and re.fullmatch(_IDENTIFIER_PATTERN, tokens[0])
+        and tokens[1] == "("
+    ):
+        function_name = tokens[0].upper()
+        if function_name in _WINDOW_FUNCTIONS:
+            function_end = _find_matching_parenthesis(tokens, 1)
+            if function_end != 2:
+                raise ValueError(f"{function_name} does not accept arguments")
+            if function_end + 1 >= len(tokens) or tokens[function_end + 1].upper() != "OVER":
+                return None
+
+            partition_by, order_by, next_index = _parse_window_spec_tokens(
+                tokens,
+                function_end + 1,
+                outer_sources=outer_sources,
+            )
+            if next_index != len(tokens):
+                raise ValueError("Unsupported column expression")
+            return {
+                "type": "window_function",
+                "func": function_name,
+                "args": [],
+                "partition_by": partition_by,
+                "order_by": order_by,
+            }
+
+    return None
 
 
 def _collapse_aggregate_tokens(tokens: List[str]) -> List[str]:
@@ -1065,6 +1301,41 @@ def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
         arg = expression.get("arg")
         if isinstance(arg, str) and re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, arg):
             refs.add(arg)
+        filter_clause = expression.get("filter")
+        if isinstance(filter_clause, dict):
+            refs.update(_collect_qualified_references_from_where(filter_clause))
+        return refs
+
+    if expression_type == "window_function":
+        args = expression.get("args")
+        if isinstance(args, list):
+            for argument in args:
+                refs.update(_collect_qualified_references_from_expression(argument))
+
+        partition_by = expression.get("partition_by")
+        if isinstance(partition_by, list):
+            for partition_expression in partition_by:
+                refs.update(_collect_qualified_references_from_expression(partition_expression))
+
+        order_by = expression.get("order_by")
+        if isinstance(order_by, list):
+            for item in order_by:
+                if not isinstance(item, dict):
+                    continue
+                order_expression = item.get("__expression__")
+                if order_expression is not None:
+                    refs.update(_collect_qualified_references_from_expression(order_expression))
+                    continue
+                order_column = item.get("column")
+                if isinstance(order_column, str) and re.fullmatch(
+                    _QUALIFIED_IDENTIFIER_PATTERN,
+                    order_column,
+                ):
+                    refs.add(order_column)
+
+        filter_clause = expression.get("filter")
+        if isinstance(filter_clause, dict):
+            refs.update(_collect_qualified_references_from_where(filter_clause))
         return refs
 
     if expression_type == "literal":
@@ -1300,6 +1571,37 @@ def _expression_values_to_bind(expression: Any) -> List[Any]:
             return function_values
         if expression_type == "cast":
             return _expression_values_to_bind(expression.get("value"))
+        if expression_type == "aggregate":
+            aggregate_values: List[Any] = []
+            filter_clause = expression.get("filter")
+            if isinstance(filter_clause, dict):
+                aggregate_values.extend(_where_values_to_bind(filter_clause))
+            return aggregate_values
+        if expression_type == "window_function":
+            window_values: List[Any] = []
+            args = expression.get("args")
+            if isinstance(args, list):
+                for argument in args:
+                    window_values.extend(_expression_values_to_bind(argument))
+
+            partition_by = expression.get("partition_by")
+            if isinstance(partition_by, list):
+                for partition_expression in partition_by:
+                    window_values.extend(_expression_values_to_bind(partition_expression))
+
+            order_by = expression.get("order_by")
+            if isinstance(order_by, list):
+                for item in order_by:
+                    if not isinstance(item, dict):
+                        continue
+                    order_expression = item.get("__expression__")
+                    if order_expression is not None:
+                        window_values.extend(_expression_values_to_bind(order_expression))
+
+            filter_clause = expression.get("filter")
+            if isinstance(filter_clause, dict):
+                window_values.extend(_where_values_to_bind(filter_clause))
+            return window_values
         if expression_type == "case":
             case_values: List[Any] = []
             mode = str(expression.get("mode", ""))
@@ -1364,6 +1666,56 @@ def _bind_expression_values(
 
     if expression_type == "cast":
         return _bind_expression_values(expression.get("value"), bound_values, offset)
+
+    if expression_type == "aggregate":
+        filter_clause = expression.get("filter")
+        if isinstance(filter_clause, dict):
+            return _bind_where_conditions(filter_clause, bound_values, offset)
+        return 0
+
+    if expression_type == "window_function":
+        consumed = 0
+
+        args = expression.get("args")
+        if isinstance(args, list):
+            for argument in args:
+                consumed += _bind_expression_values(
+                    argument,
+                    bound_values,
+                    offset + consumed,
+                )
+
+        partition_by = expression.get("partition_by")
+        if isinstance(partition_by, list):
+            for partition_expression in partition_by:
+                consumed += _bind_expression_values(
+                    partition_expression,
+                    bound_values,
+                    offset + consumed,
+                )
+
+        order_by = expression.get("order_by")
+        if isinstance(order_by, list):
+            for item in order_by:
+                if not isinstance(item, dict):
+                    continue
+                order_expression = item.get("__expression__")
+                if order_expression is None:
+                    continue
+                consumed += _bind_expression_values(
+                    order_expression,
+                    bound_values,
+                    offset + consumed,
+                )
+
+        filter_clause = expression.get("filter")
+        if isinstance(filter_clause, dict):
+            consumed += _bind_where_conditions(
+                filter_clause,
+                bound_values,
+                offset + consumed,
+            )
+        return consumed
 
     if expression_type == "case":
         consumed = 0
@@ -2395,56 +2747,76 @@ def _parse_join_on_condition(
     if not on_tokens:
         raise ValueError("JOIN requires ON condition")
 
-    clauses: List[Dict[str, Any]] = []
-    start = 0
-    index = 0
-    while index <= len(on_tokens):
-        at_end = index == len(on_tokens)
-        if not at_end and on_tokens[index].upper() != "AND":
-            index += 1
-            continue
+    parsed_condition = _parse_where_expression(
+        " ".join(on_tokens),
+        params=None,
+        bind_params=False,
+        allow_aggregates=False,
+        allow_subqueries=False,
+    )
 
-        comparison_tokens = on_tokens[start:index]
-        if len(comparison_tokens) != 3:
-            raise ValueError(
-                "JOIN ON supports only AND-combined equality comparisons"
-            )
+    _validate_join_on_condition_node(parsed_condition, left_sources, right_sources)
+    return parsed_condition
 
-        left_token, operator, right_token = comparison_tokens
-        if operator != "=":
-            raise ValueError("JOIN ON supports only '=' comparisons")
 
-        left_column = _parse_qualified_column_reference(left_token)
-        right_column = _parse_qualified_column_reference(right_token)
+def _validate_join_on_condition_node(
+    node: Dict[str, Any],
+    left_sources: set[str],
+    right_sources: set[str],
+) -> None:
+    if node.get("type") == "not":
+        operand = node.get("operand")
+        if isinstance(operand, dict):
+            _validate_join_on_condition_node(operand, left_sources, right_sources)
+            return
+        raise ValueError("Invalid JOIN ON condition")
 
-        left_source = str(left_column["source"])
-        right_source = str(right_column["source"])
-        left_on_left = left_source in left_sources
-        left_on_right = left_source in right_sources
-        right_on_left = right_source in left_sources
-        right_on_right = right_source in right_sources
+    if "conditions" in node and node.get("type") != "not":
+        conditions = node.get("conditions")
+        conjunctions = node.get("conjunctions")
+        if not isinstance(conditions, list):
+            raise ValueError("Invalid JOIN ON condition")
+        if not isinstance(conjunctions, list):
+            raise ValueError("Invalid JOIN ON condition")
+        if len(conditions) != len(conjunctions) + 1:
+            raise ValueError("Invalid JOIN ON condition")
 
-        if (left_on_left and right_on_right) or (left_on_right and right_on_left):
-            clauses.append(
-                {
-                    "type": "binary_op",
-                    "op": "=",
-                    "left": left_column,
-                    "right": right_column,
-                }
-            )
-        else:
-            raise ValueError(
-                "JOIN ON references must compare columns from the two joined sources"
-            )
+        for conjunction in conjunctions:
+            if str(conjunction).upper() not in {"AND", "OR"}:
+                raise ValueError("JOIN ON supports only AND/OR conjunctions")
 
-        start = index + 1
-        index += 1
+        for condition in conditions:
+            if not isinstance(condition, dict):
+                raise ValueError("Invalid JOIN ON condition")
+            _validate_join_on_condition_node(condition, left_sources, right_sources)
+        return
 
-    if not clauses:
-        raise ValueError("JOIN requires at least one ON equality condition")
+    operator = str(node.get("operator", "")).upper()
+    if operator not in {"=", "==", "!=", "<>", ">", "<", ">=", "<="}:
+        raise ValueError(f"Unsupported JOIN ON operator: {operator}")
 
-    return {"type": "and", "clauses": clauses}
+    left = node.get("column")
+    right = node.get("value")
+    if not isinstance(left, dict) or left.get("type") != "column":
+        raise ValueError(
+            "Invalid column reference in JOIN: ON supports only qualified column-to-column comparisons"
+        )
+    if not isinstance(right, dict) or right.get("type") != "column":
+        raise ValueError(
+            "Invalid column reference in JOIN: ON supports only qualified column-to-column comparisons"
+        )
+
+    left_source = str(left.get("source", ""))
+    right_source = str(right.get("source", ""))
+    left_on_left = left_source in left_sources
+    left_on_right = left_source in right_sources
+    right_on_left = right_source in left_sources
+    right_on_right = right_source in right_sources
+
+    if not ((left_on_left and right_on_right) or (left_on_right and right_on_left)):
+        raise ValueError(
+            "JOIN ON references must compare columns from the two joined sources"
+        )
 
 
 def _validate_join_column_reference(
@@ -2452,6 +2824,14 @@ def _validate_join_column_reference(
     allowed_sources: set[str],
     context: str,
 ) -> None:
+    if isinstance(column, str):
+        if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, column):
+            raise ValueError(f"{context} requires qualified column names in JOIN queries")
+        source, name = column.split(".", 1)
+        if source not in allowed_sources or not name:
+            raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
+        return
+
     if isinstance(column, dict):
         column_type = column.get("type")
         if column_type == "alias":
@@ -2464,6 +2844,51 @@ def _validate_join_column_reference(
                 raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
             return
         if column_type == "literal":
+            return
+        if column_type == "aggregate":
+            arg = str(column.get("arg", ""))
+            if arg != "*":
+                if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, arg):
+                    raise ValueError(
+                        "Aggregate arguments in JOIN queries must be qualified column names or *"
+                    )
+                source, name = arg.split(".", 1)
+                if source not in allowed_sources or not name:
+                    raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
+            filter_clause = column.get("filter")
+            if isinstance(filter_clause, dict):
+                _validate_join_where_node(filter_clause, allowed_sources)
+            return
+        if column_type == "window_function":
+            args = column.get("args")
+            if isinstance(args, list):
+                for argument in args:
+                    if isinstance(argument, str) and argument == "*":
+                        continue
+                    _validate_join_column_reference(argument, allowed_sources, context)
+
+            partition_by = column.get("partition_by")
+            if isinstance(partition_by, list):
+                for partition_expression in partition_by:
+                    _validate_join_column_reference(partition_expression, allowed_sources, context)
+
+            order_by = column.get("order_by")
+            if isinstance(order_by, list):
+                for item in order_by:
+                    if not isinstance(item, dict):
+                        continue
+                    order_expression = item.get("__expression__")
+                    if order_expression is not None:
+                        _validate_join_column_reference(order_expression, allowed_sources, context)
+                        continue
+
+                    order_column = item.get("column")
+                    if isinstance(order_column, str):
+                        _validate_join_column_reference(order_column, allowed_sources, context)
+
+            filter_clause = column.get("filter")
+            if isinstance(filter_clause, dict):
+                _validate_join_where_node(filter_clause, allowed_sources)
             return
         if column_type == "unary_op":
             _validate_join_column_reference(column.get("operand"), allowed_sources, context)
@@ -2550,6 +2975,17 @@ def _validate_join_where_node(
     node: Dict[str, Any], join_sources: set[str]
 ) -> None:
     """Validate a single WHERE AST node for JOIN column references."""
+    if node.get("type") == "exists":
+        outer_refs = node.get("outer_refs")
+        if isinstance(outer_refs, list):
+            for reference in outer_refs:
+                if not isinstance(reference, str) or "." not in reference:
+                    continue
+                source, _ = reference.split(".", 1)
+                if source not in join_sources:
+                    raise ValueError(f"Invalid source reference in WHERE: {reference}")
+        return
+
     # NOT node: recurse into operand
     if node.get("type") == "not":
         operand = node.get("operand")
@@ -2677,7 +3113,68 @@ def _expression_to_sql_for_order_by(expression: Any) -> str:
         if expression_type == "column":
             return f"{expression['source']}.{expression['name']}"
         if expression_type == "aggregate":
-            return f"{expression['func']}({expression['arg']})"
+            func = str(expression.get("func", "")).upper()
+            arg = str(expression.get("arg", "")).strip()
+            aggregate_sql = (
+                f"{func}(DISTINCT {arg})"
+                if expression.get("distinct")
+                else f"{func}({arg})"
+            )
+            filter_clause = expression.get("filter")
+            if isinstance(filter_clause, dict):
+                filter_sql = _where_to_sql_for_order_by(filter_clause)
+                aggregate_sql = f"{aggregate_sql} FILTER (WHERE {filter_sql})"
+            return aggregate_sql
+        if expression_type == "window_function":
+            func = str(expression.get("func", "")).upper()
+            args = expression.get("args")
+            args_list = args if isinstance(args, list) else []
+            args_sql_parts = [
+                _expression_to_sql_for_order_by(argument)
+                if isinstance(argument, dict)
+                else str(argument)
+                for argument in args_list
+            ]
+            args_sql = ", ".join(args_sql_parts)
+            if expression.get("distinct") and args_sql:
+                args_sql = f"DISTINCT {args_sql}"
+
+            function_sql = f"{func}({args_sql})"
+            filter_clause = expression.get("filter")
+            if isinstance(filter_clause, dict):
+                filter_sql = _where_to_sql_for_order_by(filter_clause)
+                function_sql = f"{function_sql} FILTER (WHERE {filter_sql})"
+
+            spec_parts: list[str] = []
+            partition_by = expression.get("partition_by")
+            if isinstance(partition_by, list) and partition_by:
+                partition_sql = ", ".join(
+                    _expression_to_sql_for_order_by(partition_expression)
+                    for partition_expression in partition_by
+                )
+                spec_parts.append(f"PARTITION BY {partition_sql}")
+
+            order_by = expression.get("order_by")
+            if isinstance(order_by, list) and order_by:
+                order_parts: list[str] = []
+                for order_item in order_by:
+                    if not isinstance(order_item, dict):
+                        continue
+                    order_expression = order_item.get("__expression__")
+                    if order_expression is not None:
+                        order_column_sql = _expression_to_sql_for_order_by(order_expression)
+                    else:
+                        order_column_sql = str(order_item.get("column", ""))
+                        if order_column_sql.startswith("__expr__:"):
+                            order_column_sql = order_column_sql[len("__expr__:") :]
+                    direction = str(order_item.get("direction", "ASC")).upper()
+                    order_parts.append(f"{order_column_sql} {direction}")
+                if order_parts:
+                    spec_parts.append("ORDER BY " + ", ".join(order_parts))
+
+            if spec_parts:
+                return f"{function_sql} OVER ({' '.join(spec_parts)})"
+            return f"{function_sql} OVER ()"
         if expression_type == "literal":
             return _literal_to_sql_for_order_by(expression.get("value"))
         if expression_type == "unary_op":
@@ -2783,8 +3280,20 @@ def _parse_order_by_item_tokens(
         return result
 
     expression_text = " ".join(expression_tokens).strip()
-    aggregate_match = re.fullmatch(r"(?i)(COUNT|SUM|AVG|MIN|MAX)\([^)]+\)", expression_text)
-    if aggregate_match or re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression_text):
+    parsed_aggregate = _parse_column_expression(
+        expression_text,
+        allow_wildcard=False,
+        allow_aggregates=True,
+        allow_subqueries=allow_subqueries,
+        outer_sources=outer_sources,
+    )
+    if isinstance(parsed_aggregate, dict) and parsed_aggregate.get("type") == "aggregate":
+        return {
+            "column": _aggregate_expression_to_label(parsed_aggregate),
+            "direction": direction,
+        }
+
+    if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression_text):
         return {"column": expression_text, "direction": direction}
     if re.fullmatch(_IDENTIFIER_PATTERN, expression_text):
         return {"column": expression_text, "direction": direction}
@@ -3374,12 +3883,13 @@ def _parse_select(
                         raise ValueError(
                             "Aggregate arguments in JOIN queries must be qualified column names or *"
                         )
+                    filter_clause = expression.get("filter")
+                    if isinstance(filter_clause, dict):
+                        _validate_join_where_node(filter_clause, join_sources)
                     continue
                 _validate_join_column_reference(expression, join_sources, "SELECT")
 
         if where is not None:
-            if _is_subquery_condition(where):
-                raise ValueError("Subqueries are not supported with JOIN")
             _validate_join_where_columns(where, join_sources)
 
         if order_by is not None:
@@ -3387,18 +3897,33 @@ def _parse_select(
                 order_column = str(item["column"])
                 if order_column in select_aliases:
                     continue
-                aggregate_match = re.fullmatch(
-                    r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
+                if order_column.startswith("__expr__:"):
+                    order_expression = item.get("__expression__")
+                    if order_expression is not None:
+                        _validate_join_column_reference(order_expression, join_sources, "ORDER BY")
+                    continue
+                aggregate_expression = _parse_column_expression(
                     order_column,
+                    allow_wildcard=False,
+                    allow_aggregates=True,
+                    allow_subqueries=False,
+                    outer_sources=join_sources,
                 )
-                if aggregate_match:
-                    arg = aggregate_match.group(3).strip()
+                if (
+                    isinstance(aggregate_expression, dict)
+                    and aggregate_expression.get("type") == "aggregate"
+                ):
+                    arg = str(aggregate_expression.get("arg", "")).strip()
                     if arg != "*" and not re.fullmatch(
-                        _QUALIFIED_IDENTIFIER_PATTERN, arg
+                        _QUALIFIED_IDENTIFIER_PATTERN,
+                        arg,
                     ):
                         raise ValueError(
                             "Aggregate arguments in JOIN queries must be qualified column names or *"
                         )
+                    filter_clause = aggregate_expression.get("filter")
+                    if isinstance(filter_clause, dict):
+                        _validate_join_where_node(filter_clause, join_sources)
                     continue
                 parsed_order_column = _parse_qualified_column_reference(order_column)
                 _validate_join_column_reference(parsed_order_column, join_sources, "ORDER BY")
@@ -3502,6 +4027,37 @@ def _annotate_column_tables(expression: Any) -> None:
 
     if expression_type == "cast":
         _annotate_column_tables(expression.get("value"))
+        return
+
+    if expression_type == "aggregate":
+        filter_clause = expression.get("filter")
+        if isinstance(filter_clause, dict):
+            _annotate_column_tables(filter_clause)
+        return
+
+    if expression_type == "window_function":
+        args = expression.get("args")
+        if isinstance(args, list):
+            for argument in args:
+                _annotate_column_tables(argument)
+
+        partition_by = expression.get("partition_by")
+        if isinstance(partition_by, list):
+            for partition_expression in partition_by:
+                _annotate_column_tables(partition_expression)
+
+        order_by = expression.get("order_by")
+        if isinstance(order_by, list):
+            for item in order_by:
+                if not isinstance(item, dict):
+                    continue
+                order_expression = item.get("__expression__")
+                if order_expression is not None:
+                    _annotate_column_tables(order_expression)
+
+        filter_clause = expression.get("filter")
+        if isinstance(filter_clause, dict):
+            _annotate_column_tables(filter_clause)
         return
 
     if expression_type == "case":
@@ -4166,17 +4722,132 @@ def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[D
     return result
 
 
+def _query_references_name(query: Dict[str, Any], name: str) -> bool:
+    lowered = name.lower()
+    action = str(query.get("action", "")).upper()
+    if action == "COMPOUND":
+        for branch in query.get("queries", []):
+            if isinstance(branch, dict) and _query_references_name(branch, name):
+                return True
+        return False
+
+    if action != "SELECT":
+        return False
+
+    for source in _query_source_references(query):
+        if source.lower() == lowered:
+            return True
+    return False
+
+
+def _parse_with_query(
+    query: str,
+    params: Optional[tuple[Any, ...]],
+) -> Dict[str, Any]:
+    tokens = _tokenize(query.strip())
+    if len(tokens) < 2 or tokens[0].upper() != "WITH":
+        raise ValueError(f"Invalid SQL query format: {query}")
+
+    index = 1
+    if tokens[index].upper() == "RECURSIVE":
+        raise ValueError("Recursive CTEs are not supported")
+
+    ctes: List[Dict[str, Any]] = []
+    cte_names: set[str] = set()
+    param_index = 0
+    total_params = len(params) if params is not None else 0
+
+    while True:
+        if index >= len(tokens):
+            raise ValueError("Invalid WITH clause: missing CTE name")
+
+        cte_name = tokens[index]
+        if not re.fullmatch(_IDENTIFIER_PATTERN, cte_name):
+            raise ValueError(f"Invalid CTE name: {cte_name}")
+        lowered_name = cte_name.lower()
+        if lowered_name in cte_names:
+            raise ValueError(f"Duplicate CTE name: {cte_name}")
+        cte_names.add(lowered_name)
+        index += 1
+
+        if index >= len(tokens) or tokens[index].upper() != "AS":
+            raise ValueError("Invalid WITH clause: expected AS")
+        index += 1
+
+        if index >= len(tokens) or tokens[index] != "(":
+            raise ValueError("Invalid WITH clause: expected '(' after AS")
+        end_index = _find_matching_parenthesis(tokens, index)
+        subquery_tokens = tokens[index + 1 : end_index]
+        if not subquery_tokens:
+            raise ValueError("Invalid WITH clause: empty CTE query")
+
+        subquery_sql = " ".join(subquery_tokens)
+        cte_params: Optional[tuple[Any, ...]] = None
+        if params is not None:
+            placeholder_count = _count_unquoted_placeholders(subquery_sql)
+            next_param_index = param_index + placeholder_count
+            if next_param_index > total_params:
+                raise ValueError("Not enough parameters for placeholders")
+            cte_params = params[param_index:next_param_index]
+            param_index = next_param_index
+
+        parsed_cte = _parse_compound(subquery_sql, cte_params)
+        if parsed_cte is None:
+            parsed_cte = _parse_select(subquery_sql, cte_params)
+
+        if _query_references_name(parsed_cte, cte_name):
+            raise ValueError("Recursive CTEs are not supported")
+
+        ctes.append({"type": "cte", "name": cte_name, "query": parsed_cte})
+        index = end_index + 1
+
+        if index >= len(tokens):
+            raise ValueError("Invalid WITH clause: missing main SELECT query")
+        if tokens[index] == ",":
+            index += 1
+            continue
+        break
+
+    main_query = " ".join(tokens[index:]).strip()
+    if not main_query:
+        raise ValueError("Invalid WITH clause: missing main SELECT query")
+
+    main_tokens = _tokenize(main_query)
+    if not main_tokens:
+        raise ValueError("Invalid WITH clause: missing main SELECT query")
+    if main_tokens[0].upper() != "SELECT" and main_tokens[0] != "(":
+        raise ValueError("WITH clause requires a SELECT query")
+
+    remaining_params: Optional[tuple[Any, ...]] = None
+    if params is not None:
+        remaining_params = params[param_index:]
+
+    parsed = _parse_compound(main_query, remaining_params)
+    if parsed is None:
+        if main_tokens[0] == "(":
+            raise ValueError(f"Unsupported SQL action: {main_tokens[0]}")
+        parsed = _parse_select(main_query, remaining_params)
+
+    parsed["ctes"] = ctes
+    return parsed
+
+
 def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str, Any]:
     tokens = _tokenize(query.strip())
     if not tokens:
         raise ValueError(f"Invalid SQL query format: {query}")
     action = tokens[0].upper()
-    if action == "SELECT" or tokens[0] == "(":
-        parsed = _parse_compound(query, params)
-        if parsed is None:
+    parsed: Dict[str, Any]
+    if action == "WITH":
+        parsed = _parse_with_query(query, params)
+    elif action == "SELECT" or tokens[0] == "(":
+        compound_parsed = _parse_compound(query, params)
+        if compound_parsed is None:
             if tokens[0] == "(":
                 raise ValueError(f"Unsupported SQL action: {tokens[0]}")
             parsed = _parse_select(query, params)
+        else:
+            parsed = compound_parsed
     elif action == "INSERT":
         parsed = _parse_insert(query, params)
     elif action == "CREATE":
