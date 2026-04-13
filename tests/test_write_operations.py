@@ -383,3 +383,54 @@ def test_insert_select_same_sheet(tmp_path: Path) -> None:
     assert len(rows) == 3  # header + original + duplicate
     assert rows[1] == (1, "Alice")
     assert rows[2] == (1, "Alice")
+
+
+def test_multi_row_insert_atomicity_on_failure(tmp_path: Path) -> None:
+    """Multi-row INSERT must not leave partial rows when a later row fails validation."""
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name"])
+    ws.append([1, "Existing"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        # Row 2 has wrong column count — should fail atomically
+        with pytest.raises(Exception, match="count"):
+            cursor.execute(
+                "INSERT INTO Sheet1 VALUES (2, 'Good'), (3)"
+            )
+
+    # Verify NO partial rows were inserted
+    wb = load_workbook(file_path, data_only=True)
+    rows = list(wb["Sheet1"].iter_rows(values_only=True))
+    assert len(rows) == 2  # header + original only
+    assert rows[1] == (1, "Existing")
+
+
+def test_insert_select_zero_rows_column_mismatch(tmp_path: Path) -> None:
+    """INSERT...SELECT with zero rows must still validate column count."""
+    file_path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Target"
+    ws.append(["id", "name"])
+    wb.save(file_path)
+
+    # Create Source with 3 columns (mismatched with Target's 2)
+    wb = load_workbook(file_path)
+    ws2 = wb.create_sheet("Source")
+    ws2.append(["a", "b", "c"])
+    wb.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        # SELECT returns 0 rows but has 3 columns vs Target's 2 — must fail
+        with pytest.raises(Exception, match="mismatch"):
+            cursor.execute(
+                "INSERT INTO Target SELECT a, b, c FROM Source WHERE a = 999"
+            )
