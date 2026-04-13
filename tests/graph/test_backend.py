@@ -144,6 +144,9 @@ def _writable_handler_factory():
         if "/range(" in path and method == "PATCH":
             return httpx.Response(200, json=body or {})
 
+        if path.endswith("/delete") and method == "POST":
+            return httpx.Response(200, json={})
+
         # POST range/clear
         if path.endswith("/clear") and method == "POST":
             return httpx.Response(200, json={})

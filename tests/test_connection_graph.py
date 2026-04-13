@@ -82,6 +82,9 @@ def _build_handler():
         if "/range(" in path and method == "PATCH":
             return httpx.Response(200, json=body or {})
 
+        if path.endswith("/delete") and method == "POST":
+            return httpx.Response(200, json={})
+
         if path.endswith("/clear") and method == "POST":
             return httpx.Response(200, json={})
 
@@ -334,11 +337,11 @@ class TestGraphConnectionDelete:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM Employees WHERE id = ?", (1,))
         assert cursor.rowcount == 1
-        # Should have PATCH (rewrite) + POST (clear tail)
-        patch_reqs = [
-            r for r in state["requests"] if r[0] == "PATCH" and "/range(" in r[1]
+        delete_reqs = [
+            r for r in state["requests"] if r[0] == "POST" and r[1].endswith("/delete")
         ]
-        assert len(patch_reqs) >= 1
+        patch_reqs = [r for r in state["requests"] if r[0] == "PATCH" and "/range(" in r[1]]
+        assert delete_reqs or patch_reqs
         conn.close()
 
     def test_delete_all_rows(self):

@@ -59,6 +59,7 @@ class GraphBackend(WorkbookBackend):
     supports_transactions: bool = False
     _CONFLICT_STRATEGIES = frozenset({"fail", "force"})
     _WRITE_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
+    _FULL_REWRITE_THRESHOLD = 0.5
 
     def __init__(
         self,
@@ -172,13 +173,7 @@ class GraphBackend(WorkbookBackend):
     # -- Mutating operations -------------------------------------------------
 
     def write_sheet(self, sheet_name: str, data: TableData) -> None:
-        """Overwrite all rows for *sheet_name* via a single range PATCH.
-
-        If the new data has fewer rows than the current sheet, the leftover
-        tail rows are cleared via the Graph ``range/clear`` endpoint.
-        If the new data has fewer columns, stale right-side cells are also
-        cleared.
-        """
+        """Write table data, using targeted updates/deletes when safe."""
         self._ensure_writable("write_sheet")
         self._ensure_session()
         self._load_sheets()
@@ -199,10 +194,26 @@ class GraphBackend(WorkbookBackend):
             padded = list(row) + [None] * (num_cols - len(row))
             matrix.append(padded[:num_cols])
 
+        if self._try_patch_changed_rows(ws_id, old_values, matrix, num_cols):
+            return
+
+        if self._try_delete_rows(ws_id, old_values, matrix, num_cols):
+            return
+
+        self._rewrite_sheet(ws_id, matrix, old_row_count, old_col_count, num_cols)
+
+    def _rewrite_sheet(
+        self,
+        ws_id: str,
+        matrix: list[list[Any]],
+        old_row_count: int,
+        old_col_count: int,
+        num_cols: int,
+    ) -> None:
+        """Rewrite sheet matrix and clear stale tails/columns."""
         new_row_count = len(matrix)  # header + data rows
         last_col = _col_letter(num_cols - 1) if num_cols > 0 else "A"
 
-        # PATCH the retained data
         if num_cols > 0 and new_row_count > 0:
             address = f"A1:{last_col}{new_row_count}"
             patch_path = (
@@ -211,7 +222,6 @@ class GraphBackend(WorkbookBackend):
             )
             self._session_aware_request("PATCH", patch_path, json={"values": matrix})
 
-        # Clear leftover tail rows (old rows that no longer exist)
         max_col_count = max(old_col_count, num_cols) if old_col_count else num_cols
         tail_last_col = _col_letter(max_col_count - 1) if max_col_count > 0 else "A"
         if old_row_count > new_row_count and max_col_count > 0:
@@ -221,11 +231,8 @@ class GraphBackend(WorkbookBackend):
                 f"{self._locator.item_path}/workbook"
                 f"/worksheets/{ws_id}/range(address='{tail_address}')/clear"
             )
-            self._session_aware_request(
-                "POST", clear_path, json={"applyTo": "Contents"}
-            )
+            self._session_aware_request("POST", clear_path, json={"applyTo": "Contents"})
 
-        # Clear stale right-side columns if new data is narrower
         if old_col_count > num_cols and new_row_count > 0:
             right_start_col = _col_letter(num_cols)
             right_end_col = _col_letter(old_col_count - 1)
@@ -237,6 +244,130 @@ class GraphBackend(WorkbookBackend):
             self._session_aware_request(
                 "POST", clear_right_path, json={"applyTo": "Contents"}
             )
+
+    def _try_patch_changed_rows(
+        self,
+        ws_id: str,
+        old_values: list[list[Any]],
+        matrix: list[list[Any]],
+        num_cols: int,
+    ) -> bool:
+        """Patch only changed rows when old/new shapes match."""
+        if not old_values or num_cols == 0:
+            return False
+        if len(old_values) != len(matrix):
+            return False
+
+        old_headers = list(old_values[0]) if old_values else []
+        if old_headers != matrix[0]:
+            return False
+
+        changed_rows: list[int] = []
+        for idx, (old_row, new_row) in enumerate(zip(old_values[1:], matrix[1:]), start=2):
+            old_rect = self._rect_row(old_row, num_cols)
+            if old_rect != new_row:
+                changed_rows.append(idx)
+
+        if not changed_rows:
+            return True
+
+        total_data_rows = len(matrix) - 1
+        if total_data_rows <= 0:
+            return False
+        if (len(changed_rows) / total_data_rows) > self._FULL_REWRITE_THRESHOLD:
+            return False
+
+        row_groups = self._group_consecutive(changed_rows)
+        last_col = _col_letter(num_cols - 1)
+        for start_row, end_row in row_groups:
+            values = [matrix[row_number - 1] for row_number in range(start_row, end_row + 1)]
+            address = f"A{start_row}:{last_col}{end_row}"
+            patch_path = (
+                f"{self._locator.item_path}/workbook"
+                f"/worksheets/{ws_id}/range(address='{address}')"
+            )
+            self._session_aware_request("PATCH", patch_path, json={"values": values})
+        return True
+
+    def _try_delete_rows(
+        self,
+        ws_id: str,
+        old_values: list[list[Any]],
+        matrix: list[list[Any]],
+        num_cols: int,
+    ) -> bool:
+        """Delete removed rows with Graph range delete when possible."""
+        if not old_values or num_cols == 0:
+            return False
+        if len(matrix) >= len(old_values):
+            return False
+
+        old_headers = list(old_values[0]) if old_values else []
+        if old_headers != matrix[0]:
+            return False
+
+        old_rows = [self._rect_row(row, num_cols) for row in old_values[1:]]
+        new_rows = matrix[1:]
+        deleted_data_rows = self._find_deleted_row_indices(old_rows, new_rows)
+        if not deleted_data_rows:
+            return False
+
+        deleted_sheet_rows = [idx + 2 for idx in deleted_data_rows]
+        row_groups = self._group_consecutive(deleted_sheet_rows)
+        last_col = _col_letter(num_cols - 1)
+
+        for start_row, end_row in reversed(row_groups):
+            address = f"A{start_row}:{last_col}{end_row}"
+            delete_path = (
+                f"{self._locator.item_path}/workbook"
+                f"/worksheets/{ws_id}/range(address='{address}')/delete"
+            )
+            self._session_aware_request("POST", delete_path, json={"shift": "Up"})
+        return True
+
+    @staticmethod
+    def _rect_row(row: list[Any], width: int) -> list[Any]:
+        padded = list(row) + [None] * (width - len(row))
+        return padded[:width]
+
+    @staticmethod
+    def _group_consecutive(rows: list[int]) -> list[tuple[int, int]]:
+        if not rows:
+            return []
+        groups: list[tuple[int, int]] = []
+        start = rows[0]
+        end = rows[0]
+        for row in rows[1:]:
+            if row == end + 1:
+                end = row
+                continue
+            groups.append((start, end))
+            start = row
+            end = row
+        groups.append((start, end))
+        return groups
+
+    @staticmethod
+    def _find_deleted_row_indices(
+        old_rows: list[list[Any]], new_rows: list[list[Any]]
+    ) -> list[int]:
+        """Return old-row indexes removed from old_rows to form new_rows."""
+        deleted: list[int] = []
+        old_idx = 0
+        new_idx = 0
+        while old_idx < len(old_rows) and new_idx < len(new_rows):
+            if old_rows[old_idx] == new_rows[new_idx]:
+                old_idx += 1
+                new_idx += 1
+                continue
+            deleted.append(old_idx)
+            old_idx += 1
+        if new_idx != len(new_rows):
+            return []
+        while old_idx < len(old_rows):
+            deleted.append(old_idx)
+            old_idx += 1
+        return deleted
 
     def append_row(self, sheet_name: str, row: list[Any]) -> int:
         """Append a single row to *sheet_name* and return the 1-based row index."""
