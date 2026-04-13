@@ -49,9 +49,16 @@ class GraphBackend(WorkbookBackend):
     (INSERT, UPDATE, DELETE, CREATE TABLE, DROP TABLE).  Writable mode uses a
     Graph API session with ``persistChanges=true``; changes are applied
     immediately and **cannot be rolled back**.
+
+    Networking options (via ``backend_options`` / ``connect()`` kwargs):
+    - ``timeout`` (float, default 30.0): HTTP request timeout in seconds.
+    - ``max_retries`` (int, default 3): Number of retries for retryable GETs.
+    - ``backoff_factor`` (float, default 0.5): Exponential retry backoff factor.
     """
 
     supports_transactions: bool = False
+    _CONFLICT_STRATEGIES = frozenset({"fail", "force"})
+    _WRITE_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
 
     def __init__(
         self,
@@ -63,6 +70,10 @@ class GraphBackend(WorkbookBackend):
         credential: Any = None,
         transport: httpx.BaseTransport | None = None,
         readonly: bool = True,
+        timeout: float = 30.0,
+        max_retries: int = 3,
+        backoff_factor: float = 0.5,
+        conflict_strategy: str = "fail",
         **options: Any,
     ) -> None:
         if create:
@@ -84,11 +95,23 @@ class GraphBackend(WorkbookBackend):
 
         # Instance attribute — toggleable per connection
         self.readonly: bool = readonly
+        if conflict_strategy not in self._CONFLICT_STRATEGIES:
+            allowed = ", ".join(sorted(self._CONFLICT_STRATEGIES))
+            raise ValueError(
+                f"Invalid conflict_strategy {conflict_strategy!r}. "
+                f"Expected one of: {allowed}"
+            )
+        self._conflict_strategy = conflict_strategy
+        self._etag: str | None = None
 
         self._locator: GraphWorkbookLocator = parse_msgraph_dsn(file_path)
         self._token_provider: TokenProvider = normalize_token_provider(credential)
         self._client: GraphClient = GraphClient(
-            self._token_provider, transport=transport
+            self._token_provider,
+            transport=transport,
+            timeout=timeout,
+            max_retries=max_retries,
+            backoff_factor=backoff_factor,
         )
         self._session: WorkbookSession = WorkbookSession(
             self._client,
@@ -300,7 +323,10 @@ class GraphBackend(WorkbookBackend):
             )
 
     def _ensure_session(self) -> None:
+        was_open = self._session.is_open
         self._session.ensure_open()
+        if not was_open:
+            self._prime_workbook_etag()
 
     def _session_aware_request(
         self, method: str, path: str, **kwargs: Any
@@ -314,16 +340,36 @@ class GraphBackend(WorkbookBackend):
         targets the *session infrastructure* (expired session ID), not
         transient server errors — so it is safe even for mutating methods.
         """
+        method_upper = method.upper()
         dispatch = {
             "GET": self._client.get,
             "POST": self._client.post,
             "PATCH": self._client.patch,
             "DELETE": self._client.delete,
         }
-        send = dispatch[method.upper()]
+        send = dispatch[method_upper]
+        headers = dict(cast(dict[str, str], kwargs.pop("headers", {})))
+        if (
+            self._conflict_strategy == "fail"
+            and method_upper in self._WRITE_METHODS
+            and self._etag is not None
+        ):
+            headers["If-Match"] = self._etag
+        if headers:
+            kwargs["headers"] = headers
         try:
-            return send(path, **kwargs)
+            response = send(path, **kwargs)
+            self._update_etag_from_response(response)
+            return response
         except OperationalError as exc:
+            if (
+                self._conflict_strategy == "fail"
+                and method_upper in self._WRITE_METHODS
+                and self._is_conflict_error(exc)
+            ):
+                raise OperationalError(
+                    "Concurrent modification detected: workbook was modified by another session"
+                ) from exc
             if not self._is_session_error(exc):
                 raise
         # Session expired — reopen and retry once
@@ -331,7 +377,37 @@ class GraphBackend(WorkbookBackend):
         self._sheets_loaded = False
         self._sheet_ids.clear()
         self._load_sheets()
-        return send(path, **kwargs)
+        response = send(path, **kwargs)
+        self._update_etag_from_response(response)
+        return response
+
+    def _prime_workbook_etag(self) -> None:
+        if self._conflict_strategy != "fail":
+            return
+        path = f"{self._locator.item_path}/workbook"
+        try:
+            self._session_aware_request("GET", path)
+        except OperationalError:
+            return
+
+    def _update_etag_from_response(self, response: httpx.Response) -> None:
+        etag = response.headers.get("ETag")
+        if etag:
+            self._etag = etag
+            return
+        try:
+            payload = response.json()
+        except ValueError:
+            return
+        if isinstance(payload, dict):
+            odata_etag = payload.get("@odata.etag")
+            if isinstance(odata_etag, str) and odata_etag:
+                self._etag = odata_etag
+
+    @staticmethod
+    def _is_conflict_error(exc: OperationalError) -> bool:
+        msg = str(exc)
+        return "412" in msg or "precondition failed" in msg.lower()
 
     @staticmethod
     def _is_session_error(exc: OperationalError) -> bool:
