@@ -80,7 +80,9 @@ class ExcelCursor:
     def executemany(
         self, query: str, seq_of_params: Iterable[Sequence[Any]]
     ) -> "ExcelCursor":
-        self.connection._ensure_write_lock_for_query(query)
+        ensure_write_lock = getattr(self.connection, "_ensure_write_lock_for_query", None)
+        if callable(ensure_write_lock):
+            ensure_write_lock(query)
         total_rowcount = 0
         last_rowid = None
         last_action = None

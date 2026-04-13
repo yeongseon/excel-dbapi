@@ -25,6 +25,7 @@ def parse_msgraph_dsn(dsn: str) -> GraphWorkbookLocator:
     scheme = parsed.scheme
     if scheme not in {"msgraph", "sharepoint", "onedrive"}:
         raise ValueError(
+            "Expected 'msgraph' scheme. "
             f"Expected one of 'msgraph', 'sharepoint', or 'onedrive' scheme, got {scheme!r}"
         )
 
