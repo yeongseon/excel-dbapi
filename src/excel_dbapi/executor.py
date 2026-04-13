@@ -412,7 +412,10 @@ class SharedExecutor:
             if isinstance(values, dict):
                 if values.get("type") != "subquery" or "query" not in values:
                     raise ValueError("Invalid INSERT subquery format")
-                subquery_result = self.execute(values["query"])
+                subquery_result = self.execute(
+                    values["query"],
+                    _reset_subquery_cache=False,
+                )
                 rows_to_insert = [list(row) for row in subquery_result.rows]
                 # Validate column count from subquery even when zero rows returned
                 expected_count = (
@@ -1107,12 +1110,7 @@ class SharedExecutor:
 
         results: list[ExecutionResult] = []
         for query in queries:
-            try:
-                result = self.execute(query, _reset_subquery_cache=False)
-            except TypeError as exc:
-                if "_reset_subquery_cache" not in str(exc):
-                    raise
-                result = self.execute(query)
+            result = self.execute(query, _reset_subquery_cache=False)
             results.append(result)
         first_result = results[0]
         expected_columns = len(first_result.description)
@@ -2054,17 +2052,70 @@ class SharedExecutor:
         # Atomic condition: resolve subquery value
         value = node.get("value")
         if isinstance(value, dict) and value.get("type") == "subquery":
-            subquery_result = self.execute(value["query"])
-            if value.get("mode") == "scalar":
-                if len(subquery_result.rows) == 0:
-                    node["value"] = None
-                elif len(subquery_result.rows) == 1:
-                    first_row = subquery_result.rows[0]
-                    node["value"] = first_row[0] if first_row else None
-                else:
-                    raise ProgrammingError("Scalar subquery returned more than one row")
+            mode = str(value.get("mode", "set"))
+            if mode != "set" or bool(value.get("correlated", False)):
                 return
+
+            subquery_result = self.execute(
+                value["query"],
+                _reset_subquery_cache=False,
+            )
             node["value"] = tuple(row[0] for row in subquery_result.rows if row)
+
+    def _eval_subquery(
+        self,
+        node: dict[str, Any],
+        *,
+        outer_row: dict[str, Any] | None = None,
+    ) -> Any:
+        node_type = str(node.get("type"))
+        if node_type not in {"subquery", "exists"}:
+            raise ProgrammingError(f"Unsupported subquery node type: {node_type}")
+
+        correlated = bool(node.get("correlated", False))
+        cache_key: int | None = None
+        if not correlated:
+            cache_key = id(node)
+            cached = self._subquery_cache.get(cache_key)
+            if cache_key in self._subquery_cache:
+                return cached
+
+        query = node.get("query")
+        if not isinstance(query, dict):
+            raise ProgrammingError("Invalid subquery node: missing parsed query")
+
+        pushed_outer_row = False
+        if correlated and outer_row is not None:
+            self._outer_row_stack.append(outer_row)
+            pushed_outer_row = True
+        try:
+            result = self.execute(query, _reset_subquery_cache=False)
+        finally:
+            if pushed_outer_row:
+                self._outer_row_stack.pop()
+
+        evaluated: Any
+        if node_type == "exists":
+            evaluated = bool(result.rows)
+        else:
+            mode = str(node.get("mode", "set"))
+            if mode == "set":
+                evaluated = tuple(row[0] for row in result.rows if row)
+            elif mode == "scalar":
+                if len(result.rows) > 1:
+                    raise ProgrammingError("Scalar subquery returned more than one row")
+                if not result.rows:
+                    evaluated = None
+                else:
+                    first_row = result.rows[0]
+                    evaluated = first_row[0] if first_row else None
+            else:
+                raise ProgrammingError(f"Unsupported subquery mode: {mode}")
+
+        if cache_key is not None:
+            self._subquery_cache[cache_key] = evaluated
+
+        return evaluated
 
     def _execute_aggregate_select(
         self,
@@ -2450,33 +2501,6 @@ class SharedExecutor:
 
         raise ProgrammingError(f"Unsupported CAST target type: {target_type}")
 
-    def _eval_subquery(
-        self,
-        subquery_node: dict[str, Any],
-        *,
-        outer_row: dict[str, Any] | None = None,
-    ) -> Any:
-        del outer_row
-        if bool(subquery_node.get("correlated")):
-            raise ProgrammingError("Correlated subqueries are not supported")
-
-        query = subquery_node.get("query")
-        if not isinstance(query, dict):
-            raise ProgrammingError("Invalid subquery expression")
-
-        result = self.execute(query)
-        if subquery_node.get("mode") == "scalar":
-            if len(result.description) != 1:
-                raise ProgrammingError("Scalar subquery must return exactly one column")
-            if len(result.rows) == 0:
-                return None
-            if len(result.rows) > 1:
-                raise ProgrammingError("Scalar subquery returned more than one row")
-            first_row = result.rows[0]
-            return first_row[0] if first_row else None
-
-        return list(result.rows)
-
     def _eval_expression(
         self,
         expr: Any,
@@ -2591,13 +2615,16 @@ class SharedExecutor:
     def _evaluate_condition(
         self, row: dict[str, Any], condition: dict[str, Any]
     ) -> bool:
+        if condition.get("type") == "exists":
+            return bool(self._eval_subquery(condition, outer_row=row))
+
         column = condition["column"]
         operator = condition["operator"]
         value = condition["value"]
 
         def _resolve_operand(operand: Any, *, as_column: bool) -> Any:
             if isinstance(operand, dict):
-                if operand.get("type") == "subquery":
+                if operand.get("type") in {"subquery", "exists"}:
                     return self._eval_subquery(operand, outer_row=row)
                 return self._eval_expression(operand, row, lambda col_name: row.get(col_name))
             if as_column:
@@ -2613,7 +2640,17 @@ class SharedExecutor:
         if operator == "IN":
             if row_value is None:
                 return False
-            for candidate in value:
+            resolved_candidates = _resolve_operand(value, as_column=False)
+            if resolved_candidates is None:
+                candidates: tuple[Any, ...] = ()
+            elif isinstance(resolved_candidates, tuple):
+                candidates = resolved_candidates
+            elif isinstance(resolved_candidates, list):
+                candidates = tuple(resolved_candidates)
+            else:
+                candidates = (resolved_candidates,)
+
+            for candidate in candidates:
                 candidate_value = _resolve_operand(candidate, as_column=False)
                 left, right = self._coerce_for_compare(row_value, candidate_value)
                 if left == right:
@@ -2622,7 +2659,17 @@ class SharedExecutor:
         if operator == "NOT IN":
             if row_value is None:
                 return False
-            for candidate in value:
+            resolved_candidates = _resolve_operand(value, as_column=False)
+            if resolved_candidates is None:
+                candidates = ()
+            elif isinstance(resolved_candidates, tuple):
+                candidates = resolved_candidates
+            elif isinstance(resolved_candidates, list):
+                candidates = tuple(resolved_candidates)
+            else:
+                candidates = (resolved_candidates,)
+
+            for candidate in candidates:
                 candidate_value = _resolve_operand(candidate, as_column=False)
                 left, right = self._coerce_for_compare(row_value, candidate_value)
                 if left == right:

@@ -2472,6 +2472,15 @@ def _validate_join_column_reference(
             _validate_join_column_reference(column.get("left"), allowed_sources, context)
             _validate_join_column_reference(column.get("right"), allowed_sources, context)
             return
+        if column_type == "function":
+            args = column.get("args")
+            if isinstance(args, list):
+                for argument in args:
+                    _validate_join_column_reference(argument, allowed_sources, context)
+            return
+        if column_type == "cast":
+            _validate_join_column_reference(column.get("value"), allowed_sources, context)
+            return
         if column_type == "case":
             mode = str(column.get("mode", ""))
             if mode == "simple":
@@ -3093,7 +3102,7 @@ def _parse_select(
             )
             for column in group_columns
         ]
-        normalized_group_by: list[str] = []
+        normalized_group_by: list[Any] = []
         for group_column in parsed_group_by:
             if isinstance(group_column, dict):
                 source_name = group_column.get("source")
@@ -3105,7 +3114,8 @@ def _parse_select(
                 ):
                     normalized_group_by.append(f"{source_name}.{column_name}")
                     continue
-                raise ValueError("GROUP BY supports only column references")
+                normalized_group_by.append(group_column)
+                continue
             normalized_group_by.append(str(group_column))
         group_by = normalized_group_by
 

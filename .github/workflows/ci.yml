@@ -34,3 +34,32 @@ jobs:
         run: ruff format --check src/
       - name: Run mypy strict
         run: mypy --strict src/
+
+  packaging-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build wheel and sdist artifacts
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m build
+          python -m build --sdist
+      - name: Smoke test wheel install in clean venv
+        run: |
+          python -m venv .venv-wheel
+          .venv-wheel/bin/python -m pip install --upgrade pip
+          .venv-wheel/bin/python -m pip install dist/*.whl
+          .venv-wheel/bin/python -c "import excel_dbapi; print(excel_dbapi.__version__)"
+          .venv-wheel/bin/python -c "from importlib.metadata import metadata; m=metadata('excel-dbapi'); assert m['Name'] == 'excel-dbapi'; assert m['Version']"
+      - name: Smoke test sdist install in clean venv
+        run: |
+          python -m venv .venv-sdist
+          .venv-sdist/bin/python -m pip install --upgrade pip
+          .venv-sdist/bin/python -m pip install dist/*.tar.gz
+          .venv-sdist/bin/python -c "import excel_dbapi; print(excel_dbapi.__version__)"
+          .venv-sdist/bin/python -c "from importlib.metadata import metadata; m=metadata('excel-dbapi'); assert m['Name'] == 'excel-dbapi'; assert m['Version']"

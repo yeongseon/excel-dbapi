@@ -1,4 +1,4 @@
-"""Parse ``msgraph://`` DSNs into drive/item coordinates."""
+"""Parse Graph locator DSNs into drive/item coordinates."""
 
 from __future__ import annotations
 
@@ -20,23 +20,41 @@ class GraphWorkbookLocator:
 
 
 def parse_msgraph_dsn(dsn: str) -> GraphWorkbookLocator:
-    """Parse ``msgraph://drives/{drive_id}/items/{item_id}`` into a locator.
-
-    Raises:
-        ValueError: If the DSN is malformed.
-    """
+    """Parse Graph DSNs into a workbook locator."""
     parsed = urlparse(dsn)
-    if parsed.scheme != "msgraph":
-        raise ValueError(f"Expected 'msgraph' scheme, got {parsed.scheme!r}")
-
-    # netloc + path: urlparse puts "drives" in netloc for msgraph://drives/...
-    raw_path = parsed.netloc + parsed.path  # e.g. "drives/abc/items/xyz"
-    parts = [p for p in raw_path.split("/") if p]
-
-    if len(parts) != 4 or parts[0] != "drives" or parts[2] != "items":
+    scheme = parsed.scheme
+    if scheme not in {"msgraph", "sharepoint", "onedrive"}:
         raise ValueError(
-            f"Invalid msgraph DSN: expected "
-            f"'msgraph://drives/{{drive_id}}/items/{{item_id}}', got {dsn!r}"
+            f"Expected one of 'msgraph', 'sharepoint', or 'onedrive' scheme, got {scheme!r}"
         )
 
-    return GraphWorkbookLocator(drive_id=parts[1], item_id=parts[3])
+    raw_path = parsed.netloc + parsed.path
+    parts = [p for p in raw_path.split("/") if p]
+
+    if len(parts) == 4 and parts[0] == "drives" and parts[2] == "items":
+        return GraphWorkbookLocator(drive_id=parts[1], item_id=parts[3])
+
+    if (
+        len(parts) == 6
+        and parts[0] == "sites"
+        and parts[2] == "drives"
+        and parts[4] == "items"
+    ):
+        return GraphWorkbookLocator(drive_id=parts[3], item_id=parts[5])
+
+    if len(parts) == 4 and parts[0] == "me" and parts[1] == "drive" and parts[2] == "items":
+        return GraphWorkbookLocator(drive_id="me", item_id=parts[3])
+
+    if scheme == "msgraph":
+        raise ValueError(
+            f"Invalid msgraph DSN: expected 'msgraph://drives/{{drive_id}}/items/{{item_id}}', got {dsn!r}"
+        )
+
+    if scheme == "sharepoint":
+        raise ValueError(
+            f"Invalid sharepoint DSN: expected 'sharepoint://sites/{{site_name}}/drives/{{drive_id}}/items/{{item_id}}', got {dsn!r}"
+        )
+
+    raise ValueError(
+        f"Invalid onedrive DSN: expected 'onedrive://me/drive/items/{{item_id}}', got {dsn!r}"
+    )
