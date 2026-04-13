@@ -285,6 +285,44 @@ class SharedExecutor:
             return [raw]
         return None
 
+    @staticmethod
+    def _unwrap_alias(column: Any) -> Any:
+        if isinstance(column, dict) and column.get("type") == "alias":
+            return column["expression"]
+        return column
+
+    @staticmethod
+    def _output_name(column: Any) -> str:
+        if isinstance(column, dict):
+            if column.get("type") == "alias":
+                return str(column["alias"])
+            if column.get("type") == "aggregate":
+                return f"{column['func']}({column['arg']})"
+            if column.get("type") == "column":
+                return f"{column['source']}.{column['name']}"
+        return str(column)
+
+    @staticmethod
+    def _source_key(column: Any) -> str:
+        inner = column
+        if isinstance(column, dict) and column.get("type") == "alias":
+            inner = column["expression"]
+        if isinstance(inner, dict):
+            if inner.get("type") == "aggregate":
+                return f"{inner['func']}({inner['arg']})"
+            if inner.get("type") == "column":
+                return f"{inner['source']}.{inner['name']}"
+        return str(inner)
+
+    @staticmethod
+    def _build_alias_map(columns: list[Any]) -> dict[str, str]:
+        alias_map: dict[str, str] = {}
+        for column in columns:
+            if isinstance(column, dict) and column.get("type") == "alias":
+                alias_name = str(column["alias"])
+                alias_map[alias_name] = SharedExecutor._source_key(column)
+        return alias_map
+
     def _apply_order_by(
         self,
         rows: list[Any],
@@ -668,16 +706,27 @@ class SharedExecutor:
 
         # Validate SELECT columns
         for column in parsed["columns"]:
-            if isinstance(column, dict) and column.get("type") == "column":
-                _validate_column_ref(str(column["source"]), str(column["name"]), "SELECT")
+            inner = self._unwrap_alias(column)
+            if isinstance(inner, dict) and inner.get("type") == "column":
+                _validate_column_ref(str(inner["source"]), str(inner["name"]), "SELECT")
 
         # Validate WHERE columns
         where_raw = parsed.get("where")
         if where_raw:
             self._validate_join_where_refs(where_raw, _validate_column_ref)
 
-        # Validate ORDER BY column
+        alias_map = self._build_alias_map(parsed["columns"])
         order_by = self._normalize_order_by(parsed.get("order_by"))
+        if order_by and alias_map:
+            resolved_order_by: list[dict[str, str]] = []
+            for item in order_by:
+                resolved_item = dict(item)
+                column_name = str(item["column"])
+                resolved_item["column"] = alias_map.get(column_name, column_name)
+                resolved_order_by.append(resolved_item)
+            order_by = resolved_order_by
+
+        # Validate ORDER BY column
         if order_by:
             for item in order_by:
                 col_ref = str(item["column"])
@@ -721,7 +770,6 @@ class SharedExecutor:
                 row for row in joined_rows_flat if self._matches_where(row, where)
             ]
 
-        order_by = self._normalize_order_by(parsed.get("order_by"))
         if order_by:
             joined_rows_flat = self._apply_order_by(
                 joined_rows_flat,
@@ -737,10 +785,15 @@ class SharedExecutor:
             joined_rows_flat = joined_rows_flat[:limit]
 
         selected_columns: list[str] = []
+        output_names: list[str] = []
         for column in parsed["columns"]:
-            source = str(column["source"])
-            name = str(column["name"])
+            inner = self._unwrap_alias(column)
+            if not isinstance(inner, dict) or inner.get("type") != "column":
+                raise ValueError("JOIN queries require qualified column names in SELECT")
+            source = str(inner["source"])
+            name = str(inner["name"])
             selected_columns.append(f"{source}.{name}")
+            output_names.append(self._output_name(column))
 
         rows_out = [
             tuple(row.get(column_name) for column_name in selected_columns)
@@ -748,7 +801,7 @@ class SharedExecutor:
         ]
         description: Description = [
             (column_name, None, None, None, None, None, None)
-            for column_name in selected_columns
+            for column_name in output_names
         ]
         return ExecutionResult(
             action=action,
@@ -785,14 +838,32 @@ class SharedExecutor:
             )
 
         # --- Non-aggregate path ---
-        selected_columns = headers if columns == ["*"] else list(columns)
+        selected_columns: list[str]
+        output_names: list[str]
+        if columns == ["*"]:
+            selected_columns = list(headers)
+            output_names = list(headers)
+        else:
+            selected_columns = [self._source_key(column) for column in columns]
+            output_names = [self._output_name(column) for column in columns]
+
         missing = [col for col in selected_columns if col not in headers]
         if missing:
             raise ValueError(
                 f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}"
             )
 
+        alias_map = self._build_alias_map(columns)
         order_by = self._normalize_order_by(parsed.get("order_by"))
+        if order_by and alias_map:
+            resolved_order_by: list[dict[str, str]] = []
+            for item in order_by:
+                resolved_item = dict(item)
+                column_name = str(item["column"])
+                resolved_item["column"] = alias_map.get(column_name, column_name)
+                resolved_order_by.append(resolved_item)
+            order_by = resolved_order_by
+
         if order_by:
             rows = self._apply_order_by(
                 rows,
@@ -822,7 +893,7 @@ class SharedExecutor:
             rows_out = unique_rows
 
         description: Description = [
-            (col, None, None, None, None, None, None) for col in selected_columns
+            (col, None, None, None, None, None, None) for col in output_names
         ]
         return ExecutionResult(
             action=action,
@@ -875,20 +946,24 @@ class SharedExecutor:
                 )
 
         output_columns: list[str] = []
+        output_sources: list[str] = []
         required_aggregates: dict[str, tuple[str, str]] = {}
         for column in columns:
-            if self._is_aggregate_column(column):
-                arg = str(column.get("arg"))
+            inner = self._unwrap_alias(column)
+            if self._is_aggregate_column(inner):
+                aggregate_column = inner
+                arg = str(aggregate_column.get("arg"))
                 if arg != "*" and arg not in headers:
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
-                label = self._aggregate_label(column)
-                required_aggregates[label] = (str(column.get("func")), arg)
-                output_columns.append(label)
+                label = self._aggregate_label(aggregate_column)
+                required_aggregates[label] = (str(aggregate_column.get("func")), arg)
+                output_columns.append(self._output_name(column))
+                output_sources.append(label)
                 continue
 
-            column_name = str(column)
+            column_name = str(inner)
             if column_name not in headers:
                 raise ValueError(
                     f"Unknown column(s): {column_name}. Available columns: {headers}"
@@ -901,7 +976,8 @@ class SharedExecutor:
                 raise ValueError(
                     f"Selected column '{column_name}' must appear in GROUP BY"
                 )
-            output_columns.append(column_name)
+            output_columns.append(self._output_name(column))
+            output_sources.append(column_name)
 
         if having is not None:
             if "conditions" in having:
@@ -919,7 +995,17 @@ class SharedExecutor:
                     )
                 required_aggregates[ref] = (func, arg)
 
+        alias_map = self._build_alias_map(columns)
         order_by_clause = self._normalize_order_by(parsed.get("order_by"))
+        if order_by_clause and alias_map:
+            resolved_order_by: list[dict[str, str]] = []
+            for item in order_by_clause:
+                resolved_item = dict(item)
+                column_name = str(item["column"])
+                resolved_item["column"] = alias_map.get(column_name, column_name)
+                resolved_order_by.append(resolved_item)
+            order_by_clause = resolved_order_by
+
         if order_by_clause is not None:
             for item in order_by_clause:
                 ref = str(item["column"])
@@ -970,21 +1056,20 @@ class SharedExecutor:
             seen: set[tuple[Any, ...]] = set()
             deduped: list[dict[str, Any]] = []
             for row in grouped_rows:
-                key = tuple(row.get(col) for col in output_columns)
+                key = tuple(row.get(col) for col in output_sources)
                 if key not in seen:
                     seen.add(key)
                     deduped.append(row)
             grouped_rows = deduped
 
-        order_by = self._normalize_order_by(parsed.get("order_by"))
-        if order_by:
-            available_order_columns = set(output_columns)
+        if order_by_clause:
+            available_order_columns = set(output_sources)
             if group_by:
                 available_order_columns.update(group_by)
             available_order_columns.update(required_aggregates.keys())
             grouped_rows = self._apply_order_by(
                 grouped_rows,
-                order_by,
+                order_by_clause,
                 value_getter=lambda r, col: r.get(col),
                 available_columns=available_order_columns,
             )
@@ -997,7 +1082,7 @@ class SharedExecutor:
             grouped_rows = grouped_rows[:limit]
 
         rows_out = [
-            tuple(row.get(col) for col in output_columns) for row in grouped_rows
+            tuple(row.get(col) for col in output_sources) for row in grouped_rows
         ]
         description: Description = [
             (col, None, None, None, None, None, None) for col in output_columns
@@ -1011,6 +1096,7 @@ class SharedExecutor:
         )
 
     def _is_aggregate_column(self, column: Any) -> bool:
+        column = self._unwrap_alias(column)
         return (
             isinstance(column, dict)
             and column.get("type") == "aggregate"

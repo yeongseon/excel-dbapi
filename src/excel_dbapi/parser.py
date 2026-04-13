@@ -255,15 +255,12 @@ def _parse_columns(columns_token: str) -> List[Any]:
     columns_token = columns_token.strip()
     if columns_token == "*":
         return ["*"]
-    columns: List[Any] = []
-    for raw_column in _split_csv(columns_token):
-        column = raw_column.strip()
-        if not column:
-            continue
-        if re.search(r"(?i)\bOVER\s*\(", column):
+
+    def _parse_column_expression(expression: str) -> Any:
+        if re.search(r"(?i)\bOVER\s*\(", expression):
             raise ValueError("Unsupported SQL syntax: OVER")
         match = re.fullmatch(
-            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([^\)]+?)\s*\)", column
+            r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*([^\)]+?)\s*\)", expression
         )
         if match:
             func = match.group(1).upper()
@@ -279,20 +276,85 @@ def _parse_columns(columns_token: str) -> List[Any]:
                     f"Unsupported aggregate expression: {func}({arg}). "
                     "Only bare column names and * are supported"
                 )
-            columns.append({"type": "aggregate", "func": func, "arg": arg})
-            continue
-        if column != "*" and not re.fullmatch(
-            rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", column
+            return {"type": "aggregate", "func": func, "arg": arg}
+
+        if expression != "*" and not re.fullmatch(
+            rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}", expression
         ):
             raise ValueError(
-                f"Unsupported column expression: {column}. "
+                f"Unsupported column expression: {expression}. "
                 "Only bare column names, *, and aggregate functions are supported"
             )
-        if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, column):
-            source, name = column.split(".", 1)
-            columns.append({"type": "column", "source": source, "name": name})
-        else:
-            columns.append(column)
+        if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression):
+            source, name = expression.split(".", 1)
+            return {"type": "column", "source": source, "name": name}
+        return expression
+
+    def _is_valid_alias_name(alias_name: str) -> bool:
+        if not re.fullmatch(_IDENTIFIER_PATTERN, alias_name):
+            return False
+        if _is_reserved_select_token(alias_name):
+            return False
+        if alias_name.upper() in {"AS", "ASC", "DESC"}:
+            return False
+        return True
+
+    columns: List[Any] = []
+    for raw_column in _split_csv(columns_token):
+        column = raw_column.strip()
+        if not column:
+            continue
+        collapsed_tokens = _collapse_aggregate_tokens(_tokenize(column))
+        if not collapsed_tokens:
+            continue
+
+        expression_tokens = list(collapsed_tokens)
+        alias_name: str | None = None
+        parsed_expression: Any | None = None
+
+        if (
+            len(collapsed_tokens) >= 3
+            and collapsed_tokens[-2].upper() == "AS"
+        ):
+            candidate_alias = collapsed_tokens[-1]
+            if not _is_valid_alias_name(candidate_alias):
+                raise ValueError(f"Invalid column alias: {candidate_alias}")
+            expression_tokens = collapsed_tokens[:-2]
+            if not expression_tokens:
+                raise ValueError("Invalid column list")
+            alias_name = candidate_alias
+        elif len(collapsed_tokens) >= 2:
+            candidate_alias = collapsed_tokens[-1]
+            if _is_valid_alias_name(candidate_alias):
+                candidate_expression_tokens = collapsed_tokens[:-1]
+                candidate_expression = " ".join(candidate_expression_tokens).strip()
+                try:
+                    parsed_expression = _parse_column_expression(candidate_expression)
+                except ValueError:
+                    parsed_expression = None
+                else:
+                    expression_tokens = candidate_expression_tokens
+                    alias_name = candidate_alias
+
+        if parsed_expression is None:
+            expression = " ".join(expression_tokens).strip()
+            parsed_expression = _parse_column_expression(expression)
+
+        if alias_name is None:
+            columns.append(parsed_expression)
+            continue
+
+        if parsed_expression == "*":
+            raise ValueError("Cannot alias wildcard column '*'")
+
+        columns.append(
+            {
+                "type": "alias",
+                "alias": alias_name,
+                "expression": parsed_expression,
+            }
+        )
+
     if not columns:
         raise ValueError("Invalid column list")
     return columns
@@ -1391,17 +1453,30 @@ def _parse_select(
             join_sources.add(str(join["source"]["table"]))
             join_sources.add(str(join["source"]["ref"]))
 
+        select_aliases = {
+            str(column["alias"])
+            for column in columns
+            if isinstance(column, dict) and column.get("type") == "alias"
+        }
+
         for column in columns:
-            if isinstance(column, dict) and column.get("type") == "aggregate":
+            expression = column
+            if isinstance(column, dict) and column.get("type") == "alias":
+                expression = column.get("expression")
+
+            if isinstance(expression, dict) and expression.get("type") == "aggregate":
                 raise ValueError("Aggregate functions are not supported with JOIN")
-            _validate_join_column_reference(column, join_sources, "SELECT")
+            _validate_join_column_reference(expression, join_sources, "SELECT")
 
         if where is not None:
             _validate_join_where_columns(where, join_sources)
 
         if order_by is not None:
             for item in order_by:
-                parsed_order_column = _parse_qualified_column_reference(str(item["column"]))
+                order_column = str(item["column"])
+                if order_column in select_aliases:
+                    continue
+                parsed_order_column = _parse_qualified_column_reference(order_column)
                 _validate_join_column_reference(parsed_order_column, join_sources, "ORDER BY")
 
     return {
