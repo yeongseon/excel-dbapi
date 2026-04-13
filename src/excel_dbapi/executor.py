@@ -14,10 +14,181 @@ _READONLY_ACTIONS = frozenset(
 )
 
 
+def _build_like_regex(pattern: str, escape_char: str | None) -> str:
+    parts: list[str] = ["^"]
+    index = 0
+    while index < len(pattern):
+        char = pattern[index]
+        if escape_char is not None and char == escape_char:
+            index += 1
+            if index >= len(pattern):
+                raise ValueError("Invalid LIKE pattern: trailing ESCAPE character")
+            parts.append(re.escape(pattern[index]))
+        elif char == "%":
+            parts.append(".*")
+        elif char == "_":
+            parts.append(".")
+        else:
+            parts.append(re.escape(char))
+        index += 1
+
+    parts.append("$")
+    return "".join(parts)
+
+
+ScalarFunctionHandler = Callable[[list[Any]], Any]
+ScalarFunctionSpec = tuple[int, int | None, ScalarFunctionHandler]
+
+
+def _coalesce(args: list[Any]) -> Any:
+    for value in args:
+        if value is not None:
+            return value
+    return None
+
+
+def _nullif(args: list[Any]) -> Any:
+    return None if args[0] == args[1] else args[0]
+
+
+def _upper(args: list[Any]) -> Any:
+    value = args[0]
+    return None if value is None else str(value).upper()
+
+
+def _lower(args: list[Any]) -> Any:
+    value = args[0]
+    return None if value is None else str(value).lower()
+
+
+def _trim(args: list[Any]) -> Any:
+    value = args[0]
+    return None if value is None else str(value).strip()
+
+
+def _length(args: list[Any]) -> Any:
+    value = args[0]
+    return None if value is None else len(str(value))
+
+
+def _to_int_like(value: Any) -> int:
+    if isinstance(value, bool):
+        raise ValueError("expected numeric value")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError("expected numeric value")
+        return int(float(text))
+    raise ValueError("expected numeric value")
+
+
+def _substr(args: list[Any]) -> Any:
+    text_value = args[0]
+    start_value = args[1]
+    if text_value is None or start_value is None:
+        return None
+
+    text = str(text_value)
+    start = _to_int_like(start_value)
+    if start > 0:
+        start_index = start - 1
+    elif start < 0:
+        start_index = len(text) + start
+    else:
+        start_index = 0
+
+    if len(args) < 3:
+        return text[start_index:]
+
+    length_value = args[2]
+    if length_value is None:
+        return None
+    length = _to_int_like(length_value)
+    if length <= 0:
+        return ""
+    return text[start_index : start_index + length]
+
+
+def _concat(args: list[Any]) -> str:
+    return "".join(str(value) for value in args if value is not None)
+
+
+def _date_value(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None) if value.tzinfo is not None else value
+    if isinstance(value, date):
+        return datetime.combine(value, time.min)
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("expected date value")
+        if normalized.endswith("Z"):
+            normalized = normalized[:-1] + "+00:00"
+        try:
+            parsed_datetime = datetime.fromisoformat(normalized)
+        except ValueError:
+            parsed_datetime = None
+        if parsed_datetime is not None:
+            return (
+                parsed_datetime.replace(tzinfo=None)
+                if parsed_datetime.tzinfo is not None
+                else parsed_datetime
+            )
+        try:
+            parsed_date = date.fromisoformat(value.strip())
+        except ValueError as exc:
+            raise ValueError("expected date value") from exc
+        return datetime.combine(parsed_date, time.min)
+    raise ValueError("expected date value")
+
+
+def _year(args: list[Any]) -> Any:
+    value = args[0]
+    if value is None:
+        return None
+    return _date_value(value).year
+
+
+def _month(args: list[Any]) -> Any:
+    value = args[0]
+    if value is None:
+        return None
+    return _date_value(value).month
+
+
+def _day(args: list[Any]) -> Any:
+    value = args[0]
+    if value is None:
+        return None
+    return _date_value(value).day
+
+
+_SCALAR_FUNCTIONS: dict[str, ScalarFunctionSpec] = {
+    "COALESCE": (1, None, _coalesce),
+    "NULLIF": (2, 2, _nullif),
+    "UPPER": (1, 1, _upper),
+    "LOWER": (1, 1, _lower),
+    "TRIM": (1, 1, _trim),
+    "LENGTH": (1, 1, _length),
+    "SUBSTR": (2, 3, _substr),
+    "SUBSTRING": (2, 3, _substr),
+    "CONCAT": (1, None, _concat),
+    "YEAR": (1, 1, _year),
+    "MONTH": (1, 1, _month),
+    "DAY": (1, 1, _day),
+}
+
+
 class SharedExecutor:
     def __init__(self, backend: WorkbookBackend, *, sanitize_formulas: bool = True):
         self.backend = backend
         self.sanitize_formulas = sanitize_formulas
+        self._subquery_cache: dict[int, Any] = {}
+        self._outer_row_stack: list[dict[str, Any]] = []
 
     def _ensure_writable(self, action: str) -> None:
         """Raise NotSupportedError if backend is read-only and action mutates data."""
@@ -38,7 +209,15 @@ class SharedExecutor:
         parsed = parse_sql(query, params)
         return self.execute(parsed)
 
-    def execute(self, parsed: dict[str, Any]) -> ExecutionResult:
+    def execute(
+        self,
+        parsed: dict[str, Any],
+        *,
+        _reset_subquery_cache: bool = True,
+    ) -> ExecutionResult:
+        if _reset_subquery_cache:
+            self._subquery_cache.clear()
+
         action = parsed["action"]
         self._ensure_writable(action)
 
@@ -63,7 +242,24 @@ class SharedExecutor:
                     action=action, rows=[], description=[], rowcount=0, lastrowid=None
                 )
             headers = list(data.headers)
-            rows = [dict(zip(headers, row)) for row in data.rows]
+            source_refs: set[str] = set()
+            from_entry = parsed.get("from")
+            if isinstance(from_entry, dict):
+                table_name = from_entry.get("table")
+                if isinstance(table_name, str):
+                    source_refs.add(table_name)
+                ref_name = from_entry.get("ref")
+                if isinstance(ref_name, str):
+                    source_refs.add(ref_name)
+
+            rows = [
+                self._build_scoped_row(
+                    self._row_from_values(headers, list(row_values)),
+                    headers=headers,
+                    source_refs=source_refs,
+                )
+                for row_values in data.rows
+            ]
             return self._execute_select(action, parsed, headers, rows)
 
         if action == "UPDATE":
@@ -98,14 +294,28 @@ class SharedExecutor:
                     else None
                     for col_index in range(len(headers))
                 }
-                if where and not self._matches_where(row_map, where):
+                scoped_row = self._build_scoped_row(
+                    row_map,
+                    headers=headers,
+                    source_refs={table},
+                )
+                if where and not self._matches_where(scoped_row, where):
                     continue
                 for update in updates:
                     col_index = headers.index(update["column"])
                     raw_value = update["value"]
-                    if isinstance(raw_value, dict) and raw_value.get("type") in {"case", "binary_op", "unary_op", "literal"}:
+                    if isinstance(raw_value, dict) and raw_value.get("type") in {
+                        "case",
+                        "binary_op",
+                        "unary_op",
+                        "literal",
+                        "function",
+                        "cast",
+                    }:
                         evaluated = self._eval_expression(
-                            raw_value, row_map, lambda c: row_map.get(c)
+                            raw_value,
+                            scoped_row,
+                            lambda c: scoped_row.get(c),
                         )
                     else:
                         evaluated = raw_value
@@ -154,7 +364,12 @@ class SharedExecutor:
                     else None
                     for col_index in range(len(headers))
                 }
-                if where and not self._matches_where(row_map, where):
+                scoped_row = self._build_scoped_row(
+                    row_map,
+                    headers=headers,
+                    source_refs={table},
+                )
+                if where and not self._matches_where(scoped_row, where):
                     kept_rows.append(row_values)
                     continue
                 if where is None:
@@ -314,6 +529,8 @@ class SharedExecutor:
                             "unary_op",
                             "literal",
                             "column",
+                            "function",
+                            "cast",
                         }:
                             evaluated = self._eval_expression(
                                 raw_value,
@@ -443,6 +660,51 @@ class SharedExecutor:
             deduped.append(row)
         return deduped
 
+    def _dedupe_projected_rows(
+        self,
+        rows: list[dict[str, Any]],
+        projected_columns: list[str],
+    ) -> list[dict[str, Any]]:
+        seen: set[tuple[Any, ...]] = set()
+        deduped: list[dict[str, Any]] = []
+        for row in rows:
+            key = self._normalize_row_key(
+                tuple(row.get(column_name) for column_name in projected_columns)
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        return deduped
+
+    @staticmethod
+    def _validate_distinct_order_by_columns(
+        order_by: list[dict[str, Any]] | None,
+        selected_columns: list[str],
+    ) -> None:
+        if not order_by:
+            return
+        selected = set(selected_columns)
+        for item in order_by:
+            column_name = str(item["column"])
+            if column_name not in selected:
+                raise ValueError(
+                    "ORDER BY columns must appear in SELECT list when using DISTINCT with JOIN"
+                )
+
+    @staticmethod
+    def _normalize_single_source_aggregate_arg(arg: str, headers: list[str]) -> str:
+        if arg == "*" or "." not in arg:
+            return arg
+        if arg in headers:
+            return arg
+        if any("." in header for header in headers):
+            return arg
+        _, bare_column = arg.split(".", 1)
+        if bare_column in headers:
+            return bare_column
+        return arg
+
     @staticmethod
     def _normalize_order_by(
         raw: Any,
@@ -469,7 +731,14 @@ class SharedExecutor:
                 return f"{column['func']}({column['arg']})"
             if column.get("type") == "column":
                 return f"{column['source']}.{column['name']}"
-            if column.get("type") in {"binary_op", "unary_op", "literal"}:
+            if column.get("type") in {
+                "binary_op",
+                "unary_op",
+                "literal",
+                "function",
+                "cast",
+                "subquery",
+            }:
                 return SharedExecutor._expression_label(column)
             if column.get("type") == "case":
                 return "case_expr"
@@ -485,7 +754,15 @@ class SharedExecutor:
                 return f"{inner['func']}({inner['arg']})"
             if inner.get("type") == "column":
                 return f"{inner['source']}.{inner['name']}"
-            if inner.get("type") in {"binary_op", "unary_op", "literal", "case"}:
+            if inner.get("type") in {
+                "binary_op",
+                "unary_op",
+                "literal",
+                "case",
+                "function",
+                "cast",
+                "subquery",
+            }:
                 return f"__expr__:{SharedExecutor._expression_to_sql(inner)}"
         return str(inner)
 
@@ -508,6 +785,19 @@ class SharedExecutor:
                 left_sql = SharedExecutor._expression_to_sql(expression.get("left"))
                 right_sql = SharedExecutor._expression_to_sql(expression.get("right"))
                 return f"({left_sql} {expression['op']} {right_sql})"
+            if expression_type == "function":
+                args = expression.get("args")
+                args_list = args if isinstance(args, list) else []
+                args_sql = ", ".join(
+                    SharedExecutor._expression_to_sql(arg) for arg in args_list
+                )
+                return f"{expression['name']}({args_sql})"
+            if expression_type == "cast":
+                value_sql = SharedExecutor._expression_to_sql(expression.get("value"))
+                target_type = str(expression.get("target_type", ""))
+                return f"CAST({value_sql} AS {target_type})"
+            if expression_type == "subquery":
+                return "(SUBQUERY)"
             if expression_type == "case":
                 parts: list[str] = ["CASE"]
                 mode = expression.get("mode", "searched")
@@ -545,6 +835,8 @@ class SharedExecutor:
         if isinstance(operand, dict):
             if operand.get("type") == "subquery":
                 return "(SUBQUERY)"
+            if operand.get("type") == "exists":
+                return "EXISTS (SUBQUERY)"
             return SharedExecutor._expression_to_sql(operand)
         if isinstance(operand, str):
             if is_column:
@@ -555,6 +847,8 @@ class SharedExecutor:
     @staticmethod
     def _where_to_sql(where: dict[str, Any]) -> str:
         node_type = where.get("type")
+        if node_type == "exists":
+            return "EXISTS (SUBQUERY)"
         if node_type == "not":
             operand = where.get("operand")
             if isinstance(operand, dict):
@@ -622,7 +916,15 @@ class SharedExecutor:
         if not isinstance(inner, dict):
             return False
         expression_type = inner.get("type")
-        if expression_type in {"binary_op", "unary_op", "literal", "case"}:
+        if expression_type in {
+            "binary_op",
+            "unary_op",
+            "literal",
+            "case",
+            "function",
+            "cast",
+            "subquery",
+        }:
             return True
         if expression_type == "alias":
             return SharedExecutor._contains_arithmetic_expression(inner.get("expression"))
@@ -650,6 +952,17 @@ class SharedExecutor:
         if expression_type == "unary_op":
             refs.update(SharedExecutor._collect_expression_column_refs(expression.get("operand")))
             return refs
+        if expression_type == "function":
+            args = expression.get("args")
+            if isinstance(args, list):
+                for arg in args:
+                    refs.update(SharedExecutor._collect_expression_column_refs(arg))
+            return refs
+        if expression_type == "cast":
+            refs.update(SharedExecutor._collect_expression_column_refs(expression.get("value")))
+            return refs
+        if expression_type == "subquery":
+            return refs
         if expression_type == "case":
             if expression.get("value") is not None:
                 refs.update(SharedExecutor._collect_expression_column_refs(expression["value"]))
@@ -672,6 +985,8 @@ class SharedExecutor:
         """Collect column references from a WHERE condition tree."""
         refs: set[str] = set()
         node_type = where.get("type")
+        if node_type == "exists":
+            return refs
         if node_type == "not":
             refs.update(SharedExecutor._collect_where_column_refs(where["operand"]))
             return refs
@@ -687,7 +1002,7 @@ class SharedExecutor:
             refs.update(SharedExecutor._collect_expression_column_refs(column))
 
         value = where.get("value")
-        if isinstance(value, dict) and value.get("type") != "subquery":
+        if isinstance(value, dict) and value.get("type") not in {"subquery", "exists"}:
             refs.update(SharedExecutor._collect_expression_column_refs(value))
         elif isinstance(value, (list, tuple)):
             for candidate in value:
@@ -749,11 +1064,17 @@ class SharedExecutor:
             expression_columns.add(col_ref)
             if col_ref in parsed_expressions:
                 continue
+            expression_ast = item.get("__expression__")
+            if expression_ast is not None:
+                parsed_expressions[col_ref] = expression_ast
+                continue
+
             expression_sql = col_ref[len("__expr__:") :]
             parsed_expressions[col_ref] = _parse_column_expression(
                 expression_sql,
                 allow_wildcard=False,
                 allow_aggregates=False,
+                allow_subqueries=True,
             )
 
         if not parsed_expressions:
@@ -784,7 +1105,15 @@ class SharedExecutor:
         if len(operators) != len(queries) - 1:
             raise ValueError("Invalid COMPOUND query structure")
 
-        results = [self.execute(query) for query in queries]
+        results: list[ExecutionResult] = []
+        for query in queries:
+            try:
+                result = self.execute(query, _reset_subquery_cache=False)
+            except TypeError as exc:
+                if "_reset_subquery_cache" not in str(exc):
+                    raise
+                result = self.execute(query)
+            results.append(result)
         first_result = results[0]
         expected_columns = len(first_result.description)
         for result in results[1:]:
@@ -875,6 +1204,9 @@ class SharedExecutor:
         validate_fn: Callable[[str, str, str], None],
     ) -> None:
         """Validate a single WHERE AST node for JOIN column refs."""
+        if node.get("type") == "exists":
+            return
+
         # NOT node: recurse into operand
         if node.get("type") == "not":
             operand = node.get("operand")
@@ -909,6 +1241,15 @@ class SharedExecutor:
                     _validate_expression_refs(expression.get("left"), column_context=False)
                     _validate_expression_refs(expression.get("right"), column_context=False)
                     return
+                if expression_type == "function":
+                    args = expression.get("args")
+                    if isinstance(args, list):
+                        for arg in args:
+                            _validate_expression_refs(arg, column_context=False)
+                    return
+                if expression_type == "cast":
+                    _validate_expression_refs(expression.get("value"), column_context=False)
+                    return
                 if expression_type == "case":
                     mode = str(expression.get("mode", ""))
                     if mode == "simple":
@@ -925,6 +1266,8 @@ class SharedExecutor:
                         _validate_expression_refs(when_branch.get("result"), column_context=False)
                     _validate_expression_refs(expression.get("else"), column_context=False)
                     return
+                if expression_type in {"subquery", "exists"}:
+                    return
                 return
             if column_context and isinstance(expression, str) and "." in expression:
                 src, col_name = expression.split(".", 1)
@@ -934,7 +1277,7 @@ class SharedExecutor:
         _validate_expression_refs(column_expr, column_context=True)
 
         value_expr = node.get("value")
-        if isinstance(value_expr, dict) and value_expr.get("type") != "subquery":
+        if isinstance(value_expr, dict) and value_expr.get("type") not in {"subquery", "exists"}:
             _validate_expression_refs(value_expr, column_context=False)
         elif isinstance(value_expr, (list, tuple)):
             for candidate in value_expr:
@@ -942,6 +1285,8 @@ class SharedExecutor:
 
     def _matches_where(self, row: dict[str, Any], where: dict[str, Any]) -> bool:
         node_type = where.get("type")
+        if node_type == "exists":
+            return bool(self._eval_subquery(where, outer_row=row))
         if node_type == "not":
             return not self._matches_where(row, where["operand"])
         if "conditions" in where:
@@ -957,6 +1302,35 @@ class SharedExecutor:
             return any(results)
 
         return self._evaluate_condition(row, where)
+
+    def _current_outer_row(self) -> dict[str, Any] | None:
+        if not self._outer_row_stack:
+            return None
+        return self._outer_row_stack[-1]
+
+    def _build_scoped_row(
+        self,
+        row: dict[str, Any],
+        *,
+        headers: list[str] | None = None,
+        source_refs: set[str] | None = None,
+    ) -> dict[str, Any]:
+        scoped_row = dict(row)
+
+        if headers is not None and source_refs:
+            for source_ref in source_refs:
+                for header in headers:
+                    qualified_name = f"{source_ref}.{header}"
+                    if qualified_name not in scoped_row:
+                        scoped_row[qualified_name] = row.get(header)
+
+        outer_row = self._current_outer_row()
+        if outer_row is not None:
+            for key, value in outer_row.items():
+                if key not in scoped_row:
+                    scoped_row[key] = value
+
+        return scoped_row
 
     def _row_from_values(self, headers: list[str], row_values: list[Any]) -> dict[str, Any]:
         return {
@@ -1255,6 +1629,15 @@ class SharedExecutor:
                     _validate_join_select_expression(expression.get("left"))
                     _validate_join_select_expression(expression.get("right"))
                     return
+                if expression_type == "function":
+                    args = expression.get("args")
+                    if isinstance(args, list):
+                        for arg in args:
+                            _validate_join_select_expression(arg)
+                    return
+                if expression_type == "cast":
+                    _validate_join_select_expression(expression.get("value"))
+                    return
                 if expression_type == "case":
                     mode = str(expression.get("mode", ""))
                     if mode == "simple":
@@ -1270,6 +1653,8 @@ class SharedExecutor:
                             _validate_join_select_expression(when_branch.get("match"))
                         _validate_join_select_expression(when_branch.get("result"))
                     _validate_join_select_expression(expression.get("else"))
+                    return
+                if expression_type == "subquery":
                     return
             raise ValueError("JOIN queries require qualified column names in SELECT")
 
@@ -1340,7 +1725,10 @@ class SharedExecutor:
                 }
             )
 
-        joined_rows_flat = [self._flatten_join_row(row) for row in left_rows]
+        joined_rows_flat = [
+            self._build_scoped_row(self._flatten_join_row(row))
+            for row in left_rows
+        ]
 
         where = parsed.get("where")
         if where:
@@ -1380,6 +1768,7 @@ class SharedExecutor:
                 having,
             )
 
+        distinct = bool(parsed.get("distinct", False))
         selected_columns: list[str] = []
         output_names: list[str] = []
         if columns == ["*"]:
@@ -1387,9 +1776,18 @@ class SharedExecutor:
                 for col_name in ordered_headers:
                     selected_columns.append(f"{source_ref}.{col_name}")
                     output_names.append(f"{source_ref}.{col_name}")
+
+            rows_for_output = joined_rows_flat
+            if distinct:
+                self._validate_distinct_order_by_columns(order_by, selected_columns)
+                rows_for_output = self._dedupe_projected_rows(
+                    rows_for_output,
+                    selected_columns,
+                )
+
             if order_by:
                 order_expression_columns = self._materialize_order_expression_columns(
-                    joined_rows_flat,
+                    rows_for_output,
                     order_by,
                 )
                 available_cols: set[str] = set()
@@ -1397,8 +1795,8 @@ class SharedExecutor:
                     for col_name in ordered_headers:
                         available_cols.add(f"{source_ref}.{col_name}")
                 available_cols.update(order_expression_columns)
-                joined_rows_flat = self._apply_order_by(
-                    joined_rows_flat,
+                rows_for_output = self._apply_order_by(
+                    rows_for_output,
                     order_by,
                     value_getter=lambda r, col: r.get(col),
                     available_columns=available_cols,
@@ -1407,13 +1805,13 @@ class SharedExecutor:
             offset = parsed.get("offset") or 0
             limit = parsed.get("limit")
             if offset:
-                joined_rows_flat = joined_rows_flat[offset:]
+                rows_for_output = rows_for_output[offset:]
             if limit is not None:
-                joined_rows_flat = joined_rows_flat[:limit]
+                rows_for_output = rows_for_output[:limit]
 
             rows_out = [
                 tuple(row.get(column_name) for column_name in selected_columns)
-                for row in joined_rows_flat
+                for row in rows_for_output
             ]
         else:
             selected_columns = [self._source_key(column) for column in columns]
@@ -1430,6 +1828,13 @@ class SharedExecutor:
                         lambda col_name: row.get(col_name),
                     )
                 projected_rows.append(projected_row)
+
+            if distinct:
+                self._validate_distinct_order_by_columns(order_by, selected_columns)
+                projected_rows = self._dedupe_projected_rows(
+                    projected_rows,
+                    selected_columns,
+                )
 
             if order_by:
                 order_expression_columns = self._materialize_order_expression_columns(
@@ -1485,7 +1890,7 @@ class SharedExecutor:
             self._resolve_subqueries(where)
             rows = [row for row in rows if self._matches_where(row, where)]
 
-        group_by: list[str] | None = parsed.get("group_by")
+        group_by: list[Any] | None = parsed.get("group_by")
         having = parsed.get("having")
         aggregate_query = any(self._is_aggregate_column(col) for col in columns)
 
@@ -1650,6 +2055,15 @@ class SharedExecutor:
         value = node.get("value")
         if isinstance(value, dict) and value.get("type") == "subquery":
             subquery_result = self.execute(value["query"])
+            if value.get("mode") == "scalar":
+                if len(subquery_result.rows) == 0:
+                    node["value"] = None
+                elif len(subquery_result.rows) == 1:
+                    first_row = subquery_result.rows[0]
+                    node["value"] = first_row[0] if first_row else None
+                else:
+                    raise ProgrammingError("Scalar subquery returned more than one row")
+                return
             node["value"] = tuple(row[0] for row in subquery_result.rows if row)
 
     def _execute_aggregate_select(
@@ -1659,16 +2073,33 @@ class SharedExecutor:
         headers: list[str],
         rows: list[dict[str, Any]],
         columns: list[Any],
-        group_by: list[str] | None,
+        group_by: list[Any] | None,
         having: dict[str, Any] | None,
     ) -> ExecutionResult:
+        group_entries: list[tuple[str, Any]] = []
         if group_by is not None:
-            missing_group_columns = [col for col in group_by if col not in headers]
-            if missing_group_columns:
-                raise ValueError(
-                    "Unknown column(s): "
-                    f"{', '.join(missing_group_columns)}. Available columns: {headers}"
+            for group_expression in group_by:
+                group_key = self._source_key(group_expression)
+                referenced_columns = self._collect_expression_column_refs(group_expression)
+                missing_group_columns = sorted(
+                    column_name
+                    for column_name in referenced_columns
+                    if column_name not in headers
                 )
+                if missing_group_columns:
+                    raise ValueError(
+                        "Unknown column(s): "
+                        f"{', '.join(missing_group_columns)}. Available columns: {headers}"
+                    )
+                group_entries.append((group_key, group_expression))
+        group_by_keys = {key for key, _ in group_entries}
+
+        def _operand_reference(operand: Any) -> str | None:
+            if isinstance(operand, str):
+                return operand
+            if isinstance(operand, dict) and operand.get("type") != "subquery":
+                return self._source_key(operand)
+            return None
 
         output_columns: list[str] = []
         output_sources: list[str] = []
@@ -1677,10 +2108,11 @@ class SharedExecutor:
             inner = self._unwrap_alias(column)
             if self._is_aggregate_column(inner):
                 aggregate_column = inner
-                arg = str(aggregate_column.get("arg"))
+                raw_arg = str(aggregate_column.get("arg"))
+                arg = self._normalize_single_source_aggregate_arg(raw_arg, headers)
                 if arg != "*" and arg not in headers:
                     raise ValueError(
-                        f"Unknown column: {arg}. Available columns: {headers}"
+                        f"Unknown column: {raw_arg}. Available columns: {headers}"
                     )
                 label = self._aggregate_label(aggregate_column)
                 required_aggregates[label] = (
@@ -1693,15 +2125,19 @@ class SharedExecutor:
                 continue
 
             column_name = self._source_key(column)
-            if column_name not in headers:
+            referenced_columns = self._collect_expression_column_refs(inner)
+            missing_selected_columns = sorted(
+                ref for ref in referenced_columns if ref not in headers
+            )
+            if missing_selected_columns:
                 raise ValueError(
-                    f"Unknown column(s): {column_name}. Available columns: {headers}"
+                    f"Unknown column(s): {', '.join(missing_selected_columns)}. Available columns: {headers}"
                 )
             if group_by is None:
                 raise ValueError(
                     "Non-aggregate columns in aggregate queries require GROUP BY"
                 )
-            if column_name not in group_by:
+            if column_name not in group_by_keys:
                 raise ValueError(
                     f"Selected column '{column_name}' must appear in GROUP BY"
                 )
@@ -1709,20 +2145,29 @@ class SharedExecutor:
             output_sources.append(column_name)
 
         if having is not None:
+            refs: list[str] = []
             if "conditions" in having:
-                refs = [str(condition["column"]) for condition in having["conditions"]]
+                for condition in having["conditions"]:
+                    if not isinstance(condition, dict):
+                        continue
+                    ref = _operand_reference(condition.get("column"))
+                    if ref is not None:
+                        refs.append(ref)
             else:
-                refs = [str(having["column"])]
+                ref = _operand_reference(having.get("column"))
+                if ref is not None:
+                    refs.append(ref)
             for ref in refs:
                 aggregate_spec = self._aggregate_spec_from_label(ref)
                 if aggregate_spec is None:
                     continue
                 func, arg, distinct = aggregate_spec
-                if arg != "*" and arg not in headers:
+                normalized_arg = self._normalize_single_source_aggregate_arg(arg, headers)
+                if normalized_arg != "*" and normalized_arg not in headers:
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
-                required_aggregates[ref] = (func, arg, distinct)
+                required_aggregates[ref] = (func, normalized_arg, distinct)
 
         alias_map = self._build_alias_map(columns)
         order_by_clause = self._normalize_order_by(parsed.get("order_by"))
@@ -1742,32 +2187,49 @@ class SharedExecutor:
                 if aggregate_spec is None:
                     continue
                 func, arg, distinct = aggregate_spec
-                if arg != "*" and arg not in headers:
+                normalized_arg = self._normalize_single_source_aggregate_arg(arg, headers)
+                if normalized_arg != "*" and normalized_arg not in headers:
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
-                required_aggregates[ref] = (func, arg, distinct)
+                required_aggregates[ref] = (func, normalized_arg, distinct)
 
         if having is not None:
             for condition in having["conditions"]:
-                column = str(condition["column"])
-                if self._aggregate_spec_from_label(column) is not None:
+                if not isinstance(condition, dict):
                     continue
-                if group_by is None or column not in group_by:
+                column_ref = _operand_reference(condition.get("column"))
+                if column_ref is None:
+                    continue
+                if self._aggregate_spec_from_label(column_ref) is not None:
+                    continue
+                if group_by is None or column_ref not in group_by_keys:
                     raise ValueError(
-                        f"Column '{column}' in HAVING must be a GROUP BY column or aggregate function"
+                        f"Column '{column_ref}' in HAVING must be a GROUP BY column or aggregate function"
                     )
 
         grouped_rows: list[dict[str, Any]] = []
-        if group_by:
+        if group_entries:
             groups: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
             for row in rows:
-                group_key = tuple(row.get(col) for col in group_by)
-                groups.setdefault(group_key, []).append(row)
+                group_values: list[Any] = []
+                for _, group_expression in group_entries:
+                    if isinstance(group_expression, dict):
+                        group_values.append(
+                            self._eval_expression(
+                                group_expression,
+                                row,
+                                lambda col_name: row.get(col_name),
+                            )
+                        )
+                    else:
+                        group_values.append(row.get(str(group_expression)))
+                groups.setdefault(tuple(group_values), []).append(row)
 
-            for group_key, group_values in groups.items():
-                group_map = dict(zip(group_by, group_key))
-                context_row: dict[str, Any] = dict(group_map)
+            for grouped_key, group_values in groups.items():
+                context_row: dict[str, Any] = dict(group_values[0]) if group_values else {}
+                for (group_key, _), group_value in zip(group_entries, grouped_key):
+                    context_row[group_key] = group_value
                 for label, (func, arg, distinct) in required_aggregates.items():
                     context_row[label] = self._compute_aggregate(
                         func,
@@ -1807,8 +2269,7 @@ class SharedExecutor:
                 order_by_clause,
             )
             available_order_columns = set(output_sources)
-            if group_by:
-                available_order_columns.update(group_by)
+            available_order_columns.update(group_by_keys)
             available_order_columns.update(required_aggregates.keys())
             available_order_columns.update(order_expression_columns)
             grouped_rows = self._apply_order_by(
@@ -1919,6 +2380,103 @@ class SharedExecutor:
             return max(numeric_values)
         raise ValueError(f"Unsupported aggregate function: {func}")
 
+    def _call_function(self, name: str, args: list[Any]) -> Any:
+        normalized_name = name.upper()
+        function_spec = _SCALAR_FUNCTIONS.get(normalized_name)
+        if function_spec is None:
+            raise ProgrammingError(f"Unsupported scalar function: {name}")
+
+        min_args, max_args, function_handler = function_spec
+        if len(args) < min_args:
+            raise ProgrammingError(
+                f"{normalized_name} expects at least {min_args} argument(s), got {len(args)}"
+            )
+        if max_args is not None and len(args) > max_args:
+            raise ProgrammingError(
+                f"{normalized_name} expects at most {max_args} argument(s), got {len(args)}"
+            )
+
+        try:
+            return function_handler(args)
+        except (TypeError, ValueError) as exc:
+            raise ProgrammingError(
+                f"Invalid arguments for {normalized_name}: {exc}"
+            ) from exc
+
+    def _eval_cast(self, value: Any, target_type: str) -> Any:
+        if value is None:
+            return None
+
+        normalized_target = target_type.upper()
+        if normalized_target in {"INTEGER", "INT"}:
+            numeric_value = self._to_number(value)
+            if numeric_value is None:
+                raise ProgrammingError(f"Cannot cast value {value!r} to {normalized_target}")
+            return int(numeric_value)
+
+        if normalized_target in {"REAL", "FLOAT", "NUMERIC"}:
+            numeric_value = self._to_number(value)
+            if numeric_value is None:
+                raise ProgrammingError(f"Cannot cast value {value!r} to {normalized_target}")
+            return float(numeric_value)
+
+        if normalized_target == "TEXT":
+            if isinstance(value, (date, datetime)):
+                return value.isoformat()
+            return str(value)
+
+        if normalized_target == "DATE":
+            if isinstance(value, datetime):
+                return value.date()
+            if isinstance(value, date):
+                return value
+            if isinstance(value, str):
+                stripped = value.strip()
+                if not stripped:
+                    raise ProgrammingError("Cannot cast empty string to DATE")
+                try:
+                    return date.fromisoformat(stripped)
+                except ValueError:
+                    normalized_datetime = stripped
+                    if normalized_datetime.endswith("Z"):
+                        normalized_datetime = normalized_datetime[:-1] + "+00:00"
+                    try:
+                        return datetime.fromisoformat(normalized_datetime).date()
+                    except ValueError as exc:
+                        raise ProgrammingError(
+                            f"Cannot cast value {value!r} to DATE"
+                        ) from exc
+            raise ProgrammingError(f"Cannot cast value {value!r} to DATE")
+
+        raise ProgrammingError(f"Unsupported CAST target type: {target_type}")
+
+    def _eval_subquery(
+        self,
+        subquery_node: dict[str, Any],
+        *,
+        outer_row: dict[str, Any] | None = None,
+    ) -> Any:
+        del outer_row
+        if bool(subquery_node.get("correlated")):
+            raise ProgrammingError("Correlated subqueries are not supported")
+
+        query = subquery_node.get("query")
+        if not isinstance(query, dict):
+            raise ProgrammingError("Invalid subquery expression")
+
+        result = self.execute(query)
+        if subquery_node.get("mode") == "scalar":
+            if len(result.description) != 1:
+                raise ProgrammingError("Scalar subquery must return exactly one column")
+            if len(result.rows) == 0:
+                return None
+            if len(result.rows) > 1:
+                raise ProgrammingError("Scalar subquery returned more than one row")
+            first_row = result.rows[0]
+            return first_row[0] if first_row else None
+
+        return list(result.rows)
+
     def _eval_expression(
         self,
         expr: Any,
@@ -1945,6 +2503,9 @@ class SharedExecutor:
         if expr_type == "literal":
             return expr.get("value")
 
+        if expr_type == "subquery":
+            return self._eval_subquery(expr, outer_row=row)
+
         if expr_type == "unary_op":
             if expr.get("op") != "-":
                 raise ProgrammingError(f"Unsupported unary operator: {expr.get('op')}")
@@ -1963,6 +2524,9 @@ class SharedExecutor:
             if left_value is None or right_value is None:
                 return None
 
+            if operator == "||":
+                return f"{left_value}{right_value}"
+
             left_number = self._to_number(left_value)
             right_number = self._to_number(right_value)
             if left_number is None or right_number is None:
@@ -1979,6 +2543,20 @@ class SharedExecutor:
                     raise ProgrammingError("Division by zero in arithmetic expression")
                 return left_number / right_number
             raise ProgrammingError(f"Unsupported arithmetic operator: {operator}")
+
+        if expr_type == "function":
+            args = expr.get("args")
+            args_list = args if isinstance(args, list) else []
+            evaluated_args = [
+                self._eval_expression(argument, row, resolve_column)
+                for argument in args_list
+            ]
+            return self._call_function(str(expr.get("name", "")), evaluated_args)
+
+        if expr_type == "cast":
+            value = self._eval_expression(expr.get("value"), row, resolve_column)
+            target_type = str(expr.get("target_type", ""))
+            return self._eval_cast(value, target_type)
 
         if expr_type == "aggregate":
             raise ProgrammingError("Aggregate expressions are not supported in row-level arithmetic")
@@ -2018,7 +2596,9 @@ class SharedExecutor:
         value = condition["value"]
 
         def _resolve_operand(operand: Any, *, as_column: bool) -> Any:
-            if isinstance(operand, dict) and operand.get("type") != "subquery":
+            if isinstance(operand, dict):
+                if operand.get("type") == "subquery":
+                    return self._eval_subquery(operand, outer_row=row)
                 return self._eval_expression(operand, row, lambda col_name: row.get(col_name))
             if as_column:
                 return row.get(str(operand))
@@ -2070,22 +2650,28 @@ class SharedExecutor:
             left_low, right_low = self._coerce_for_compare(row_value, low)
             left_high, right_high = self._coerce_for_compare(row_value, high)
             return not bool(left_low >= right_low and left_high <= right_high)
-        if operator == "LIKE":
+        if operator in {"LIKE", "NOT LIKE", "ILIKE", "NOT ILIKE"}:
             if row_value is None:
                 return False
             value = _resolve_operand(value, as_column=False)
             if not isinstance(value, str):
                 raise NotImplementedError("Unsupported LIKE pattern type")
-            regex = "^" + re.escape(value).replace(r"%", ".*").replace(r"_", ".") + "$"
-            return bool(re.match(regex, str(row_value)))
-        if operator == "NOT LIKE":
-            if row_value is None:
-                return False
-            value = _resolve_operand(value, as_column=False)
-            if not isinstance(value, str):
-                raise NotImplementedError("Unsupported LIKE pattern type")
-            regex = "^" + re.escape(value).replace(r"%", ".*").replace(r"_", ".") + "$"
-            return not bool(re.match(regex, str(row_value)))
+            escape_value = condition.get("escape")
+            if escape_value is not None:
+                if not isinstance(escape_value, str) or len(escape_value) != 1:
+                    raise ValueError("ESCAPE requires a single character")
+
+            row_text = str(row_value)
+            pattern = value
+            if operator in {"ILIKE", "NOT ILIKE"}:
+                row_text = row_text.lower()
+                pattern = pattern.lower()
+
+            regex = _build_like_regex(pattern, escape_value)
+            is_match = bool(re.match(regex, row_text))
+            if operator in {"NOT LIKE", "NOT ILIKE"}:
+                return not is_match
+            return is_match
 
         value = _resolve_operand(value, as_column=False)
 
