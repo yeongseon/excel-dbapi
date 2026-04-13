@@ -143,6 +143,18 @@ with ExcelConnection("sample.xlsx") as conn:
     cursor.execute("SELECT * FROM Sheet1 WHERE name LIKE ?", ("A%",))
 ```
 
+### Compound Queries (Set Operations)
+
+```python
+with ExcelConnection("sample.xlsx") as conn:
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id FROM t1 UNION SELECT id FROM t2")
+    cursor.execute("SELECT id FROM t1 UNION ALL SELECT id FROM t2")
+    cursor.execute("SELECT id FROM t1 INTERSECT SELECT id FROM t2")
+    cursor.execute("SELECT id FROM t1 EXCEPT SELECT id FROM t2")
+```
+
 ---
 
 ## Safety Defaults

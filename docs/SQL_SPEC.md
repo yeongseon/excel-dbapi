@@ -32,7 +32,6 @@ The following SQL features are **rejected at parse time** with `ValueError`:
 - `GROUP BY`, `HAVING`, aggregates in JOIN queries
 - Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])` and `INSERT INTO ... SELECT ...`
 - Common Table Expressions (CTEs / `WITH`)
-- `UNION` / `INTERSECT` / `EXCEPT`
 - Window functions (`OVER`, `PARTITION BY`)
 - `ALTER TABLE`
 - `CREATE INDEX` / `DROP INDEX`
@@ -252,6 +251,38 @@ Any other ordering raises `ValueError`.
 - RIGHT JOIN returns all rows from the right table, with NULL values for unmatched left-table columns.
 - Chained JOINs execute left-to-right as iterative two-source folds.
 - The join algorithm uses hash matching for efficient lookups.
+
+### 3.12 Compound Queries (Set Operations)
+
+| Operation | Supported | Behavior |
+|-----------|-----------|----------|
+| `UNION` | ✅ | Combines rows and removes duplicates |
+| `UNION ALL` | ✅ | Combines rows and keeps duplicates |
+| `INTERSECT` | ✅ | Returns rows present in all inputs |
+| `EXCEPT` | ✅ | Returns rows in the left result that are absent from the right result |
+
+**Syntax**:
+
+```
+SELECT ... FROM ...
+  (UNION [ALL] | INTERSECT | EXCEPT)
+SELECT ... FROM ...
+  [ (UNION [ALL] | INTERSECT | EXCEPT) SELECT ... ] ...
+```
+
+**Rules**:
+- Each branch must be a valid `SELECT` query.
+- All branches must return the same number of columns.
+- Chained compounds are evaluated left-to-right: `(A UNION B) EXCEPT C`.
+- Branch-local clauses (`WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`, etc.) are allowed within each branch.
+
+**Examples**:
+- `SELECT id, name FROM users UNION SELECT id, name FROM admins`
+- `SELECT id FROM t1 UNION ALL SELECT id FROM t2`
+- `SELECT id FROM t1 INTERSECT SELECT id FROM t2`
+- `SELECT id FROM t1 EXCEPT SELECT id FROM t2`
+- `SELECT id FROM a UNION SELECT id FROM b UNION SELECT id FROM c`
+
 ---
 
 ## 4. INSERT
@@ -475,7 +506,10 @@ For UPDATE with WHERE:
 ## Appendix A: Grammar (Informational EBNF)
 
 ```ebnf
-statement     = select | insert | update | delete | create | drop ;
+statement     = compound_select | select | insert | update | delete | create | drop ;
+
+compound_select = select compound_op select { compound_op select } ;
+compound_op   = ( "UNION" [ "ALL" ] ) | "INTERSECT" | "EXCEPT" ;
 
 select        = "SELECT" [ "DISTINCT" ] select_columns "FROM" table_ref
                 [ join_clause ]

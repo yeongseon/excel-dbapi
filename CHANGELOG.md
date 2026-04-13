@@ -16,6 +16,17 @@ All notable changes to this project will be documented in this file.
 ### Rejected (by design)
 - FULL OUTER JOIN and CROSS JOIN remain unsupported
 
+## [0.4.1] - 2026-04-13
+
+### Added
+- Compound SELECT set operations: `UNION`, `UNION ALL`, `INTERSECT`, and `EXCEPT`
+- Chained compound query support with left-to-right evaluation
+- Parser and executor coverage for set-operation edge cases (NULLs, empty results, mixed compounds)
+
+### Changed
+- SQL grammar boundaries updated to allow set-operation syntax
+- SQL specification updated with compound query syntax, semantics, and grammar
+
 ## [0.4.0] - 2026-04-13
 
 ### Added

@@ -1313,13 +1313,105 @@ def _parse_drop(query: str) -> Dict[str, Any]:
     }
 
 
+def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[Dict[str, Any]]:
+    tokens = _tokenize(query.strip())
+    if not tokens or tokens[0].upper() != "SELECT":
+        return None
+
+    query_tokens: List[List[str]] = []
+    operators: List[str] = []
+    current_tokens: List[str] = []
+    depth = 0
+    index = 0
+    found_compound = False
+
+    while index < len(tokens):
+        token = tokens[index]
+        upper = token.upper()
+
+        if token == "(":
+            depth += 1
+            current_tokens.append(token)
+            index += 1
+            continue
+        if token == ")":
+            depth -= 1
+            if depth < 0:
+                if not found_compound:
+                    return None
+                raise ValueError(f"Invalid SQL query format: {query}")
+            current_tokens.append(token)
+            index += 1
+            continue
+
+        if depth == 0 and upper in {"UNION", "INTERSECT", "EXCEPT"}:
+            if not current_tokens:
+                raise ValueError(f"Invalid SQL query format: {query}")
+            query_tokens.append(current_tokens)
+            current_tokens = []
+            found_compound = True
+
+            if upper == "UNION" and index + 1 < len(tokens) and tokens[index + 1].upper() == "ALL":
+                operators.append("UNION ALL")
+                index += 2
+            else:
+                operators.append(upper)
+                index += 1
+            continue
+
+        current_tokens.append(token)
+        index += 1
+
+    if depth != 0 and found_compound:
+        raise ValueError(f"Invalid SQL query format: {query}")
+    if not found_compound:
+        return None
+    if not current_tokens:
+        raise ValueError(f"Invalid SQL query format: {query}")
+
+    query_tokens.append(current_tokens)
+    if len(query_tokens) != len(operators) + 1:
+        raise ValueError(f"Invalid SQL query format: {query}")
+
+    parsed_queries: List[Dict[str, Any]] = []
+    param_index = 0
+    total_params = len(params) if params is not None else 0
+    for segment_tokens in query_tokens:
+        if not segment_tokens or segment_tokens[0].upper() != "SELECT":
+            raise ValueError("Compound queries support only SELECT subqueries")
+
+        segment_query = " ".join(segment_tokens)
+        segment_params: Optional[tuple[Any, ...]] = None
+        if params is not None:
+            placeholder_count = sum(1 for tok in segment_tokens if tok == "?")
+            next_index = param_index + placeholder_count
+            if next_index > total_params:
+                raise ValueError("Not enough parameters for placeholders")
+            segment_params = params[param_index:next_index]
+            param_index = next_index
+
+        parsed_queries.append(_parse_select(segment_query, segment_params))
+
+    if params is not None and param_index < total_params:
+        raise ValueError("Too many parameters for placeholders")
+
+    return {
+        "action": "COMPOUND",
+        "operator": operators[0],
+        "operators": operators,
+        "queries": parsed_queries,
+    }
+
+
 def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str, Any]:
-    tokens = query.strip().split()
+    tokens = _tokenize(query.strip())
     if not tokens:
         raise ValueError(f"Invalid SQL query format: {query}")
     action = tokens[0].upper()
     if action == "SELECT":
-        parsed = _parse_select(query, params)
+        parsed = _parse_compound(query, params)
+        if parsed is None:
+            parsed = _parse_select(query, params)
     elif action == "INSERT":
         parsed = _parse_insert(query, params)
     elif action == "CREATE":

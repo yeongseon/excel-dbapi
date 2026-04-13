@@ -37,6 +37,10 @@ class SharedExecutor:
     def execute(self, parsed: dict[str, Any]) -> ExecutionResult:
         action = parsed["action"]
         self._ensure_writable(action)
+
+        if action == "COMPOUND":
+            return self._execute_compound(parsed)
+
         table = parsed["table"]
         resolved_table = self._resolve_sheet_name(table)
 
@@ -255,6 +259,83 @@ class SharedExecutor:
             )
 
         raise ValueError(f"Unsupported action: {action}")
+
+    def _normalize_row_key(self, row: tuple[Any, ...]) -> tuple[Any, ...]:
+        return tuple(tuple(value) if isinstance(value, list) else value for value in row)
+
+    def _dedupe_rows(self, rows: list[tuple[Any, ...]]) -> list[tuple[Any, ...]]:
+        seen: set[tuple[Any, ...]] = set()
+        deduped: list[tuple[Any, ...]] = []
+        for row in rows:
+            key = self._normalize_row_key(row)
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(row)
+        return deduped
+
+    def _execute_compound(self, parsed: dict[str, Any]) -> ExecutionResult:
+        queries = parsed.get("queries")
+        if not isinstance(queries, list) or not queries:
+            raise ValueError("COMPOUND query must contain at least one SELECT query")
+
+        operators = parsed.get("operators")
+        if not isinstance(operators, list):
+            operator = parsed.get("operator")
+            if not isinstance(operator, str):
+                raise ValueError("COMPOUND query must include a valid operator")
+            operators = [operator] * (len(queries) - 1)
+
+        if len(operators) != len(queries) - 1:
+            raise ValueError("Invalid COMPOUND query structure")
+
+        results = [self.execute(query) for query in queries]
+        first_result = results[0]
+        expected_columns = len(first_result.description)
+        for result in results[1:]:
+            if len(result.description) != expected_columns:
+                raise ValueError("Compound queries require matching column counts")
+
+        rows = list(first_result.rows)
+        for idx, operator in enumerate(operators, start=1):
+            next_rows = list(results[idx].rows)
+            normalized_operator = operator.upper()
+
+            if normalized_operator == "UNION ALL":
+                rows = rows + next_rows
+                continue
+
+            if normalized_operator == "UNION":
+                rows = self._dedupe_rows(rows + next_rows)
+                continue
+
+            if normalized_operator == "INTERSECT":
+                right_keys = {self._normalize_row_key(row) for row in next_rows}
+                rows = [
+                    row
+                    for row in self._dedupe_rows(rows)
+                    if self._normalize_row_key(row) in right_keys
+                ]
+                continue
+
+            if normalized_operator == "EXCEPT":
+                right_keys = {self._normalize_row_key(row) for row in next_rows}
+                rows = [
+                    row
+                    for row in self._dedupe_rows(rows)
+                    if self._normalize_row_key(row) not in right_keys
+                ]
+                continue
+
+            raise ValueError(f"Unsupported compound operator: {operator}")
+
+        return ExecutionResult(
+            action="COMPOUND",
+            rows=rows,
+            description=first_result.description,
+            rowcount=len(rows),
+            lastrowid=None,
+        )
 
     def _matches_where(self, row: dict[str, Any], where: dict[str, Any]) -> bool:
         if "conditions" in where:
