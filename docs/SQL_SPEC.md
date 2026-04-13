@@ -30,7 +30,7 @@ The following SQL features are **rejected at parse time** with `ValueError`:
 - `NATURAL JOIN` (INNER, LEFT, RIGHT, FULL OUTER, and CROSS JOIN are supported)
 - Mixed `SELECT *, col` with JOIN (bare `SELECT *` is supported; see §4.8)
 - `GROUP BY` / aggregate arguments in JOIN queries that use bare (unqualified) columns (for example `GROUP BY dept`, `SUM(amount)`)
-- Subqueries except `WHERE col IN (SELECT single_col FROM table [WHERE ...])` and `INSERT INTO ... SELECT ...`
+- Subqueries except `WHERE col [NOT] IN (SELECT single_col FROM table [WHERE ...])` and `INSERT INTO ... SELECT ...`
 - Common Table Expressions (CTEs / `WITH`)
 - Window functions (`OVER`, `PARTITION BY`)
 - `ALTER TABLE`
@@ -438,10 +438,9 @@ Example: `WHERE name LIKE 'A%'` matches "Alice", "Ann", "A".
 - Values must be parenthesized: `IN (1, 2, 3)` or `IN ('a', 'b')`
 - Empty IN list raises `ValueError`
 - Supports placeholder binding: `IN (?, ?, ?)`
-- Subqueries are supported only in `SELECT ... WHERE ... IN (SELECT ...)`
+- Subqueries are supported in `SELECT`, `UPDATE`, and `DELETE` WHERE clauses: `WHERE col [NOT] IN (SELECT ...)`
 - Subqueries must select exactly one column (no `SELECT *`, no multi-column SELECT)
 - Subquery form supports optional inner WHERE with literal values: `IN (SELECT id FROM admins WHERE role = 'admin')`
-- Subqueries in `UPDATE ... WHERE` and `DELETE ... WHERE` are not supported
 - Correlated subqueries are not supported
 - Parameterized subqueries (inner `?` placeholders) are not supported
 

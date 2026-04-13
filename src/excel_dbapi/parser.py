@@ -2251,7 +2251,7 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
     where = None
     if where_part:
-        where = _parse_where_expression(where_part, params, bind_params=False)
+        where = _parse_where_expression(where_part, params, bind_params=False, allow_subqueries=True)
 
     values_to_bind = [item["value"] for item in assignments]
     if where is not None:
@@ -2283,7 +2283,7 @@ def _parse_delete(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         if tokens[3].upper() != "WHERE":
             raise ValueError(f"Invalid DELETE format: {query}")
         where_part = " ".join(tokens[4:])
-        where = _parse_where_expression(where_part, params)
+        where = _parse_where_expression(where_part, params, allow_subqueries=True)
 
     return {
         "action": "DELETE",

@@ -121,14 +121,22 @@ def test_parse_subquery_rejects_star():
         parse_sql("SELECT * FROM users WHERE id IN (SELECT * FROM admins)")
 
 
-def test_parse_subquery_rejected_in_update():
-    with pytest.raises(ValueError, match="not supported in this context"):
-        parse_sql("UPDATE users SET name = 'x' WHERE id IN (SELECT id FROM admins)")
+def test_parse_subquery_accepted_in_update():
+    result = parse_sql("UPDATE users SET name = 'x' WHERE id IN (SELECT id FROM admins)")
+    assert result["action"] == "UPDATE"
+    assert result["where"] is not None
+    cond = result["where"]["conditions"][0]
+    assert cond["operator"] == "IN"
+    assert cond["value"]["type"] == "subquery"
 
 
-def test_parse_subquery_rejected_in_delete():
-    with pytest.raises(ValueError, match="not supported in this context"):
-        parse_sql("DELETE FROM users WHERE id IN (SELECT id FROM admins)")
+def test_parse_subquery_accepted_in_delete():
+    result = parse_sql("DELETE FROM users WHERE id IN (SELECT id FROM admins)")
+    assert result["action"] == "DELETE"
+    assert result["where"] is not None
+    cond = result["where"]["conditions"][0]
+    assert cond["operator"] == "IN"
+    assert cond["value"]["type"] == "subquery"
 
 
 def test_parse_subquery_rejects_correlated():

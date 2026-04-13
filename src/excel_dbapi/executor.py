@@ -84,6 +84,9 @@ class SharedExecutor:
                     )
 
             where = parsed.get("where")
+            if where:
+                where = copy.deepcopy(where)
+                self._resolve_subqueries(where)
             rowcount = 0
             for row_values in table_data.rows:
                 row_map = {
@@ -129,6 +132,9 @@ class SharedExecutor:
                 )
             headers = list(table_data.headers)
             where = parsed.get("where")
+            if where:
+                where = copy.deepcopy(where)
+                self._resolve_subqueries(where)
             rowcount = 0
             kept_rows: list[list[Any]] = []
             for row_values in table_data.rows:
