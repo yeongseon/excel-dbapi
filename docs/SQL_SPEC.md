@@ -1,6 +1,6 @@
 # excel-dbapi SQL Specification
 
-> Version: 0.4  
+> Version: 0.4.1  
 > Status: **Normative** — this document defines the SQL subset that excel-dbapi supports.  
 > Last updated: 2026-04-13
 
@@ -35,9 +35,6 @@ The following SQL features are **rejected at parse time** with `ValueError`:
 - Window functions (`OVER`, `PARTITION BY`)
 - `ALTER TABLE`
 - `CREATE INDEX` / `DROP INDEX`
-- `ALTER TABLE`
-- `CREATE INDEX` / `DROP INDEX`
-- `RETURNING`
 - `RETURNING`
 - `SELECT ... FOR UPDATE`
 
