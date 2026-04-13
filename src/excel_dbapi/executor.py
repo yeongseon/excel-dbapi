@@ -1,6 +1,6 @@
 import copy
 import re
-from typing import Any
+from typing import Any, Optional
 
 from .engines.base import TableData, WorkbookBackend
 from .engines.result import Description, ExecutionResult
@@ -328,6 +328,35 @@ class SharedExecutor:
                 continue
 
             raise ValueError(f"Unsupported compound operator: {operator}")
+
+        # Apply compound-level ORDER BY / LIMIT / OFFSET.
+        order_by = parsed.get("order_by")
+        if order_by:
+            col_name = str(order_by["column"])
+            # Resolve column name to positional index in the result tuples.
+            desc_names = [d[0] for d in first_result.description]
+            col_index: Optional[int] = None
+            for i, dname in enumerate(desc_names):
+                # Match by bare name or qualified name.
+                if dname is not None and (dname == col_name or dname.endswith(f".{col_name}")):
+                    col_index = i
+                    break
+            if col_index is None:
+                raise ValueError(f"ORDER BY column '{col_name}' not found in compound result")
+            reverse = order_by["direction"] == "DESC"
+            resolved_col_index = col_index
+            rows = sorted(
+                rows,
+                key=lambda r: self._sort_key(r[resolved_col_index]),
+                reverse=reverse,
+            )
+
+        compound_offset = parsed.get("offset") or 0
+        compound_limit = parsed.get("limit")
+        if compound_offset:
+            rows = rows[compound_offset:]
+        if compound_limit is not None:
+            rows = rows[:compound_limit]
 
         return ExecutionResult(
             action="COMPOUND",

@@ -149,12 +149,13 @@ def test_union_all_preserves_order(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
+        # Per SQL standard, trailing ORDER BY applies to the entire compound.
         cursor.execute(
-            "SELECT id FROM t1 WHERE id <= 2 ORDER BY id DESC "
+            "SELECT id FROM t1 WHERE id <= 2 "
             "UNION ALL "
             "SELECT id FROM t2 WHERE id >= 4 ORDER BY id DESC"
         )
-        assert cursor.fetchall() == [(2,), (2,), (1,), (4,), (4,)]
+        assert cursor.fetchall() == [(4,), (4,), (2,), (2,), (1,)]
 
 
 def test_intersect_empty_result(tmp_path: Path) -> None:
@@ -183,12 +184,13 @@ def test_union_with_order_by(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
+        # Per SQL standard, trailing ORDER BY applies to the entire compound.
         cursor.execute(
-            "SELECT id FROM t1 WHERE id <= 2 ORDER BY id DESC "
+            "SELECT id FROM t1 WHERE id <= 2 "
             "UNION "
             "SELECT id FROM t2 WHERE id >= 3 ORDER BY id DESC"
         )
-        assert cursor.fetchall() == [(2,), (1,), (4,), (3,)]
+        assert cursor.fetchall() == [(4,), (3,), (2,), (1,)]
 
 
 def test_union_null_handling(tmp_path: Path) -> None:
@@ -312,3 +314,96 @@ def test_parser_compound_placeholder_counting() -> None:
     assert q1_where["conditions"][0]["value"] == (10, 20)
     q2_where = parsed["queries"][1]["where"]
     assert q2_where["conditions"][0]["value"] == 30
+
+
+def test_parser_parenthesized_branch(tmp_path: Path) -> None:
+    """Parser accepts parenthesized compound branches (e.g. from SQLAlchemy)."""
+    parsed = parse_sql(
+        "(SELECT id FROM t1 ORDER BY id DESC) UNION SELECT id FROM t2"
+    )
+    assert parsed["action"] == "COMPOUND"
+    assert parsed["operators"] == ["UNION"]
+    assert len(parsed["queries"]) == 2
+    # Branch 1 should have ORDER BY from inside the parens.
+    assert parsed["queries"][0].get("order_by") == {
+        "column": "id",
+        "direction": "DESC",
+    }
+
+
+def test_parser_compound_outer_order_by() -> None:
+    """Trailing ORDER BY after compound is compound-level, not branch-level."""
+    parsed = parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 ORDER BY id")
+    assert parsed["action"] == "COMPOUND"
+    assert parsed.get("order_by") == {"column": "id", "direction": "ASC"}
+    # Branch 2 should NOT have ORDER BY (it was extracted).
+    assert parsed["queries"][1].get("order_by") is None
+
+
+def test_parser_compound_outer_order_by_desc() -> None:
+    """Trailing ORDER BY DESC after compound is compound-level."""
+    parsed = parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 ORDER BY id DESC")
+    assert parsed.get("order_by") == {"column": "id", "direction": "DESC"}
+
+
+def test_parser_compound_outer_limit() -> None:
+    """Trailing LIMIT after compound is compound-level."""
+    parsed = parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 LIMIT 5")
+    assert parsed["action"] == "COMPOUND"
+    assert parsed.get("limit") == 5
+    assert parsed["queries"][1].get("limit") is None
+
+
+def test_parser_compound_outer_order_by_and_limit() -> None:
+    """Trailing ORDER BY + LIMIT after compound are compound-level."""
+    parsed = parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 ORDER BY id LIMIT 3")
+    assert parsed.get("order_by") == {"column": "id", "direction": "ASC"}
+    assert parsed.get("limit") == 3
+
+
+def test_compound_outer_order_by_e2e(tmp_path: Path) -> None:
+    """Compound-level ORDER BY sorts the entire result."""
+    file_path = tmp_path / "compound_outer_order.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM t1 UNION ALL SELECT id FROM t2 ORDER BY id DESC"
+        )
+        rows = cursor.fetchall()
+        # t1 ids: [1,2,3,2], t2 ids: [2,3,4,4]
+        # UNION ALL: [1,2,3,2,2,3,4,4], ORDER BY id DESC: [4,4,3,3,2,2,2,1]
+        assert rows == [(4,), (4,), (3,), (3,), (2,), (2,), (2,), (1,)]
+
+
+def test_compound_outer_order_by_with_limit_e2e(tmp_path: Path) -> None:
+    """Compound-level ORDER BY + LIMIT."""
+    file_path = tmp_path / "compound_limit.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id FROM t1 UNION ALL SELECT id FROM t2 ORDER BY id LIMIT 3"
+        )
+        rows = cursor.fetchall()
+        # UNION ALL sorted ASC: [1,2,2,2,3,3,4,4], LIMIT 3 → [1,2,2]
+        assert rows == [(1,), (2,), (2,)]
+
+
+def test_parenthesized_branch_e2e(tmp_path: Path) -> None:
+    """Parenthesized compound branch executes correctly."""
+    file_path = tmp_path / "compound_paren.xlsx"
+    _create_compound_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "(SELECT id FROM t1 ORDER BY id DESC) UNION SELECT id FROM t2"
+        )
+        rows = cursor.fetchall()
+        # Branch 1: t1 ids [3,2,1,2] ORDER BY DESC → [3,2,2,1]
+        # Branch 2: t2 ids [2,3,4,4]
+        # UNION (dedup): {1, 2, 3, 4}
+        assert sorted(rows) == [(1,), (2,), (3,), (4,)]

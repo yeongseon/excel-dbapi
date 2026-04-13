@@ -1,5 +1,5 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 class _QuotedString(str):
@@ -1313,9 +1313,122 @@ def _parse_drop(query: str) -> Dict[str, Any]:
     }
 
 
+def _strip_outer_parens(tokens: List[str]) -> List[str]:
+    """Strip one layer of outer parentheses from a token list.
+
+    If the token list is wrapped in balanced ``(`` / ``)`` brackets that
+    enclose the entire list, return the inner tokens.  Otherwise return
+    the list unchanged.
+    """
+    if len(tokens) < 2 or tokens[0] != "(" or tokens[-1] != ")":
+        return tokens
+    depth = 0
+    for i, tok in enumerate(tokens):
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth -= 1
+            if depth == 0 and i < len(tokens) - 1:
+                # Closing paren is not the last token, so the outer parens
+                # do NOT wrap the whole list.
+                return tokens
+    return tokens[1:-1]
+
+
+def _extract_trailing_clauses(
+    tokens: List[str],
+) -> tuple[List[str], Optional[Dict[str, Any]], Optional[Union[int, str]], Optional[Union[int, str]]]:
+    """Split trailing ORDER BY / LIMIT / OFFSET from a compound's last branch.
+
+    Returns ``(branch_tokens, order_by, limit, offset)``.
+    """
+    order_by: Optional[Dict[str, Any]] = None
+    limit: Optional[Union[int, str]] = None
+    offset: Optional[Union[int, str]] = None
+
+    # Scan backwards (at depth 0) for ORDER BY / LIMIT / OFFSET.
+    # We work on the raw token list and only look for top-level keywords.
+    uppers = [t.upper() for t in tokens]
+    depth = 0
+    keyword_positions: Dict[str, int] = {}
+    for i, tok in enumerate(tokens):
+        if tok == "(":
+            depth += 1
+        elif tok == ")":
+            depth -= 1
+        elif depth == 0:
+            u = uppers[i]
+            if u == "OFFSET" and "OFFSET" not in keyword_positions:
+                keyword_positions["OFFSET"] = i
+            elif u == "LIMIT" and "LIMIT" not in keyword_positions:
+                keyword_positions["LIMIT"] = i
+            elif u == "ORDER" and i + 1 < len(uppers) and uppers[i + 1] == "BY":
+                if "ORDER BY" not in keyword_positions:
+                    keyword_positions["ORDER BY"] = i
+
+    if not keyword_positions:
+        return tokens, order_by, limit, offset
+
+    # Determine the cut point (earliest trailing clause).
+    cut = min(keyword_positions.values())
+
+    # Only accept trailing clauses that come AFTER the FROM clause of the
+    # last branch. A simple heuristic: the cut must come after the last
+    # top-level FROM token.
+    last_from = -1
+    for i, u in enumerate(uppers[:cut]):
+        if u == "FROM" and depth == 0:
+            last_from = i
+    if last_from == -1:
+        return tokens, order_by, limit, offset
+
+    branch_tokens = tokens[:cut]
+    trail_tokens = tokens[cut:]
+    trail_uppers = [t.upper() for t in trail_tokens]
+
+    idx = 0
+    while idx < len(trail_tokens):
+        tu = trail_uppers[idx]
+        if tu == "ORDER" and idx + 1 < len(trail_uppers) and trail_uppers[idx + 1] == "BY":
+            idx += 2  # skip ORDER BY
+            if idx >= len(trail_tokens):
+                raise ValueError("Invalid ORDER BY clause format")
+            order_col = trail_tokens[idx]
+            idx += 1
+            direction = "ASC"
+            if idx < len(trail_tokens) and trail_uppers[idx] in {"ASC", "DESC"}:
+                direction = trail_uppers[idx]
+                idx += 1
+            order_by = {"column": order_col, "direction": direction}
+        elif tu == "LIMIT":
+            idx += 1
+            if idx >= len(trail_tokens):
+                raise ValueError("Invalid LIMIT clause format")
+            val = trail_tokens[idx]
+            limit = int(val) if val != "?" else val
+            idx += 1
+        elif tu == "OFFSET":
+            idx += 1
+            if idx >= len(trail_tokens):
+                raise ValueError("Invalid OFFSET clause format")
+            val = trail_tokens[idx]
+            offset = int(val) if val != "?" else val
+            idx += 1
+        else:
+            # Unknown trailing token — not a compound-level clause, put it back.
+            return tokens, None, None, None
+
+    return branch_tokens, order_by, limit, offset
+
+
 def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[Dict[str, Any]]:
     tokens = _tokenize(query.strip())
-    if not tokens or tokens[0].upper() != "SELECT":
+    if not tokens:
+        return None
+
+    # Accept queries starting with either SELECT or ( (parenthesized branch).
+    first_upper = tokens[0].upper()
+    if first_upper != "SELECT" and tokens[0] != "(":
         return None
 
     query_tokens: List[List[str]] = []
@@ -1373,6 +1486,16 @@ def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[D
     if len(query_tokens) != len(operators) + 1:
         raise ValueError(f"Invalid SQL query format: {query}")
 
+    # Extract compound-level ORDER BY / LIMIT / OFFSET from the last branch.
+    last_branch = query_tokens[-1]
+    last_branch, compound_order_by, compound_limit, compound_offset = (
+        _extract_trailing_clauses(last_branch)
+    )
+    query_tokens[-1] = last_branch
+
+    # Strip outer parens from each branch (e.g. "(SELECT ... ORDER BY ...)")
+    query_tokens = [_strip_outer_parens(branch) for branch in query_tokens]
+
     parsed_queries: List[Dict[str, Any]] = []
     param_index = 0
     total_params = len(params) if params is not None else 0
@@ -1392,15 +1515,35 @@ def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[D
 
         parsed_queries.append(_parse_select(segment_query, segment_params))
 
+    # Resolve compound-level LIMIT / OFFSET placeholders ("?").
+    if params is not None:
+        if compound_limit == "?":
+            if param_index >= total_params:
+                raise ValueError("Not enough parameters for LIMIT placeholder")
+            compound_limit = int(params[param_index])
+            param_index += 1
+        if compound_offset == "?":
+            if param_index >= total_params:
+                raise ValueError("Not enough parameters for OFFSET placeholder")
+            compound_offset = int(params[param_index])
+            param_index += 1
+
     if params is not None and param_index < total_params:
         raise ValueError("Too many parameters for placeholders")
 
-    return {
+    result: Dict[str, Any] = {
         "action": "COMPOUND",
         "operator": operators[0],
         "operators": operators,
         "queries": parsed_queries,
     }
+    if compound_order_by is not None:
+        result["order_by"] = compound_order_by
+    if compound_limit is not None:
+        result["limit"] = compound_limit
+    if compound_offset is not None:
+        result["offset"] = compound_offset
+    return result
 
 
 def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str, Any]:
@@ -1408,9 +1551,11 @@ def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str,
     if not tokens:
         raise ValueError(f"Invalid SQL query format: {query}")
     action = tokens[0].upper()
-    if action == "SELECT":
+    if action == "SELECT" or tokens[0] == "(":
         parsed = _parse_compound(query, params)
         if parsed is None:
+            if tokens[0] == "(":
+                raise ValueError(f"Unsupported SQL action: {tokens[0]}")
             parsed = _parse_select(query, params)
     elif action == "INSERT":
         parsed = _parse_insert(query, params)
