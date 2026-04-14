@@ -67,3 +67,13 @@ def test_bad_graph_dsn_raises_operational_error():
     assert "OperationalError" in str(type(exc_info.value)) or "Operational" in str(
         exc_info.value
     )
+
+
+def test_corrupt_file_raises_operational_error(tmp_path):
+    """BadZipFile from corrupt .xlsx must be wrapped as OperationalError."""
+    bad_file = tmp_path / "corrupt.xlsx"
+    bad_file.write_bytes(b"not a real xlsx file")
+    from excel_dbapi.exceptions import OperationalError
+
+    with pytest.raises(OperationalError):
+        ExcelConnection(str(bad_file))

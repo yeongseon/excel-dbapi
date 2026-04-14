@@ -161,9 +161,14 @@ class ExcelConnection:
             # Translate backend construction errors to OperationalError
             raise OperationalError(str(exc)) from exc
         except Exception as exc:
-            # Catch and translate openpyxl's InvalidFileException and other errors
+            # Catch and translate openpyxl's InvalidFileException,
+            # zipfile.BadZipFile, and other file-format errors
             exc_class_name = type(exc).__name__
-            if exc_class_name == "InvalidFileException" or (
+            if exc_class_name in (
+                "InvalidFileException",
+                "BadZipFile",
+                "BadZipfile",
+            ) or (
                 InvalidFileException is not None
                 and isinstance(exc, InvalidFileException)
             ):
