@@ -21,16 +21,6 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
         },
     ),
     (
-        "CREATE TABLE Logs (message TEXT,)",
-        {
-            "action": "CREATE",
-            "table": "Logs",
-            "columns": ["message"],
-            "column_definitions": [{"name": "message", "type_name": "TEXT"}],
-            "params": None,
-        },
-    ),
-    (
         "DROP TABLE Users",
         {
             "action": "DROP",
@@ -46,6 +36,11 @@ INVALID_CASES: list[tuple[str, type[Exception], str]] = [
     ("CREATE TABLE Bad", ValueError, "Invalid CREATE TABLE format"),
     (
         "CREATE TABLE Bad (,)",
+        ValueError,
+        "Malformed column definitions: empty column definition found",
+    ),
+    (
+        "CREATE TABLE Logs (message TEXT,)",
         ValueError,
         "Malformed column definitions: empty column definition found",
     ),

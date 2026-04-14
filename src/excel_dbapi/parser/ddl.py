@@ -27,10 +27,7 @@ def _parse_create(query: str) -> Dict[str, Any]:
     empty_indexes = [
         index for index, definition in enumerate(raw_columns) if not definition.strip()
     ]
-    has_single_trailing_empty = (
-        len(empty_indexes) == 1 and empty_indexes[0] == len(raw_columns) - 1
-    )
-    if empty_indexes and not has_single_trailing_empty:
+    if empty_indexes:
         raise ValueError("Malformed column definitions: empty column definition found")
     columns = []
     column_definitions = []

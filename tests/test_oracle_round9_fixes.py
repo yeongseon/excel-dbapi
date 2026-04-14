@@ -45,10 +45,9 @@ def test_create_table_rejects_missing_name_and_empty_column_definitions(
         parse_sql(sql)
 
 
-def test_create_table_allows_single_trailing_comma() -> None:
-    parsed = parse_sql("CREATE TABLE t (id INTEGER, name TEXT,)")
-    assert parsed["columns"] == ["id", "name"]
-
+def test_create_table_rejects_single_trailing_comma() -> None:
+    with pytest.raises(ValueError, match="empty column definition"):
+        parse_sql("CREATE TABLE t (id INTEGER, name TEXT,)")
 
 def test_execute_create_table_rejects_malformed_definitions(tmp_path: Path) -> None:
     file_path = tmp_path / "create-malformed.xlsx"
@@ -65,16 +64,14 @@ def test_execute_create_table_rejects_malformed_definitions(tmp_path: Path) -> N
             cursor.execute("CREATE TABLE t (id INTEGER,, name TEXT)")
 
 
-def test_execute_create_table_allows_trailing_comma(tmp_path: Path) -> None:
+def test_execute_create_table_rejects_trailing_comma(tmp_path: Path) -> None:
     file_path = tmp_path / "create-trailing-comma.xlsx"
     _create_workbook(file_path, headers=["seed"], rows=[[1]])
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute("CREATE TABLE people (id INTEGER, name TEXT,)")
-        cursor.execute("SELECT id, name FROM people")
-        assert cursor.fetchall() == []
-
+        with pytest.raises(ProgrammingError, match="empty column definition"):
+            cursor.execute("CREATE TABLE people (id INTEGER, name TEXT,)")
 
 @pytest.mark.parametrize(
     "sql",
