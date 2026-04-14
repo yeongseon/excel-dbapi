@@ -239,6 +239,28 @@ def _tokenize(text: str) -> List[str]:
             index += 1
             continue
 
+        # Comparison / assignment operators as standalone tokens
+        if char in {'=', '<', '>', '!'}:
+            if current:
+                tokens.append(''.join(current))
+                current = []
+            # Try to form two-char operators: !=, <>, <=, >=
+            if index + 1 < len(text) and text[index + 1] in {'=', '>'}:
+                two = char + text[index + 1]
+                if two in {'!=', '<>', '<=', '>='}:
+                    tokens.append(two)
+                    index += 2
+                    continue
+            # Single-char: =, <, > (but not lone '!')
+            if char != '!':
+                tokens.append(char)
+                index += 1
+                continue
+            # Lone '!' is not an operator by itself — treat as regular char
+            current.append(char)
+            index += 1
+            continue
+
         current.append(char)
         index += 1
 
