@@ -71,7 +71,7 @@ This table is the **single authoritative matrix** for SQL feature support.
 
 - `SELECT *` in JOIN is supported, but mixing `SELECT *, col` is rejected.
 - `GROUP BY` and aggregate arguments in JOIN queries must use qualified columns (`t.col`).
-- Subqueries in JOIN `WHERE ... IN (SELECT ...)` are not supported.
+- Subqueries in JOIN `WHERE ... IN (SELECT ...)` are supported.
 
 ---
 

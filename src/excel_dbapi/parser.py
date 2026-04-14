@@ -1284,6 +1284,11 @@ def _find_clause_positions(tokens: List[str]) -> Dict[str, int]:
     return positions
 
 
+def _validate_non_negative_pagination(value: Any, clause_name: str) -> None:
+    if isinstance(value, int) and value < 0:
+        raise ValueError(f"{clause_name} must be a non-negative integer")
+
+
 def _parse_columns(
     columns_token: str,
     *,
@@ -4054,6 +4059,10 @@ def _parse_select(
         raise ValueError("LIMIT must be an integer")
     if offset is not None and not isinstance(offset, int):
         raise ValueError("OFFSET must be an integer")
+    if limit is not None:
+        _validate_non_negative_pagination(limit, "LIMIT")
+    if offset is not None:
+        _validate_non_negative_pagination(offset, "OFFSET")
 
     joins_value: Optional[List[Dict[str, Any]]] = joins if joins else None
     if joins_value is not None:
@@ -4872,6 +4881,7 @@ def _extract_trailing_clauses(
                 raise ValueError("Invalid LIMIT clause format")
             val = trail_tokens[idx]
             limit = int(val) if val != "?" else val
+            _validate_non_negative_pagination(limit, "LIMIT")
             idx += 1
         elif tu == "OFFSET":
             idx += 1
@@ -4879,6 +4889,7 @@ def _extract_trailing_clauses(
                 raise ValueError("Invalid OFFSET clause format")
             val = trail_tokens[idx]
             offset = int(val) if val != "?" else val
+            _validate_non_negative_pagination(offset, "OFFSET")
             idx += 1
         else:
             # Unknown trailing token — not a compound-level clause, put it back.
@@ -5002,6 +5013,9 @@ def _parse_compound(
 
     if params is not None and param_index < total_params:
         raise ValueError("Too many parameters for placeholders")
+
+    _validate_non_negative_pagination(compound_limit, "LIMIT")
+    _validate_non_negative_pagination(compound_offset, "OFFSET")
 
     result: Dict[str, Any] = {
         "action": "COMPOUND",
@@ -5176,13 +5190,26 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     table = before_tokens[1].strip()
 
     where_part = None
-    after_upper = after_set.upper()
-    if " WHERE " in after_upper:
-        where_index = after_upper.index(" WHERE ")
-        set_part = after_set[:where_index]
-        where_part = after_set[where_index + len(" WHERE ") :]
+    after_set_tokens = _tokenize(after_set.strip())
+    paren_depth = 0
+    where_token_index: Optional[int] = None
+    for index, token in enumerate(after_set_tokens):
+        if token == "(":
+            paren_depth += 1
+            continue
+        if token == ")":
+            if paren_depth > 0:
+                paren_depth -= 1
+            continue
+        if paren_depth == 0 and token.upper() == "WHERE":
+            where_token_index = index
+            break
+
+    if where_token_index is None:
+        set_part = " ".join(after_set_tokens)
     else:
-        set_part = after_set
+        set_part = " ".join(after_set_tokens[:where_token_index])
+        where_part = " ".join(after_set_tokens[where_token_index + 1 :])
 
     assignments = []
     raw_assignments = _split_csv(set_part.strip())

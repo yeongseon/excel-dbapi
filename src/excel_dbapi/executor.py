@@ -1753,6 +1753,32 @@ class SharedExecutor:
 
             raise ProgrammingError(f"Unsupported window function: {function_name}")
 
+    @staticmethod
+    def _resolve_pagination(parsed: dict[str, Any]) -> tuple[int, int | None]:
+        raw_offset = parsed.get("offset")
+        raw_limit = parsed.get("limit")
+
+        if raw_offset is None:
+            offset = 0
+        elif isinstance(raw_offset, int):
+            offset = raw_offset
+        else:
+            raise ProgrammingError("OFFSET must be a non-negative integer")
+
+        if raw_limit is None:
+            limit = None
+        elif isinstance(raw_limit, int):
+            limit = raw_limit
+        else:
+            raise ProgrammingError("LIMIT must be a non-negative integer")
+
+        if offset < 0:
+            raise ProgrammingError("OFFSET must be a non-negative integer")
+        if limit is not None and limit < 0:
+            raise ProgrammingError("LIMIT must be a non-negative integer")
+
+        return offset, limit
+
     def _execute_compound(self, parsed: dict[str, Any]) -> ExecutionResult:
         queries = parsed.get("queries")
         if not isinstance(queries, list) or not queries:
@@ -1836,8 +1862,7 @@ class SharedExecutor:
                 value_getter=lambda r, col: r[resolved_indexes[col]],
             )
 
-        compound_offset = parsed.get("offset") or 0
-        compound_limit = parsed.get("limit")
+        compound_offset, compound_limit = self._resolve_pagination(parsed)
         if compound_offset:
             rows = rows[compound_offset:]
         if compound_limit is not None:
@@ -2506,8 +2531,7 @@ class SharedExecutor:
                     available_columns=available_cols,
                 )
 
-            offset = parsed.get("offset") or 0
-            limit = parsed.get("limit")
+            offset, limit = self._resolve_pagination(parsed)
             if offset:
                 rows_for_output = rows_for_output[offset:]
             if limit is not None:
@@ -2558,8 +2582,7 @@ class SharedExecutor:
                     available_columns=available_columns,
                 )
 
-            offset = parsed.get("offset") or 0
-            limit = parsed.get("limit")
+            offset, limit = self._resolve_pagination(parsed)
             if offset:
                 projected_rows = projected_rows[offset:]
             if limit is not None:
@@ -2690,8 +2713,7 @@ class SharedExecutor:
                 available_columns=available_columns,
             )
 
-        offset = parsed.get("offset") or 0
-        limit = parsed.get("limit")
+        offset, limit = self._resolve_pagination(parsed)
         if offset:
             projected_rows = projected_rows[offset:]
         if limit is not None:
@@ -3051,8 +3073,7 @@ class SharedExecutor:
                 available_columns=available_order_columns,
             )
 
-        offset = parsed.get("offset") or 0
-        limit = parsed.get("limit")
+        offset, limit = self._resolve_pagination(parsed)
         if offset:
             grouped_rows = grouped_rows[offset:]
         if limit is not None:
@@ -3492,8 +3513,7 @@ class SharedExecutor:
                 left, right = self._coerce_for_compare(row_value, candidate_value)
                 if left == right:
                     return False
-            # SQL: x NOT IN (..., NULL, ...) is UNKNOWN when no match → FALSE in WHERE
-            return not has_null
+            return None if has_null else True
         if operator == "BETWEEN":
             if row_value is None:
                 return None  # SQL UNKNOWN
