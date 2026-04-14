@@ -3137,9 +3137,9 @@ class SharedExecutor:
                 return None
             return sum(numeric_values) / len(numeric_values)
         if aggregate == "MIN":
-            return min(values)
+            return min(values, key=lambda v: self._sort_key(v))
         if aggregate == "MAX":
-            return max(values)
+            return max(values, key=lambda v: self._sort_key(v))
         raise ValueError(f"Unsupported aggregate function: {func}")
 
     def _call_function(self, name: str, args: list[Any]) -> Any:
