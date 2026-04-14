@@ -45,6 +45,18 @@ def check_closed(
 
     return cast(Callable[Concatenate["ExcelCursor", P], R], wrapper)
 
+def _map_exception(exc: Exception) -> DatabaseError:
+    """Map a non-DB-API exception to the appropriate DB-API exception type."""
+    if isinstance(exc, ValueError):
+        return ProgrammingError(str(exc))
+    if isinstance(exc, NotImplementedError):
+        return NotSupportedError(str(exc))
+    if isinstance(exc, (KeyError, TypeError, IndexError)):
+        return ProgrammingError(str(exc))
+    if isinstance(exc, OSError):
+        return OperationalError(str(exc))
+    return DatabaseError(str(exc))
+
 
 class ExcelCursor:
     """
@@ -66,28 +78,25 @@ class ExcelCursor:
         self.arraysize = 1
         self._has_result_set = False
 
-    @check_closed
-    def execute(self, query: str, params: Sequence[Any] | None = None) -> "ExcelCursor":
+    def _reset_state(self) -> None:
+        """Reset cursor state to defaults after an error."""
         self._results = []
         self._index = 0
         self.description = None
         self.rowcount = -1
-        self._has_result_set = False
         self.lastrowid = None
+        self._has_result_set = False
+
+
+    @check_closed
+    def execute(self, query: str, params: Sequence[Any] | None = None) -> "ExcelCursor":
+        self._reset_state()
         try:
             result: ExecutionResult = self.connection.execute(query, params)
-        except ValueError as exc:
-            raise ProgrammingError(str(exc)) from exc
-        except NotImplementedError as exc:
-            raise NotSupportedError(str(exc)) from exc
-        except (KeyError, TypeError, IndexError) as exc:
-            raise ProgrammingError(str(exc)) from exc
-        except OSError as exc:
-            raise OperationalError(str(exc)) from exc
         except DatabaseError:
             raise
         except Exception as exc:
-            raise DatabaseError(str(exc)) from exc
+            raise _map_exception(exc) from exc
         self._results = result.rows
         self._index = 0
         self.description = result.description
@@ -102,12 +111,7 @@ class ExcelCursor:
     def executemany(
         self, query: str, seq_of_params: Iterable[Sequence[Any]]
     ) -> "ExcelCursor":
-        self._results = []
-        self._index = 0
-        self.description = None
-        self.rowcount = -1
-        self.lastrowid = None
-        self._has_result_set = False
+        self._reset_state()
         ensure_write_lock = getattr(
             self.connection, "_ensure_write_lock_for_query", None
         )
@@ -127,73 +131,8 @@ class ExcelCursor:
                 result: ExecutionResult = self.connection._executor.execute_with_params(
                     query, tuple(params)
                 )
-            except ValueError as exc:
-                self._results = []
-                self._index = 0
-                self.description = None
-                self.rowcount = -1
-                self.lastrowid = None
-                self._has_result_set = False
-                mapped: Exception = ProgrammingError(str(exc))
-                if supports_transactions:
-                    self.connection.engine.restore(snapshot)
-                    raise mapped from exc
-                raise ProgrammingError(
-                    f"{mapped}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            except NotImplementedError as exc:
-                self._results = []
-                self._index = 0
-                self.description = None
-                self.rowcount = -1
-                self.lastrowid = None
-                self._has_result_set = False
-                mapped = NotSupportedError(str(exc))
-                if supports_transactions:
-                    self.connection.engine.restore(snapshot)
-                    raise mapped from exc
-                raise NotSupportedError(
-                    f"{mapped}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            except (KeyError, TypeError, IndexError) as exc:
-                self._results = []
-                self._index = 0
-                self.description = None
-                self.rowcount = -1
-                self.lastrowid = None
-                self._has_result_set = False
-                mapped = ProgrammingError(str(exc))
-                if supports_transactions:
-                    self.connection.engine.restore(snapshot)
-                    raise mapped from exc
-                raise ProgrammingError(
-                    f"{mapped}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            except OSError as exc:
-                self._results = []
-                self._index = 0
-                self.description = None
-                self.rowcount = -1
-                self.lastrowid = None
-                self._has_result_set = False
-                mapped = OperationalError(str(exc))
-                if supports_transactions:
-                    self.connection.engine.restore(snapshot)
-                    raise mapped from exc
-                raise OperationalError(
-                    f"{mapped}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
             except DatabaseError as exc:
-                self._results = []
-                self._index = 0
-                self.description = None
-                self.rowcount = -1
-                self.lastrowid = None
-                self._has_result_set = False
+                self._reset_state()
                 if supports_transactions:
                     self.connection.engine.restore(snapshot)
                     raise
@@ -202,17 +141,12 @@ class ExcelCursor:
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
             except Exception as exc:
-                self._results = []
-                self._index = 0
-                self.description = None
-                self.rowcount = -1
-                self.lastrowid = None
-                self._has_result_set = False
-                mapped = DatabaseError(str(exc))
+                self._reset_state()
+                mapped = _map_exception(exc)
                 if supports_transactions:
                     self.connection.engine.restore(snapshot)
                     raise mapped from exc
-                raise DatabaseError(
+                raise type(mapped)(
                     f"{mapped}. Backend '{backend_name}' does not support transactional "
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
