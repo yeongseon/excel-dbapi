@@ -869,6 +869,8 @@ def _parse_select(
 
     joins: List[Dict[str, Any]] = []
     known_source_refs: set[str] = {str(from_entry["table"]), str(from_entry["ref"])}
+    _known_refs: set[str] = {str(from_entry["ref"])}
+    _known_tables: set[str] = {str(from_entry["table"])}
     while token_index < len(tokens):
         join_token = tokens[token_index].upper()
         join_type: Optional[str] = None
@@ -941,7 +943,21 @@ def _parse_select(
                 token_index += 1
 
         right_sources = {str(join_source["table"]), str(join_source["ref"])}
-        collision = known_source_refs & right_sources
+        # Collision detection:
+        # 1. new ref vs known refs (duplicate alias)
+        # 2. new table vs known refs (table name shadows existing alias)
+        # 3. new ref vs known tables (alias shadows existing table name)
+        #    EXCEPT when it's the same physical table (self-join: FROM t a JOIN t b)
+        new_ref = str(join_source["ref"])
+        new_table = str(join_source["table"])
+        collision = (_known_refs & {new_ref}) | (_known_refs & {new_table})
+        # Check new ref vs known table names, but allow self-join
+        if new_ref != new_table:  # has alias, so ref != table
+            ref_vs_tables = _known_tables & {new_ref}
+            collision |= ref_vs_tables
+        else:  # no alias: ref == table
+            # Only collides if table name matches existing ref (non-table)
+            pass  # already covered by _known_refs check above
         if collision:
             raise ValueError(
                 f"Ambiguous table reference '{collision.pop()}' in JOIN; "
@@ -959,6 +975,8 @@ def _parse_select(
                 }
             )
             known_source_refs.update(right_sources)
+            _known_refs.add(new_ref)
+            _known_tables.add(new_table)
             continue
         else:
             if token_index >= len(tokens) or tokens[token_index].upper() != "ON":
@@ -984,6 +1002,8 @@ def _parse_select(
             }
         )
         known_source_refs.update(right_sources)
+        _known_refs.add(new_ref)
+        _known_tables.add(new_table)
 
     columns = _parse_columns(
         columns_token,
