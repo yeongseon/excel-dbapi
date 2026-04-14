@@ -86,12 +86,19 @@ class OpenpyxlBackend(WorkbookBackend):
         if first_row is None:
             return TableData(headers=[], rows=[])
 
-        headers = _normalize_headers(list(first_row))
+        # Trim trailing None/empty columns left by in-place column deletion.
+        raw_headers = list(first_row)
+        while raw_headers and (raw_headers[-1] is None or (isinstance(raw_headers[-1], str) and raw_headers[-1].strip() == "")):
+            raw_headers.pop()
+        if not raw_headers:
+            return TableData(headers=[], rows=[])
+        num_cols = len(raw_headers)
+        headers = _normalize_headers(raw_headers)
         table_rows: list[list[Any]] = []
         approx_bytes = sys.getsizeof(headers)
 
         for index, row in enumerate(row_iter, start=1):
-            row_values = list(row)
+            row_values = list(row)[:num_cols]
             table_rows.append(row_values)
             self._check_row_limit(sheet_name, index)
             approx_bytes += sys.getsizeof(row_values)
@@ -104,10 +111,25 @@ class OpenpyxlBackend(WorkbookBackend):
         ws = self.data.get(sheet_name)
         if ws is None:
             raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
-        ws.delete_rows(1, ws.max_row)
-        ws.append(data.headers)
-        for row in data.rows:
-            ws.append(row)
+        # Write in-place to preserve cell formatting (fonts, borders, fills).
+        # Step 1: Write header row.
+        for col_idx, header in enumerate(data.headers, start=1):
+            ws.cell(row=1, column=col_idx).value = header
+        # Clear extra header columns if the new header is narrower.
+        old_max_col = ws.max_column
+        for col_idx in range(len(data.headers) + 1, old_max_col + 1):
+            ws.cell(row=1, column=col_idx).value = None
+        # Step 2: Write data rows in-place.
+        for row_idx, row in enumerate(data.rows, start=2):
+            for col_idx, value in enumerate(row, start=1):
+                ws.cell(row=row_idx, column=col_idx).value = value
+            # Clear extra columns in this row.
+            for col_idx in range(len(row) + 1, old_max_col + 1):
+                ws.cell(row=row_idx, column=col_idx).value = None
+        # Step 3: Remove surplus rows (if data shrunk).
+        new_max_row = len(data.rows) + 1  # +1 for header
+        if ws.max_row > new_max_row:
+            ws.delete_rows(new_max_row + 1, ws.max_row - new_max_row)
 
     def append_row(self, sheet_name: str, row: list[Any]) -> int:
         ws = self.data.get(sheet_name)
