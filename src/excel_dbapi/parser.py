@@ -5059,7 +5059,7 @@ def _parse_compound(
 
 
 def _query_references_name(query: Dict[str, Any], name: str) -> bool:
-    lowered = name.lower()
+    lowered = name.casefold()
     action = str(query.get("action", "")).upper()
     if action == "COMPOUND":
         for branch in query.get("queries", []):
@@ -5071,7 +5071,7 @@ def _query_references_name(query: Dict[str, Any], name: str) -> bool:
         return False
 
     for source in _query_source_references(query):
-        if source.lower() == lowered:
+        if source.casefold() == lowered:
             return True
     return False
 
@@ -5100,7 +5100,7 @@ def _parse_with_query(
         cte_name = tokens[index]
         if not re.fullmatch(_IDENTIFIER_PATTERN, cte_name):
             raise ValueError(f"Invalid CTE name: {cte_name}")
-        lowered_name = cte_name.lower()
+        lowered_name = cte_name.casefold()
         if lowered_name in cte_names:
             raise ValueError(f"Duplicate CTE name: {cte_name}")
         cte_names.add(lowered_name)

@@ -825,7 +825,7 @@ class SharedExecutor:
             columns = parsed["columns"]
             seen: set[str] = set()
             for col in columns:
-                lower = col.lower()
+                lower = col.casefold()
                 if lower in seen:
                     raise ValueError(f"Duplicate column name '{col}' in CREATE TABLE")
                 seen.add(lower)
@@ -888,8 +888,8 @@ class SharedExecutor:
 
             if operation == "ADD_COLUMN":
                 col = parsed["column"]
-                if col in data.headers or col.lower() in {
-                    h.lower() for h in data.headers
+                if col in data.headers or col.casefold() in {
+                    h.casefold() for h in data.headers
                 }:
                     raise ValueError(f"Column '{col}' already exists in '{table}'")
                 data.headers.append(col)
@@ -3733,13 +3733,13 @@ class SharedExecutor:
 
     def _resolve_sheet_name(self, requested_name: str) -> str | None:
         sheets = self.backend.list_sheets()
-        lowered = {name.lower(): name for name in sheets}
-        return lowered.get(requested_name.lower())
+        lowered = {name.casefold(): name for name in sheets}
+        return lowered.get(requested_name.casefold())
 
     def _resolve_cte_name(self, requested_name: str) -> str | None:
-        lowered = requested_name.lower()
+        lowered = requested_name.casefold()
         for name in self._cte_tables:
-            if name.lower() == lowered:
+            if name.casefold() == lowered:
                 return name
         return None
 

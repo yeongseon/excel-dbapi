@@ -73,6 +73,7 @@ class ExcelCursor:
         self.description = None
         self.rowcount = -1
         self._has_result_set = False
+        self.lastrowid = None
         try:
             result: ExecutionResult = self.connection.execute(query, params)
         except ValueError as exc:

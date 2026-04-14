@@ -261,7 +261,7 @@ def _normalize_headers(raw: list[Any]) -> list[str]:
     seen: set[str] = set()
     lower_map: dict[str, str] = {}
     for h in headers:
-        key = h.lower()
+        key = h.casefold()
         if key in seen:
             raise DataError(
                 f"Duplicate header: {h!r} (conflicts with {lower_map[key]!r})"

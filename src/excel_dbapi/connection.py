@@ -23,6 +23,7 @@ from .executor import SharedExecutor
 from .engines.result import ExecutionResult
 from .exceptions import (
     DatabaseError,
+    Error,
     InterfaceError,
     NotSupportedError,
     OperationalError,
@@ -173,8 +174,9 @@ class ExcelConnection:
                 and isinstance(exc, InvalidFileException)
             ):
                 raise OperationalError(str(exc)) from exc
-            # Re-raise other unexpected exceptions
-            raise
+            if isinstance(exc, Error):
+                raise
+            raise OperationalError(str(exc)) from exc
 
         # Guard: non-transactional backends reject autocommit=False
         if not autocommit and not getattr(self.engine, "supports_transactions", True):

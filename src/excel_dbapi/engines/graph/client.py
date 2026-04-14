@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from ...exceptions import InterfaceError, OperationalError
+from ...exceptions import Error, InterfaceError, OperationalError
 from .auth import TokenProvider
 
 _BASE_URL = "https://graph.microsoft.com/v1.0"
@@ -92,8 +92,17 @@ class GraphClient:
     # -- internals -----------------------------------------------------------
 
     def _build_headers(self) -> dict[str, str]:
+        try:
+            token = self._token_provider.get_token()
+        except Exception as exc:
+            if isinstance(exc, Error):
+                raise
+            raise InterfaceError(
+                f"Failed to acquire authentication token: {exc}"
+            ) from exc
+
         headers: dict[str, str] = {
-            "Authorization": f"Bearer {self._token_provider.get_token()}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
         if self._session_id is not None:
