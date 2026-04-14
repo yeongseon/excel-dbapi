@@ -34,6 +34,7 @@ class PandasBackend(WorkbookBackend):
         )
         self._data_only = data_only
         self.data: dict[str, pd.DataFrame] = {}
+        self._pending_rows: dict[str, list[dict[str, Any]]] = {}
         self.load()
 
     def load(self) -> None:
@@ -81,7 +82,20 @@ class PandasBackend(WorkbookBackend):
                 continue
             raise DataError(f"Duplicate header detected in sheet '{sheet_name}'")
 
+    def _flush_pending(self, sheet_name: str) -> None:
+        """Flush buffered rows into the DataFrame with a single concat."""
+        pending = self._pending_rows.get(sheet_name)
+        if not pending:
+            return
+        frame = self.data[sheet_name]
+        self.data[sheet_name] = pd.concat(
+            [frame, pd.DataFrame(pending)], ignore_index=True
+        )
+        del self._pending_rows[sheet_name]
+
     def save(self) -> None:
+        for name in list(self._pending_rows):
+            self._flush_pending(name)
         directory = os.path.dirname(self.file_path) or "."
         temp_file = None
         try:
@@ -99,15 +113,19 @@ class PandasBackend(WorkbookBackend):
                 os.unlink(temp_file)
 
     def snapshot(self) -> dict[str, pd.DataFrame]:
+        for name in list(self._pending_rows):
+            self._flush_pending(name)
         return {name: frame.copy(deep=True) for name, frame in self.data.items()}
 
     def restore(self, snapshot: Any) -> None:
+        self._pending_rows.clear()
         self.data = {name: frame.copy(deep=True) for name, frame in snapshot.items()}
 
     def list_sheets(self) -> list[str]:
         return list(self.data.keys())
 
     def read_sheet(self, sheet_name: str) -> TableData:
+        self._flush_pending(sheet_name)
         frame = self.data.get(sheet_name)
         if frame is None:
             raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
@@ -130,6 +148,7 @@ class PandasBackend(WorkbookBackend):
         return TableData(headers=headers, rows=rows)
 
     def write_sheet(self, sheet_name: str, data: TableData) -> None:
+        self._pending_rows.pop(sheet_name, None)
         if sheet_name not in self.data:
             raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
         self.data[sheet_name] = pd.DataFrame(data.rows, columns=pd.Series(data.headers))
@@ -142,10 +161,9 @@ class PandasBackend(WorkbookBackend):
         for idx, col in enumerate(frame.columns):
             if idx < len(row):
                 row_data[col] = row[idx]
-        self.data[sheet_name] = pd.concat(
-            [frame, pd.DataFrame([row_data])], ignore_index=True
-        )
-        return len(self.data[sheet_name]) + 1
+        self._pending_rows.setdefault(sheet_name, []).append(row_data)
+        pending_count = len(self._pending_rows.get(sheet_name, []))
+        return len(frame) + pending_count + 1
 
     def create_sheet(self, name: str, headers: list[str]) -> None:
         if name in self.data:
@@ -153,6 +171,7 @@ class PandasBackend(WorkbookBackend):
         self.data[name] = pd.DataFrame(columns=pd.Series(headers))
 
     def drop_sheet(self, name: str) -> None:
+        self._pending_rows.pop(name, None)
         if name not in self.data:
             raise ValueError(f"Sheet '{name}' not found in Excel")
         del self.data[name]
