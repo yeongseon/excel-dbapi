@@ -121,6 +121,7 @@ with ExcelConnection("sample.xlsx") as conn:
 |--------|-------------|------------|
 | openpyxl (default) | Fast sheet access | openpyxl |
 | pandas | DataFrame-based operations | pandas, openpyxl |
+| graph | Microsoft Graph API (remote Excel) | msgraph-sdk |
 
 ```python
 conn = ExcelConnection("sample.xlsx", engine="openpyxl")  # default
@@ -136,8 +137,13 @@ conn = ExcelConnection("sample.xlsx", engine="pandas")
 | `IS NULL` / `IS NOT NULL` | `WHERE name IS NOT NULL` | NULL checks |
 | `IN` | `WHERE name IN ('Alice', 'Bob')` | Set membership |
 | `BETWEEN` | `WHERE score BETWEEN 70 AND 90` | Inclusive range |
-| `LIKE` | `WHERE name LIKE 'A%'` | Pattern matching |
-| `AND` / `OR` | `WHERE x = 1 AND y = 2` | Logical connectives |
+| `LIKE` / `ILIKE` | `WHERE name LIKE 'A%'` | Pattern matching (ILIKE = case-insensitive) |
+| `NOT LIKE` / `NOT ILIKE` | `WHERE name NOT LIKE 'A%'` | Negated pattern matching |
+| `NOT IN` | `WHERE id NOT IN (1, 2)` | Negated set membership |
+| `NOT BETWEEN` | `WHERE x NOT BETWEEN 1 AND 5` | Negated range |
+| `AND` / `OR` / `NOT` | `WHERE x = 1 AND y = 2` | Logical connectives |
+
+> **NULL semantics**: Comparisons with NULL follow SQL three-valued logic (TRUE / FALSE / UNKNOWN). `WHERE x = NULL` returns no rows; use `IS NULL` instead.
 
 **LIKE patterns:** `%` matches any sequence of characters, `_` matches any single character.
 

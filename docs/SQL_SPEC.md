@@ -34,6 +34,7 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `WHERE` | `BETWEEN` / `NOT BETWEEN` | ✅ | Inclusive bounds |
 | `WHERE` | `IN` / `NOT IN` (literal list) | ✅ | Empty list rejected |
 | `WHERE` | `LIKE` / `NOT LIKE` | ✅ | `%` and `_` wildcards |
+| `WHERE` | `ILIKE` / `NOT ILIKE` | ✅ | Case-insensitive pattern matching |
 | `WHERE` | `IS NULL` / `IS NOT NULL` | ✅ | |
 | `WHERE` | Subquery in `IN` / `NOT IN` | ✅ | Single-column `SELECT`; correlated/parameterized subqueries are rejected |
 | `JOIN` | `INNER`, `LEFT`, `RIGHT` | ✅ | Chained joins supported |
@@ -137,8 +138,9 @@ Supported:
 
 - Comparisons: `=`, `==`, `!=`, `<>`, `>`, `>=`, `<`, `<=`
 - Null checks: `IS NULL`, `IS NOT NULL`
-- Set/range/pattern: `IN`, `NOT IN`, `BETWEEN`, `NOT BETWEEN`, `LIKE`, `NOT LIKE`
+- Set/range/pattern: `IN`, `NOT IN`, `BETWEEN`, `NOT BETWEEN`, `LIKE`, `NOT LIKE`, `ILIKE`, `NOT ILIKE`
 - Logic: `AND`, `OR`, unary `NOT`, nested parentheses
+- **NULL semantics**: All comparisons follow SQL three-valued logic (TRUE / FALSE / UNKNOWN). Any comparison with NULL yields UNKNOWN, which is treated as FALSE in WHERE/HAVING/ON. Use `IS NULL` / `IS NOT NULL` for explicit NULL checks.
 - CASE expressions as operands
 
 Subquery form:

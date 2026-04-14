@@ -16,7 +16,7 @@ from .exceptions import InterfaceError, NotSupportedError, OperationalError
 #: Credential accepted by cloud backends.  Concrete forms:
 #: ``str`` (static token), ``TokenProvider`` protocol,
 #: azure-identity credential (``get_token(scope)``), or zero-arg callable.
-Credential = str | Callable[[], str] | object | None
+Credential = str | Callable[[], str] | None
 
 _MUTATING_ACTIONS = frozenset({"INSERT", "CREATE", "DROP", "UPDATE", "DELETE", "ALTER"})
 

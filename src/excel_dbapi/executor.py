@@ -3035,6 +3035,8 @@ class SharedExecutor:
             if row_value is None:
                 return None  # SQL UNKNOWN
             value = _resolve_operand(value, as_column=False)
+            if value is None:
+                return None  # SQL UNKNOWN — NULL pattern
             if not isinstance(value, str):
                 raise NotImplementedError("Unsupported LIKE pattern type")
             escape_value = condition.get("escape")

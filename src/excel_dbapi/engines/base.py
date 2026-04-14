@@ -59,6 +59,18 @@ class WorkbookBackend(ABC):
         return float(value)
 
     def _acquire_lock(self) -> None:
+        """Acquire an advisory PID-based file lock.
+
+        The lock is file-based: a ``<workbook>.lock`` file is created
+        containing the owning process's PID.  If a stale lock is detected
+        (PID no longer running), it is automatically cleared.
+
+        .. note::
+           This is **advisory locking** — it relies solely on PID
+           existence checks and does not verify hostname or process
+           start time.  In environments with rapid PID reuse, a stale
+           lock may incorrectly appear active.
+        """
         from ..exceptions import OperationalError
 
         if not self._file_locking_enabled or self._lock_fd is not None:

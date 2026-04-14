@@ -1098,3 +1098,71 @@ class TestThreeValuedLogic:
             cur = conn.cursor()
             cur.execute("SELECT id FROM data WHERE NOT (x IS NULL)")
             assert cur.fetchall() == [(2,)]
+
+
+class TestLikeNullSemantics:
+    """LIKE/NOT LIKE/ILIKE/NOT ILIKE with NULL pattern must return UNKNOWN."""
+
+    @staticmethod
+    def _make_workbook(tmp_path: Path) -> Path:
+        f = tmp_path / "like_null.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "data"
+        ws.append(["id", "name"])
+        ws.append([1, "alice"])
+        ws.append([2, None])
+        ws.append([3, "bob"])
+        wb.save(str(f))
+        return f
+
+    def test_like_null_pattern(self, tmp_path: Path) -> None:
+        """name LIKE NULL → UNKNOWN for all rows → no rows returned."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE name LIKE NULL")
+            assert cur.fetchall() == []
+
+    def test_not_like_null_pattern(self, tmp_path: Path) -> None:
+        """name NOT LIKE NULL → UNKNOWN → no rows returned."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE name NOT LIKE NULL")
+            assert cur.fetchall() == []
+
+    def test_ilike_null_pattern(self, tmp_path: Path) -> None:
+        """name ILIKE NULL → UNKNOWN → no rows returned."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE name ILIKE NULL")
+            assert cur.fetchall() == []
+
+    def test_not_ilike_null_pattern(self, tmp_path: Path) -> None:
+        """name NOT ILIKE NULL → UNKNOWN → no rows returned."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE name NOT ILIKE NULL")
+            assert cur.fetchall() == []
+
+    def test_like_null_value_and_null_pattern(self, tmp_path: Path) -> None:
+        """NULL LIKE NULL → UNKNOWN → no rows (both sides null)."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            # row 2 has name=NULL; pattern is also NULL → UNKNOWN
+            cur.execute("SELECT id FROM data WHERE name LIKE NULL")
+            # All rows get UNKNOWN, none returned
+            assert cur.fetchall() == []
+
+    def test_like_param_null(self, tmp_path: Path) -> None:
+        """LIKE ? with None parameter → UNKNOWN → no rows."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE name LIKE ?", [None])
+            assert cur.fetchall() == []
