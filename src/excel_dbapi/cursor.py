@@ -39,6 +39,8 @@ def check_closed(
     def wrapper(self: "ExcelCursor", *args: P.args, **kwargs: P.kwargs) -> R:
         if self.closed:
             raise InterfaceError("Cursor is already closed")
+        if self.connection.closed:
+            raise ProgrammingError("Cannot operate on a closed connection")
         return func(self, *args, **kwargs)
 
     return cast(Callable[Concatenate["ExcelCursor", P], R], wrapper)
@@ -65,9 +67,12 @@ class ExcelCursor:
         self._has_result_set = False
 
     @check_closed
-    def execute(
-        self, query: str, params: Optional[tuple[Any, ...]] = None
-    ) -> "ExcelCursor":
+    def execute(self, query: str, params: Sequence[Any] | None = None) -> "ExcelCursor":
+        self._results = []
+        self._index = 0
+        self.description = None
+        self.rowcount = -1
+        self._has_result_set = False
         try:
             result: ExecutionResult = self.connection.execute(query, params)
         except ValueError as exc:

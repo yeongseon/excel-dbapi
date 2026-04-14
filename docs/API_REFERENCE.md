@@ -41,7 +41,7 @@ PEP 249-style connection object (`excel_dbapi.connection.ExcelConnection`).
 ### Methods
 
 - `cursor() -> ExcelCursor`
-- `execute(query: str, params: tuple[Any, ...] | None = None) -> ExecutionResult`
+- `execute(query: str, params: Sequence[Any] | None = None) -> ExecutionResult`
 - `commit() -> None`
 - `rollback() -> None`
 - `close() -> None`
@@ -69,7 +69,7 @@ PEP 249-style cursor object (`excel_dbapi.cursor.ExcelCursor`).
 
 ### Methods
 
-- `execute(query: str, params: tuple[Any, ...] | None = None) -> ExcelCursor`
+- `execute(query: str, params: Sequence[Any] | None = None) -> ExcelCursor`
 - `executemany(query: str, seq_of_params: Iterable[Sequence[Any]]) -> ExcelCursor`
 - `fetchone() -> tuple[Any, ...] | None`
 - `fetchall() -> list[tuple[Any, ...]]`

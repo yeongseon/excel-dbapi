@@ -43,6 +43,7 @@
 - Additional backend options (e.g., Polars-based engine)
 - Performance tuning for large-sheet scans and join-heavy queries
 - Documentation and example expansion around advanced SQL patterns
+- Identifier grammar expansion (quoted identifiers and non-ASCII table/column references)
 
 ---
 

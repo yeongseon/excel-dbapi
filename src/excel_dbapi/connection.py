@@ -1,6 +1,6 @@
-import os
 import importlib
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Sequence
 from functools import wraps
 from pathlib import Path
 from types import TracebackType
@@ -190,11 +190,12 @@ class ExcelConnection:
 
     @check_closed
     def execute(
-        self, query: str, params: Optional[tuple[Any, ...]] = None
+        self, query: str, params: Sequence[Any] | None = None
     ) -> ExecutionResult:
         try:
             self._ensure_write_lock_for_query(query)
-            result = self._executor.execute_with_params(query, params)
+            normalized_params = tuple(params) if params is not None else None
+            result = self._executor.execute_with_params(query, normalized_params)
             self._finalize_autocommit(result.action)
             return result
         except ValueError as exc:

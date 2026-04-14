@@ -29,6 +29,8 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `SELECT` | Window functions (`OVER (...)`) | ⚠️ Experimental | Core support for `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` |
 | `SELECT` | CTEs (`WITH`) | ⚠️ Experimental | Non-recursive CTEs only |
 | `FROM` | Table aliases | ✅ | Base table and JOIN sources |
+| Identifiers | Unquoted table/column names | ✅ | Must match `[A-Za-z_][A-Za-z0-9_]*` |
+| Identifiers | Quoted / spaced / non-ASCII identifiers | ❌ | Not currently supported for table/column references |
 | `WHERE` | Comparison operators | ✅ | `= == != <> > >= < <=` |
 | `WHERE` | Boolean logic | ✅ | `AND`, `OR`, `NOT`, nested parentheses |
 | `WHERE` | `BETWEEN` / `NOT BETWEEN` | ✅ | Inclusive bounds |
@@ -199,6 +201,8 @@ Subquery limitations:
 - `RETURNING`
 - `CREATE INDEX` / `DROP INDEX`
 - `INTERSECT ALL` / `EXCEPT ALL`
+- Quoted identifiers for table/column references (for example `"full name"`)
+- Unquoted non-ASCII identifiers in SQL grammar
 
 ---
 
