@@ -367,7 +367,8 @@ class TestGraphConnectionCreateDrop:
     def test_drop_table(self):
         conn, state = _make_rw_connection()
         cursor = conn.cursor()
-        cursor.execute("DROP TABLE Employees")
+        cursor.execute("CREATE TABLE TempDrop (id)")
+        cursor.execute("DROP TABLE TempDrop")
         delete_reqs = [
             r for r in state["requests"] if r[0] == "DELETE" and "/worksheets/" in r[1]
         ]

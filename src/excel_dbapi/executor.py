@@ -283,6 +283,10 @@ class SharedExecutor:
             if parsed.get("joins") is not None:
                 return self._execute_join_select(action, parsed, selected_table, selected_data)
             if not selected_data.headers:
+                if parsed.get("columns") != ["*"]:
+                    raise ValueError(
+                        f"No columns defined in sheet '{selected_table}' — cannot resolve column references"
+                    )
                 return ExecutionResult(
                     action=action, rows=[], description=[], rowcount=0, lastrowid=None
                 )
@@ -316,8 +320,8 @@ class SharedExecutor:
                 raise ValueError(msg)
             table_data = self.backend.read_sheet(resolved_table)
             if not table_data.headers:
-                return ExecutionResult(
-                    action=action, rows=[], description=[], rowcount=0, lastrowid=None
+                raise ValueError(
+                    f"No columns defined in sheet '{resolved_table}' — cannot resolve column references"
                 )
             headers = list(table_data.headers)
             updates = parsed["set"]
@@ -392,6 +396,11 @@ class SharedExecutor:
                 raise ValueError(msg)
             table_data = self.backend.read_sheet(resolved_table)
             if not table_data.headers:
+                where = parsed.get("where")
+                if where and self._collect_where_column_refs(where):
+                    raise ValueError(
+                        f"No columns defined in sheet '{resolved_table}' — cannot resolve column references"
+                    )
                 return ExecutionResult(
                     action=action, rows=[], description=[], rowcount=0, lastrowid=None
                 )
@@ -643,6 +652,8 @@ class SharedExecutor:
         if action == "DROP":
             if resolved_table is None:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
+            if len(self.backend.list_sheets()) <= 1:
+                raise ValueError("Cannot drop the only remaining sheet")
             self.backend.drop_sheet(resolved_table)
             return ExecutionResult(
                 action=action,

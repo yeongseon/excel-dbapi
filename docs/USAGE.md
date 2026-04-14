@@ -36,10 +36,11 @@ excel-dbapi implements a deliberate subset of SQL. For the complete formal gramm
 - **DELETE FROM** with WHERE
 - **CREATE TABLE**, **DROP TABLE**
 
-### Excluded by Design
+### Notes
 
-JOIN, GROUP BY, HAVING, DISTINCT, OFFSET, subqueries, CTEs, and aggregate functions
-are not supported. See [Limitations](#limitations) below.
+JOINs, GROUP BY/HAVING, DISTINCT, OFFSET, subqueries, CTEs, and aggregate functions
+are supported. See [SQL_SPEC.md](SQL_SPEC.md) for precise behavior and edge-case
+limits.
 
 ## Write Operations
 
@@ -105,7 +106,8 @@ with ExcelConnection("sample.xlsx") as conn:
 
 - `PandasEngine` rewrites workbooks and may drop formatting, charts, and formulas.
 - `OpenpyxlEngine` loads with `data_only=True`, so formulas are evaluated to values when reading.
-- SQL subset deliberately excludes JOIN, GROUP BY, HAVING, DISTINCT, and subqueries.
+- Some advanced SQL patterns remain limited; see [SQL_SPEC.md](SQL_SPEC.md) for the
+  exact supported subset and restrictions.
 - No concurrent write support — use a single-writer model.
 - Rollback restores an in-memory snapshot, not a durable transaction log.
 

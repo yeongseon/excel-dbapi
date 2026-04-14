@@ -16,6 +16,8 @@ class GraphWorkbookLocator:
     @property
     def item_path(self) -> str:
         """Graph API path segment for this workbook."""
+        if self.drive_id == "me":
+            return f"/me/drive/items/{self.item_id}"
         return f"/drives/{self.drive_id}/items/{self.item_id}"
 
 

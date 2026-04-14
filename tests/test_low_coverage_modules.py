@@ -95,15 +95,15 @@ def test_executor_error_paths_and_utility_paths() -> None:
             }
         )
 
-    update_empty = executor.execute(
-        {
-            "action": "UPDATE",
-            "table": "Empty",
-            "set": [{"column": "name", "value": "B"}],
-            "where": None,
-        }
-    )
-    assert update_empty.rowcount == 0
+    with pytest.raises(ValueError, match="No columns defined in sheet 'Empty'"):
+        executor.execute(
+            {
+                "action": "UPDATE",
+                "table": "Empty",
+                "set": [{"column": "name", "value": "B"}],
+                "where": None,
+            }
+        )
 
     with pytest.raises(ValueError, match="Unknown column"):
         executor.execute(
@@ -250,7 +250,7 @@ def test_cursor_paths_for_executemany_and_fetch() -> None:
         def _finalize_autocommit(self, action: str) -> None:
             pass
 
-    cursor = ExcelCursor(FakeConnection())
+    cursor = ExcelCursor(cast(Any, FakeConnection()))
     with pytest.raises(NotSupportedError):
         cursor.executemany("SELECT 1", [(1,)])
     assert cursor.fetchone() is None

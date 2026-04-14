@@ -250,7 +250,7 @@ The sheet name in your SQL doesn't match any sheet in the workbook.
 ProgrammingError: Table 'Shee1' not found. Available sheets: ['Sheet1', 'Sheet2']
 ```
 
-**Fix:** Check the sheet name spelling. Use the exact sheet name (case-sensitive) shown in your Excel file.
+**Fix:** Check the sheet name spelling. Sheet names are resolved case-insensitively.
 
 ### PandasEngine drops formatting
 

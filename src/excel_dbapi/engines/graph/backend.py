@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from typing import Any, cast
+from urllib.parse import quote
 
 import httpx
 
@@ -37,6 +38,10 @@ def _col_letter(index: int) -> str:
         if n < 0:
             break
     return result
+
+
+def _encode_path_segment(value: str) -> str:
+    return quote(value, safe="")
 
 
 class GraphBackend(WorkbookBackend):
@@ -159,7 +164,7 @@ class GraphBackend(WorkbookBackend):
 
         path = (
             f"{self._locator.item_path}/workbook"
-            f"/worksheets/{ws_id}/usedRange(valuesOnly=true)?$select=values"
+            f"/worksheets/{_encode_path_segment(ws_id)}/usedRange(valuesOnly=true)?$select=values"
         )
         resp = self._session_aware_request("GET", path)
         values = resp.json().get("values", [])
@@ -225,7 +230,7 @@ class GraphBackend(WorkbookBackend):
             address = f"A1:{last_col}{new_row_count}"
             patch_path = (
                 f"{self._locator.item_path}/workbook"
-                f"/worksheets/{ws_id}/range(address='{address}')"
+                f"/worksheets/{_encode_path_segment(ws_id)}/range(address='{address}')"
             )
             self._session_aware_request("PATCH", patch_path, json={"values": matrix})
 
@@ -236,7 +241,7 @@ class GraphBackend(WorkbookBackend):
             tail_address = f"A{tail_start}:{tail_last_col}{old_row_count}"
             clear_path = (
                 f"{self._locator.item_path}/workbook"
-                f"/worksheets/{ws_id}/range(address='{tail_address}')/clear"
+                f"/worksheets/{_encode_path_segment(ws_id)}/range(address='{tail_address}')/clear"
             )
             self._session_aware_request("POST", clear_path, json={"applyTo": "Contents"})
 
@@ -246,7 +251,7 @@ class GraphBackend(WorkbookBackend):
             right_address = f"{right_start_col}1:{right_end_col}{new_row_count}"
             clear_right_path = (
                 f"{self._locator.item_path}/workbook"
-                f"/worksheets/{ws_id}/range(address='{right_address}')/clear"
+                f"/worksheets/{_encode_path_segment(ws_id)}/range(address='{right_address}')/clear"
             )
             self._session_aware_request(
                 "POST", clear_right_path, json={"applyTo": "Contents"}
@@ -291,7 +296,7 @@ class GraphBackend(WorkbookBackend):
             address = f"A{start_row}:{last_col}{end_row}"
             patch_path = (
                 f"{self._locator.item_path}/workbook"
-                f"/worksheets/{ws_id}/range(address='{address}')"
+                f"/worksheets/{_encode_path_segment(ws_id)}/range(address='{address}')"
             )
             self._session_aware_request("PATCH", patch_path, json={"values": values})
         return True
@@ -327,7 +332,7 @@ class GraphBackend(WorkbookBackend):
             address = f"A{start_row}:{last_col}{end_row}"
             delete_path = (
                 f"{self._locator.item_path}/workbook"
-                f"/worksheets/{ws_id}/range(address='{address}')/delete"
+                f"/worksheets/{_encode_path_segment(ws_id)}/range(address='{address}')/delete"
             )
             self._session_aware_request("POST", delete_path, json={"shift": "Up"})
         return True
@@ -404,7 +409,7 @@ class GraphBackend(WorkbookBackend):
         address = f"A{next_row}:{last_col}{next_row}"
         patch_path = (
             f"{self._locator.item_path}/workbook"
-            f"/worksheets/{ws_id}/range(address='{address}')"
+            f"/worksheets/{_encode_path_segment(ws_id)}/range(address='{address}')"
         )
         self._session_aware_request("PATCH", patch_path, json={"values": row_values})
         return next_row
@@ -427,7 +432,7 @@ class GraphBackend(WorkbookBackend):
             address = f"A1:{last_col}1"
             header_path = (
                 f"{self._locator.item_path}/workbook"
-                f"/worksheets/{ws_id}/range(address='{address}')"
+                f"/worksheets/{_encode_path_segment(ws_id)}/range(address='{address}')"
             )
             self._session_aware_request(
                 "PATCH", header_path, json={"values": [headers]}
@@ -445,7 +450,9 @@ class GraphBackend(WorkbookBackend):
         if ws_id is None:
             raise ValueError(f"Sheet '{name}' not found in Excel")
 
-        delete_path = f"{self._locator.item_path}/workbook/worksheets/{ws_id}"
+        delete_path = (
+            f"{self._locator.item_path}/workbook/worksheets/{_encode_path_segment(ws_id)}"
+        )
         self._session_aware_request("DELETE", delete_path)
 
         # Invalidate cache
@@ -583,7 +590,7 @@ class GraphBackend(WorkbookBackend):
         """Return raw values matrix from usedRange, or empty list."""
         path = (
             f"{self._locator.item_path}/workbook"
-            f"/worksheets/{ws_id}/usedRange(valuesOnly=true)?$select=values"
+            f"/worksheets/{_encode_path_segment(ws_id)}/usedRange(valuesOnly=true)?$select=values"
         )
         resp = self._session_aware_request("GET", path)
         return cast(list[list[Any]], resp.json().get("values", []))

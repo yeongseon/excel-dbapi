@@ -121,7 +121,12 @@ def write_table_metadata(
         )
 
     existing = engine.read_sheet(METADATA_SHEET)
-    new_rows = [row for row in existing.rows if row[0] != table_name]
+    table_name_key = table_name.casefold()
+    new_rows = [
+        row
+        for row in existing.rows
+        if not row or str(row[0]).casefold() != table_name_key
+    ]
 
     for index, column in enumerate(columns):
         type_name = column.get("type_name", column.get("type", "TEXT"))
@@ -161,7 +166,12 @@ def read_table_metadata(
         return None
 
     data = connection.engine.read_sheet(METADATA_SHEET)
-    entries = [row for row in data.rows if row[0] == table_name]
+    table_name_key = table_name.casefold()
+    entries = [
+        row
+        for row in data.rows
+        if row and str(row[0]).casefold() == table_name_key
+    ]
     if not entries:
         return None
 
@@ -185,7 +195,12 @@ def remove_table_metadata(connection: ExcelConnection, table_name: str) -> None:
         return
 
     data = connection.engine.read_sheet(METADATA_SHEET)
-    new_rows = [row for row in data.rows if row[0] != table_name]
+    table_name_key = table_name.casefold()
+    new_rows = [
+        row
+        for row in data.rows
+        if not row or str(row[0]).casefold() != table_name_key
+    ]
 
     connection.engine.write_sheet(
         METADATA_SHEET,

@@ -244,6 +244,38 @@ class TestGraphBackendReadSheet:
         assert len(data.rows) == 1
         assert data.rows[0] == [101, 1, 99.99]
 
+    def test_read_sheet_url_encodes_worksheet_id(self):
+        requests: list[tuple[str, bytes]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            requests.append((path, request.url.raw_path))
+            if path.endswith("/createSession"):
+                return httpx.Response(201, json={"id": "sess-mock"})
+            if path.endswith("/closeSession"):
+                return httpx.Response(204)
+            if path.endswith("/worksheets") or "/worksheets?" in str(request.url):
+                return httpx.Response(
+                    200,
+                    json={"value": [{"id": "{ws-1}", "name": "Users"}]},
+                )
+            if "usedRange" in path:
+                return httpx.Response(200, json={"values": [["id"], [1]]})
+            return httpx.Response(404)
+
+        backend = GraphBackend(
+            DSN,
+            credential="test-token",
+            transport=httpx.MockTransport(handler),
+        )
+        data = backend.read_sheet("Users")
+        backend.close()
+
+        assert data.headers == ["id"]
+        used_range_paths = [raw for path, raw in requests if "usedRange" in path]
+        assert len(used_range_paths) == 1
+        assert b"/worksheets/%7Bws-1%7D/usedRange" in used_range_paths[0]
+
     def test_read_unknown_sheet(self):
         backend = _make_backend()
         with pytest.raises(ValueError, match="not found"):

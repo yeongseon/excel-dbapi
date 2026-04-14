@@ -13,8 +13,8 @@ All notable changes to this project will be documented in this file.
 - JOIN source collision checks now track all previously introduced table references
 - JOIN ON validation now allows references to any previously joined source plus the current right source
 
-### Rejected (by design)
-- FULL OUTER JOIN and CROSS JOIN remain unsupported
+### Supported
+- FULL OUTER JOIN and CROSS JOIN are supported
 
 ## [0.4.1] - 2026-04-13
 

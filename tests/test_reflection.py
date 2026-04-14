@@ -243,3 +243,35 @@ def test_write_metadata_accepts_legacy_type_key(tmp_path: Path) -> None:
             "primary_key": True,
         }
     ]
+
+
+def test_table_metadata_operations_are_case_insensitive(tmp_path: Path) -> None:
+    file_path = tmp_path / "reflection-metadata-case-insensitive.xlsx"
+    _make_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        write_table_metadata(
+            conn,
+            "People",
+            [
+                {
+                    "name": "id",
+                    "type_name": "INTEGER",
+                    "nullable": False,
+                    "primary_key": True,
+                }
+            ],
+        )
+
+        metadata = read_table_metadata(conn, "people")
+        assert metadata == [
+            {
+                "name": "id",
+                "type_name": "INTEGER",
+                "nullable": False,
+                "primary_key": True,
+            }
+        ]
+
+        remove_table_metadata(conn, "PEOPLE")
+        assert read_table_metadata(conn, "People") is None

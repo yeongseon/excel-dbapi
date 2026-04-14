@@ -36,8 +36,8 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `WHERE` | `LIKE` / `NOT LIKE` | ✅ | `%` and `_` wildcards |
 | `WHERE` | `ILIKE` / `NOT ILIKE` | ✅ | Case-insensitive pattern matching |
 | `WHERE` | `IS NULL` / `IS NOT NULL` | ✅ | |
-| `WHERE` | Subquery in `IN` / `NOT IN` | ✅ | Single-column `SELECT`; correlated/parameterized subqueries are rejected |
-| `WHERE` | `EXISTS (SELECT ...)` | ✅ | Non-correlated subquery existence check |
+| `WHERE` | Subquery in `IN` / `NOT IN` | ✅ | Single-column `SELECT`; non-correlated only |
+| `WHERE` | `EXISTS (SELECT ...)` | ✅ | Correlated and non-correlated supported |
 | Expressions | `CAST(expr AS type)` | ✅ | Type coercion in SELECT and WHERE |
 | Expressions | Scalar functions | ✅ | `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTR`, `COALESCE`, `ABS`, `ROUND`, `REPLACE` |
 | Aggregation | `FILTER (WHERE ...)` | ✅ | Per-aggregate filtering clause |
@@ -157,7 +157,7 @@ Subquery limitations:
 
 - Must return exactly one column.
 - No `JOIN`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, `OFFSET` in the subquery.
-- Correlated references are rejected.
+- Correlated subqueries: `EXISTS` only (`IN`/scalar: non-correlated only).
 - No placeholders inside the subquery.
 
 ---

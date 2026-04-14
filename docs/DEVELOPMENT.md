@@ -84,7 +84,7 @@ make cov
 .venv/bin/python -m pytest tests/test_parser.py::test_select_basic -v
 ```
 
-Test coverage target: **95%+** (currently 98%).
+Test coverage target: **95%+** (see latest CI report for current percentage).
 
 ## Project Structure
 
@@ -102,7 +102,7 @@ excel-dbapi/
 │   ├── engines/             # Backend engine implementations
 │   ├── openpyxl/            # Openpyxl-specific engine
 │   └── py.typed             # PEP 561 marker
-├── tests/                   # 397 tests (98% coverage)
+├── tests/                   # 1,187+ tests (coverage tracked in CI)
 ├── docs/
 │   ├── SQL_SPEC.md          # Formal SQL grammar (EBNF)
 │   ├── USAGE.md             # Usage guide
@@ -120,7 +120,7 @@ excel-dbapi/
 
 ## Release Process
 
-sqlalchemy-excel uses **GitHub Releases** with **Trusted Publisher (OIDC)** for PyPI publishing. No API token required.
+excel-dbapi uses **GitHub Releases** with **Trusted Publisher (OIDC)** for PyPI publishing. No API token required.
 
 ### Steps
 

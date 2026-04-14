@@ -10,6 +10,10 @@ class TestGraphWorkbookLocator:
         loc = GraphWorkbookLocator(drive_id="drv-1", item_id="itm-2")
         assert loc.item_path == "/drives/drv-1/items/itm-2"
 
+    def test_item_path_for_onedrive_me(self):
+        loc = GraphWorkbookLocator(drive_id="me", item_id="itm-2")
+        assert loc.item_path == "/me/drive/items/itm-2"
+
     def test_frozen(self):
         loc = GraphWorkbookLocator(drive_id="d", item_id="i")
         with pytest.raises(AttributeError):

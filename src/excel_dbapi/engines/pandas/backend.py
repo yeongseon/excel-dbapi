@@ -32,7 +32,9 @@ class PandasBackend(WorkbookBackend):
         self.load()
 
     def load(self) -> None:
-        if self.create and not os.path.exists(self.file_path):
+        if self.create and (
+            not os.path.exists(self.file_path) or os.path.getsize(self.file_path) == 0
+        ):
             from openpyxl import Workbook
 
             wb = Workbook()

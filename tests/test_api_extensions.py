@@ -16,6 +16,7 @@ def tmp_xlsx(tmp_path):
     path = str(tmp_path / "sample.xlsx")
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Sheet1"
     ws.append(["id", "name", "value"])
     ws.append([1, "Alice", 100])
@@ -30,6 +31,7 @@ def tmp_xlsx_with_formula(tmp_path):
     path = str(tmp_path / "formula.xlsx")
     wb = Workbook()
     ws = wb.active
+    assert ws is not None
     ws.title = "Sheet1"
     ws.append(["a", "b", "total"])
     ws["A2"] = 10
@@ -85,6 +87,15 @@ class TestCreateFlag:
         assert not os.path.exists(nonexistent_path)
         conn = ExcelConnection(nonexistent_path, engine="pandas", create=True)
         assert os.path.exists(nonexistent_path)
+        conn.close()
+
+    def test_create_true_zero_byte_file_pandas(self, tmp_path):
+        file_path = tmp_path / "zero-byte.xlsx"
+        file_path.write_bytes(b"")
+
+        conn = ExcelConnection(str(file_path), engine="pandas", create=True)
+        assert file_path.exists()
+        assert file_path.stat().st_size > 0
         conn.close()
 
     def test_create_via_connect_function(self, nonexistent_path):

@@ -16,7 +16,7 @@ def test_parse_onedrive_me_locator() -> None:
     locator = parse_msgraph_dsn("onedrive://me/drive/items/itm-me")
     assert locator.drive_id == "me"
     assert locator.item_id == "itm-me"
-    assert locator.item_path == "/drives/me/items/itm-me"
+    assert locator.item_path == "/me/drive/items/itm-me"
 
 
 @pytest.mark.parametrize(
