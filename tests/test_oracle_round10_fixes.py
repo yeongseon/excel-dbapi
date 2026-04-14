@@ -4,7 +4,7 @@ import pytest
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
-from excel_dbapi.exceptions import ProgrammingError
+from excel_dbapi.exceptions import InterfaceError, ProgrammingError
 
 
 def _create_workbook(
@@ -39,7 +39,7 @@ def test_fetchone_raises_after_connection_close(tmp_path: Path) -> None:
     cursor.execute("SELECT id, name FROM people")
     conn.close()
 
-    with pytest.raises(ProgrammingError, match="Cannot operate on a closed connection"):
+    with pytest.raises(InterfaceError, match="Cannot operate on a closed connection"):
         cursor.fetchone()
 
 

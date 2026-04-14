@@ -40,7 +40,7 @@ def check_closed(
         if self.closed:
             raise InterfaceError("Cursor is already closed")
         if self.connection.closed:
-            raise ProgrammingError("Cannot operate on a closed connection")
+            raise InterfaceError("Cannot operate on a closed connection")
         return func(self, *args, **kwargs)
 
     return cast(Callable[Concatenate["ExcelCursor", P], R], wrapper)
