@@ -129,6 +129,26 @@ conn = ExcelConnection("sample.xlsx", engine="openpyxl")  # default
 conn = ExcelConnection("sample.xlsx", engine="pandas")
 ```
 
+### Engine Capability Matrix
+
+| Capability | openpyxl | pandas | graph |
+|---|---|---|---|
+| Read support | ✅ | ✅ | ✅ |
+| Write support | ✅ | ✅ | ✅ (opt-in, `readonly=False`) |
+| Preserves formatting/charts/images | ✅ | ❌ (rewrites workbook) | ✅ (updates cell values only) |
+| Transactions (commit/rollback) | ✅ (in-memory snapshot) | ✅ (in-memory snapshot) | ❌ (writes are immediate) |
+| `data_only=False` (read formulas) | ✅ | ❌ | ❌ |
+| File locking | ✅ (advisory PID-based) | ✅ (advisory PID-based) | N/A (remote) |
+| Remote/cloud access | ❌ | ❌ | ✅ (Microsoft Graph) |
+| `get_workbook()` access | ✅ | ❌ | ❌ |
+| Formula injection defense | ✅ (default on) | ✅ (default on) | ✅ (default on) |
+
+Choose **openpyxl** (default) for local files where you need formatting preservation and formula access.
+Choose **pandas** when you prefer DataFrame-based workflows and don't need formatting.
+Choose **graph** for remote Excel on OneDrive/SharePoint via Microsoft Graph API.
+
+For detailed engine comparison, see the [Usage Guide — Engine Comparison](docs/USAGE.md#engine-comparison).
+
 ### WHERE Operators
 
 | Operator | Example | Description |

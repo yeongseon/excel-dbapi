@@ -138,6 +138,13 @@ class ExcelConnection:
                 DeprecationWarning,
                 stacklevel=2,
             )
+            warnings.warn(
+                "The pandas engine rewrites workbooks on save. "
+                "Formatting, charts, images, and formulas will be dropped. "
+                "Use engine='openpyxl' if you need to preserve these.",
+                UserWarning,
+                stacklevel=2,
+            )
 
         # ── File existence check (local files only) ─────────────
         is_dsn = resolve_engine_from_dsn(file_path) is not None

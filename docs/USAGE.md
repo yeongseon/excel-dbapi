@@ -146,6 +146,89 @@ with ExcelConnection("sample.xlsx") as conn:
     print(cursor.fetchall())
 ```
 
+## Engine Comparison
+
+excel-dbapi ships three backends. They share the same SQL interface but differ in
+storage model, feature coverage, and operational trade-offs.
+
+### Quick Reference
+
+| Capability | openpyxl (default) | pandas | graph |
+|---|---|---|---|
+| **Read** | ✅ local `.xlsx` | ✅ local `.xlsx` | ✅ remote (Microsoft Graph) |
+| **Write** | ✅ | ✅ | ✅ opt-in (`readonly=False`) |
+| **Preserves formatting** | ✅ | ❌ rewrites workbook | ✅ updates values only |
+| **Transactions** | ✅ commit / rollback (in-memory snapshot) | ✅ commit / rollback (in-memory snapshot) | ❌ writes are immediate |
+| **`data_only=False`** | ✅ read raw formulas | ❌ raises `NotSupportedError` | ❌ raises `NotSupportedError` |
+| **File locking** | ✅ advisory PID-based `.lock` file | ✅ advisory PID-based `.lock` file | N/A (remote; uses ETag concurrency) |
+| **`get_workbook()`** | ✅ returns openpyxl `Workbook` | ❌ raises `NotSupportedError` | ❌ |
+| **Remote access** | ❌ local only | ❌ local only | ✅ OneDrive / SharePoint |
+| **Formula injection defense** | ✅ on by default | ✅ on by default | ✅ on by default |
+| **Dependency** | `openpyxl` | `pandas`, `openpyxl` | `httpx` |
+
+### openpyxl (default)
+
+The openpyxl backend loads a `.xlsx` workbook via `openpyxl.load_workbook()` and
+operates on the live `Workbook` object. It preserves formatting, charts, images, and
+comments through load/save cycles (subject to openpyxl's own format support).
+
+- **Atomic saves**: writes to a temp file then replaces the target with `os.replace()`.
+- **Snapshot rollback**: `snapshot()` serialises the workbook into a `BytesIO` buffer;
+  `restore()` reloads from the buffer. This is an in-memory snapshot, not a WAL.
+- **Formula access**: set `data_only=False` on the connection to read formula text
+  instead of cached values.
+- **Direct workbook access**: `connection.workbook` returns the openpyxl `Workbook`
+  for direct styling, data-validation, or chart manipulation.
+- **Best for**: local workflows that need formatting preservation, formula access, or
+  direct workbook manipulation.
+
+### pandas
+
+The pandas backend reads all sheets into `pandas.DataFrame` objects via `pd.read_excel()`
+and writes them back with `pd.ExcelWriter` (engine=`"openpyxl"`).
+
+- **Workbook rewrite**: every `save()` rebuilds the workbook from DataFrames.
+  **Formatting, charts, images, comments, and formulas are dropped.**
+- **No formula access**: `data_only=False` raises `NotSupportedError`.
+- **No `get_workbook()`**: `get_workbook()` raises `NotSupportedError` because
+  there is no persistent openpyxl `Workbook` object.
+- **Type fidelity**: pandas preserves Python types on read. `WHERE id = '2'`
+  (string) will not match an integer column — use `WHERE id = 2`.
+- **Best for**: DataFrame-centric pipelines where you do not need formatting or formulas.
+
+### graph
+
+The graph backend accesses remote Excel workbooks on OneDrive / SharePoint via the
+Microsoft Graph API.
+
+- **Read-only by default**: pass `readonly=False` via backend options to enable writes.
+- **Immediate persistence**: writable sessions use `persistChanges=true`. Changes are
+  applied to the remote workbook immediately and **cannot be rolled back**.
+- **Non-transactional**: `supports_transactions` is `False`. `autocommit=False` raises
+  `NotSupportedError`. `rollback()` is not available.
+- **No formula access**: `data_only=False` raises `NotSupportedError`.
+- **Session management**: the backend opens a Graph workbook session and handles
+  session expiry automatically (reopen + retry).
+- **Concurrency**: uses ETag / `If-Match` optimistic concurrency and conflict
+  strategies (`"fail"` or `"force"`).
+- **Authentication**: requires a token provider — a static token string, a callable,
+  an `azure-identity` credential, or a custom `TokenProvider` object. See
+  [Graph Backend DSN and Installation](#graph-backend-dsn-and-installation).
+- **Metadata sync**: best-effort. If metadata sync fails after a successful worksheet
+  mutation, the workbook change is kept and a warning is logged.
+- **Best for**: querying or updating remote Excel files on Microsoft 365.
+
+### When to Use Which Engine
+
+| Scenario | Recommended Engine |
+|---|---|
+| Local file, preserve formatting | openpyxl |
+| Local file, formula read/write | openpyxl (`data_only=False`) |
+| Data pipeline with DataFrames | pandas |
+| Remote Excel on OneDrive/SharePoint | graph |
+| Teaching or prototyping | openpyxl (simplest setup) |
+
+
 ## Limitations
 
 - `PandasBackend` (engine=`"pandas"`) rewrites workbooks and may drop formatting, charts, and formulas.
