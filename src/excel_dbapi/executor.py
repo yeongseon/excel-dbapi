@@ -2955,12 +2955,17 @@ class SharedExecutor:
             else:
                 candidates = (resolved_candidates,)
 
+            has_null = False
             for candidate in candidates:
                 candidate_value = _resolve_operand(candidate, as_column=False)
+                if candidate_value is None:
+                    has_null = True
+                    continue
                 left, right = self._coerce_for_compare(row_value, candidate_value)
                 if left == right:
                     return False
-            return True
+            # SQL: x NOT IN (..., NULL, ...) is UNKNOWN when no match → FALSE in WHERE
+            return not has_null
         if operator == "BETWEEN":
             if row_value is None:
                 return False

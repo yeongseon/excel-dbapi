@@ -13,6 +13,11 @@ from .executor import SharedExecutor
 from .engines.result import ExecutionResult
 from .exceptions import InterfaceError, NotSupportedError, OperationalError
 
+#: Credential accepted by cloud backends.  Concrete forms:
+#: ``str`` (static token), ``TokenProvider`` protocol,
+#: azure-identity credential (``get_token(scope)``), or zero-arg callable.
+Credential = str | Callable[[], str] | object | None
+
 _MUTATING_ACTIONS = frozenset({"INSERT", "CREATE", "DROP", "UPDATE", "DELETE", "ALTER"})
 
 P = ParamSpec("P")
@@ -59,7 +64,7 @@ class ExcelConnection:
         create: bool = False,
         data_only: bool = True,
         sanitize_formulas: bool = True,
-        credential: Any = None,
+        credential: Credential = None,
         **backend_options: Any,
     ):
         """

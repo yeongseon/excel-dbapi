@@ -913,3 +913,84 @@ class TestPrecedenceGroupedNodes:
             )
             rows = cur.fetchall()
             assert rows == [("Alice",)]
+
+
+class TestNotInNullSemantics:
+    """SQL-standard NULL handling for IN/NOT IN operators.
+
+    Per SQL spec: ``x NOT IN (1, NULL)`` yields UNKNOWN when x != 1,
+    which is treated as FALSE in WHERE clauses.
+    """
+
+    def test_not_in_with_null_candidate(self, tmp_path: Path) -> None:
+        """NOT IN with NULL candidate should return empty when no match."""
+        f = tmp_path / "test.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "data"
+        ws.append(["id", "val"])
+        ws.append([1, 10])
+        ws.append([2, 20])
+        ws.append([3, 30])
+        wb.save(f)
+
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            # val NOT IN (10, NULL): 10 matches → excluded; 20, 30 → UNKNOWN → excluded
+            cur.execute("SELECT id FROM data WHERE val NOT IN (10, NULL)")
+            assert cur.fetchall() == []
+
+    def test_not_in_without_null(self, tmp_path: Path) -> None:
+        """NOT IN without NULL works normally."""
+        f = tmp_path / "test.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "data"
+        ws.append(["id", "val"])
+        ws.append([1, 10])
+        ws.append([2, 20])
+        ws.append([3, 30])
+        wb.save(f)
+
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE val NOT IN (10, 20)")
+            assert cur.fetchall() == [(3,)]
+
+    def test_not_in_only_null(self, tmp_path: Path) -> None:
+        """NOT IN (NULL) → UNKNOWN for all rows → no rows returned."""
+        f = tmp_path / "test.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "data"
+        ws.append(["id", "val"])
+        ws.append([1, 10])
+        ws.append([2, 20])
+        wb.save(f)
+
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE val NOT IN (NULL)")
+            assert cur.fetchall() == []
+
+    def test_in_with_null_candidate(self, tmp_path: Path) -> None:
+        """IN with NULL candidate should find matches, skip NULLs."""
+        f = tmp_path / "test.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "data"
+        ws.append(["id", "val"])
+        ws.append([1, 10])
+        ws.append([2, 20])
+        ws.append([3, 30])
+        wb.save(f)
+
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            # val IN (10, NULL): 10 matches → included; 20, 30 don't match → excluded
+            cur.execute("SELECT id FROM data WHERE val IN (10, NULL)")
+            assert cur.fetchall() == [(1,)]

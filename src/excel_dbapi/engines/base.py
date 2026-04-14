@@ -82,9 +82,9 @@ class WorkbookBackend(ABC):
 
     def _clear_stale_lock(self) -> bool:
         try:
-            with open(self._lock_path, "r", encoding="ascii") as handle:
+            with open(self._lock_path, "r", encoding="ascii", errors="replace") as handle:
                 raw_pid = handle.read().strip()
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return False
 
         try:

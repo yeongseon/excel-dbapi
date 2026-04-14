@@ -39,3 +39,7 @@ site/
 
 # OS
 .DS_Store
+
+# Test artifacts
+.hypothesis/
+:memory:
