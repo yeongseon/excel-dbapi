@@ -187,6 +187,25 @@ _SCALAR_FUNCTIONS: dict[str, ScalarFunctionSpec] = {
 }
 
 
+
+def _tv_and(a: bool | None, b: bool | None) -> bool | None:
+    """SQL three-valued AND."""
+    if a is False or b is False:
+        return False
+    if a is None or b is None:
+        return None
+    return True
+
+
+def _tv_or(a: bool | None, b: bool | None) -> bool | None:
+    """SQL three-valued OR."""
+    if a is True or b is True:
+        return True
+    if a is None or b is None:
+        return None
+    return False
+
+
 class SharedExecutor:
     def __init__(self, backend: WorkbookBackend, *, sanitize_formulas: bool = True):
         self.backend = backend
@@ -1587,22 +1606,41 @@ class SharedExecutor:
                 _validate_expression_refs(candidate, column_context=False)
 
     def _matches_where(self, row: dict[str, Any], where: dict[str, Any]) -> bool:
+        """Evaluate WHERE/HAVING/ON with SQL three-valued logic.
+
+        Internally uses ``_eval_where_tv`` which returns ``True``/``False``/
+        ``None`` (SQL UNKNOWN).  ``None`` is collapsed to ``False`` here so
+        that all call-sites still see a plain ``bool``.
+        """
+        result = self._eval_where_tv(row, where)
+        return result is True  # None (UNKNOWN) → False
+
+    def _eval_where_tv(
+        self, row: dict[str, Any], where: dict[str, Any]
+    ) -> bool | None:
+        """Three-valued WHERE evaluation (True / False / None=UNKNOWN)."""
         node_type = where.get("type")
         if node_type == "exists":
             return bool(self._eval_subquery(where, outer_row=row))
         if node_type == "not":
-            return not self._matches_where(row, where["operand"])
+            inner = self._eval_where_tv(row, where["operand"])
+            if inner is None:
+                return None  # NOT UNKNOWN = UNKNOWN
+            return not inner
         if "conditions" in where:
             conditions = where["conditions"]
             conjunctions = where["conjunctions"]
-            results = [self._matches_where(row, conditions[0])]
+            # SQL three-valued AND/OR:
+            #   TRUE  AND UNKNOWN = UNKNOWN    FALSE AND UNKNOWN = FALSE
+            #   TRUE  OR  UNKNOWN = TRUE       FALSE OR  UNKNOWN = UNKNOWN
+            result = self._eval_where_tv(row, conditions[0])
             for idx, conj in enumerate(conjunctions):
-                next_result = self._matches_where(row, conditions[idx + 1])
+                next_val = self._eval_where_tv(row, conditions[idx + 1])
                 if conj == "AND":
-                    results[-1] = results[-1] and next_result
-                else:
-                    results.append(next_result)
-            return any(results)
+                    result = _tv_and(result, next_val)
+                else:  # OR
+                    result = _tv_or(result, next_val)
+            return result
 
         return self._evaluate_condition(row, where)
 
@@ -2900,7 +2938,7 @@ class SharedExecutor:
 
     def _evaluate_condition(
         self, row: dict[str, Any], condition: dict[str, Any]
-    ) -> bool:
+    ) -> bool | None:
         if condition.get("type") == "exists":
             return bool(self._eval_subquery(condition, outer_row=row))
 
@@ -2925,7 +2963,7 @@ class SharedExecutor:
             return row_value is not None
         if operator == "IN":
             if row_value is None:
-                return False
+                return None  # SQL UNKNOWN
             resolved_candidates = _resolve_operand(value, as_column=False)
             if resolved_candidates is None:
                 candidates: tuple[Any, ...] = ()
@@ -2936,15 +2974,20 @@ class SharedExecutor:
             else:
                 candidates = (resolved_candidates,)
 
+            has_null = False
             for candidate in candidates:
                 candidate_value = _resolve_operand(candidate, as_column=False)
+                if candidate_value is None:
+                    has_null = True
+                    continue
                 left, right = self._coerce_for_compare(row_value, candidate_value)
                 if left == right:
                     return True
-            return False
+            # SQL: x IN (..., NULL, ...) is UNKNOWN when no match
+            return None if has_null else False
         if operator == "NOT IN":
             if row_value is None:
-                return False
+                return None  # SQL UNKNOWN
             resolved_candidates = _resolve_operand(value, as_column=False)
             if resolved_candidates is None:
                 candidates = ()
@@ -2968,29 +3011,29 @@ class SharedExecutor:
             return not has_null
         if operator == "BETWEEN":
             if row_value is None:
-                return False
+                return None  # SQL UNKNOWN
             low, high = value
             low = _resolve_operand(low, as_column=False)
             high = _resolve_operand(high, as_column=False)
             if low is None or high is None:
-                return False
+                return None  # SQL UNKNOWN
             left_low, right_low = self._coerce_for_compare(row_value, low)
             left_high, right_high = self._coerce_for_compare(row_value, high)
             return bool(left_low >= right_low and left_high <= right_high)
         if operator == "NOT BETWEEN":
             if row_value is None:
-                return False
+                return None  # SQL UNKNOWN
             low, high = value
             low = _resolve_operand(low, as_column=False)
             high = _resolve_operand(high, as_column=False)
             if low is None or high is None:
-                return False
+                return None  # SQL UNKNOWN
             left_low, right_low = self._coerce_for_compare(row_value, low)
             left_high, right_high = self._coerce_for_compare(row_value, high)
             return not bool(left_low >= right_low and left_high <= right_high)
         if operator in {"LIKE", "NOT LIKE", "ILIKE", "NOT ILIKE"}:
             if row_value is None:
-                return False
+                return None  # SQL UNKNOWN
             value = _resolve_operand(value, as_column=False)
             if not isinstance(value, str):
                 raise NotImplementedError("Unsupported LIKE pattern type")
@@ -3014,7 +3057,7 @@ class SharedExecutor:
         value = _resolve_operand(value, as_column=False)
 
         if row_value is None or value is None:
-            return False
+            return None  # SQL UNKNOWN
 
         left, right = self._coerce_for_compare(row_value, value)
         if operator in {"=", "=="}:

@@ -187,13 +187,13 @@ def test_executor_error_paths_and_utility_paths() -> None:
         executor._evaluate_condition(
             {"id": None}, {"column": "id", "operator": "BETWEEN", "value": (1, 2)}
         )
-        is False
+        is None  # SQL UNKNOWN
     )
     assert (
         executor._evaluate_condition(
             {"id": 5}, {"column": "id", "operator": "BETWEEN", "value": (None, 9)}
         )
-        is False
+        is None  # SQL UNKNOWN
     )
     assert (
         executor._evaluate_condition(

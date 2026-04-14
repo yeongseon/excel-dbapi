@@ -994,3 +994,107 @@ class TestNotInNullSemantics:
             # val IN (10, NULL): 10 matches → included; 20, 30 don't match → excluded
             cur.execute("SELECT id FROM data WHERE val IN (10, NULL)")
             assert cur.fetchall() == [(1,)]
+
+
+class TestThreeValuedLogic:
+    """SQL three-valued logic (TRUE / FALSE / UNKNOWN) in WHERE clauses.
+
+    Per SQL spec, comparisons involving NULL yield UNKNOWN, and:
+    - NOT UNKNOWN = UNKNOWN
+    - TRUE AND UNKNOWN = UNKNOWN
+    - FALSE AND UNKNOWN = FALSE
+    - TRUE OR UNKNOWN = TRUE
+    - FALSE OR UNKNOWN = UNKNOWN
+    All UNKNOWN results in WHERE are treated as FALSE (row excluded).
+    """
+
+    def _make_workbook(self, tmp_path: Path) -> Path:
+        f = tmp_path / "test.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "data"
+        ws.append(["id", "x"])
+        ws.append([1, None])
+        ws.append([2, 10])
+        ws.append([3, None])
+        wb.save(f)
+        return f
+
+    def test_not_equals_null(self, tmp_path: Path) -> None:
+        """NOT (x = NULL) → NOT UNKNOWN = UNKNOWN → no rows."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE NOT (x = NULL)")
+            assert cur.fetchall() == []
+
+    def test_not_in_null_subexpression(self, tmp_path: Path) -> None:
+        """NOT (x IN (NULL)) → NOT UNKNOWN = UNKNOWN → no rows."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE NOT (x IN (NULL))")
+            assert cur.fetchall() == []
+
+    def test_null_equals_null(self, tmp_path: Path) -> None:
+        """x = NULL → UNKNOWN → no rows (use IS NULL instead)."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE x = NULL")
+            assert cur.fetchall() == []
+
+    def test_not_null_comparison(self, tmp_path: Path) -> None:
+        """NOT (x > NULL) → NOT UNKNOWN = UNKNOWN → no rows."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE NOT (x > NULL)")
+            assert cur.fetchall() == []
+
+    def test_and_with_unknown(self, tmp_path: Path) -> None:
+        """TRUE AND UNKNOWN = UNKNOWN → excludes row.
+        For id=2: (x = 10) is TRUE, but (x = NULL) is UNKNOWN → AND → UNKNOWN.
+        """
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE x = 10 AND x = NULL")
+            assert cur.fetchall() == []
+
+    def test_or_with_unknown(self, tmp_path: Path) -> None:
+        """TRUE OR UNKNOWN = TRUE.
+        For id=2: (x = 10) is TRUE, (x = NULL) is UNKNOWN → OR → TRUE.
+        """
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE x = 10 OR x = NULL")
+            assert cur.fetchall() == [(2,)]
+
+    def test_false_and_unknown(self, tmp_path: Path) -> None:
+        """FALSE AND UNKNOWN = FALSE → still excluded.
+        For id=2: (x = 999) is FALSE, (x = NULL) is UNKNOWN → AND → FALSE.
+        """
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE x = 999 AND x = NULL")
+            assert cur.fetchall() == []
+
+    def test_is_null_unaffected(self, tmp_path: Path) -> None:
+        """IS NULL always returns TRUE/FALSE, never UNKNOWN."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE x IS NULL")
+            assert cur.fetchall() == [(1,), (3,)]
+
+    def test_not_is_null_unaffected(self, tmp_path: Path) -> None:
+        """NOT (x IS NULL) is fine — IS NULL always returns bool, not UNKNOWN."""
+        f = self._make_workbook(tmp_path)
+        with ExcelConnection(str(f), engine="openpyxl") as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id FROM data WHERE NOT (x IS NULL)")
+            assert cur.fetchall() == [(2,)]

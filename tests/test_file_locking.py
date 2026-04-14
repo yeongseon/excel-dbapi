@@ -74,3 +74,26 @@ def test_stale_lock_file_is_recovered(tmp_path: Path) -> None:
         assert lock_pid == os.getpid()
     finally:
         conn.close()
+
+
+def test_corrupted_binary_lock_file_recovery(tmp_path: Path) -> None:
+    """Lock file with non-ASCII bytes should not crash _clear_stale_lock."""
+    file_path = tmp_path / "data.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id"])
+    ws.append([1])
+    wb.save(file_path)
+
+    lock_path = Path(f"{file_path}.lock")
+    # Write binary garbage that would cause UnicodeDecodeError with ascii encoding
+    lock_path.write_bytes(b"\xff\xfe\x00\x80corrupted")
+
+    # Should not raise — lock is treated as stale and replaced
+    conn = ExcelConnection(str(file_path), engine="openpyxl", autocommit=False)
+    try:
+        assert conn.closed is False
+    finally:
+        conn.close()

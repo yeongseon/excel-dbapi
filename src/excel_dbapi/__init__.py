@@ -1,6 +1,6 @@
 from typing import Any
 
-from .connection import ExcelConnection
+from .connection import Credential, ExcelConnection
 from .exceptions import (
     DatabaseError,
     DataError,
@@ -42,7 +42,7 @@ def connect(
     create: bool = False,
     data_only: bool = True,
     sanitize_formulas: bool = True,
-    credential: Any = None,
+    credential: Credential = None,
     **backend_options: Any,
 ) -> ExcelConnection:
     return ExcelConnection(

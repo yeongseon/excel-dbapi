@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
-from typing import Any, Concatenate, List, Optional, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Concatenate, List, Optional, ParamSpec, TypeVar, cast
 
 from .engines.result import Description, ExecutionResult
+
+if TYPE_CHECKING:
+    from .connection import ExcelConnection
 from .exceptions import (
     DatabaseError,
     InterfaceError,
@@ -36,7 +41,7 @@ class ExcelCursor:
     for executing SQL-like queries on Excel data.
     """
 
-    def __init__(self, connection: Any):
+    def __init__(self, connection: ExcelConnection):
         """
         Initialize the cursor with a connection.
         """

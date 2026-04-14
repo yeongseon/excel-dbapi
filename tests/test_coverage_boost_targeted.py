@@ -304,9 +304,9 @@ def test_executor_eval_expression_and_condition_error_paths(tmp_path: Path) -> N
     with pytest.raises(ProgrammingError, match="Unsupported expression type"):
         executor._eval_expression({"type": "mystery"}, row, lambda c: row.get(c))
 
-    assert executor._evaluate_condition(row, {"column": "x", "operator": "NOT IN", "value": (1, 2)}) is False
-    assert executor._evaluate_condition(row, {"column": "x", "operator": "NOT BETWEEN", "value": (1, 2)}) is False
-    assert executor._evaluate_condition({"x": 5}, {"column": "x", "operator": "NOT BETWEEN", "value": (None, 2)}) is False
+    assert executor._evaluate_condition(row, {"column": "x", "operator": "NOT IN", "value": (1, 2)}) is None  # SQL UNKNOWN
+    assert executor._evaluate_condition(row, {"column": "x", "operator": "NOT BETWEEN", "value": (1, 2)}) is None  # SQL UNKNOWN
+    assert executor._evaluate_condition({"x": 5}, {"column": "x", "operator": "NOT BETWEEN", "value": (None, 2)}) is None  # SQL UNKNOWN
     with pytest.raises(NotImplementedError, match="Unsupported LIKE pattern type"):
         executor._evaluate_condition({"x": "abc"}, {"column": "x", "operator": "NOT LIKE", "value": 5})
 
