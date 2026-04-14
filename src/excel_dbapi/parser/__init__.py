@@ -49,14 +49,21 @@ __all__ = [
     "parse_sql",
     # _constants
     "_OrderByClause",
+    "_QuotedIdentifier",
     "_QuotedString",
     "_is_placeholder",
     # tokenizer
     "_count_unquoted_placeholders",
     "_find_matching_parenthesis",
     "_find_top_level_keyword_index",
+    "_is_double_quoted_token",
+    "_is_identifier_or_quoted",
     "_is_quoted_token",
+    "_is_qualified_identifier_or_quoted",
+    "_is_single_quoted_token",
+    "_parse_column_identifier",
     "_parse_value",
+    "_split_qualified_identifier",
     "_split_csv",
     "_tokenize",
     "_tokenize_expression",
@@ -112,15 +119,22 @@ __all__ = [
 
 from ._constants import (  # noqa: F401, E402
     _OrderByClause,
+    _QuotedIdentifier,
     _QuotedString,
     _is_placeholder,
 )
 from .tokenizer import (  # noqa: F401, E402
     _find_matching_parenthesis,
     _find_top_level_keyword_index,
+    _is_double_quoted_token,
+    _is_identifier_or_quoted,
     _is_quoted_token,
+    _is_qualified_identifier_or_quoted,
+    _is_single_quoted_token,
+    _parse_column_identifier,
     _parse_value,
     _split_csv,
+    _split_qualified_identifier,
     _tokenize_expression,
 )
 from .expressions import (  # noqa: F401, E402

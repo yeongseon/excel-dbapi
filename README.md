@@ -29,7 +29,7 @@ Before you begin, understand what excel-dbapi is **not**:
 - **Not for large datasets** — if your Excel file has 100k+ rows, use pandas directly or a database
 - **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL
 - **PandasEngine rewrites workbooks** — formatting, charts, images, and formulas are dropped
-- **Identifier grammar is limited** — quoted table names are supported (for example `"Sales 2024"`), but column references must still be unquoted ASCII identifiers (`[A-Za-z_][A-Za-z0-9_]*`)
+- **Identifier grammar** — both unquoted Unicode identifiers (`이름`, `naïve`) and double-quoted identifiers (`"Full Name"`, `"이름"`) are supported for table and column names
 
 If you need relational features, use SQLite or PostgreSQL.
 

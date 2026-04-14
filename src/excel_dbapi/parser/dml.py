@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from ._constants import _is_placeholder
 from .tokenizer import (
     _count_unquoted_placeholders,
+    _parse_column_identifier,
     _parse_table_identifier,
     _parse_value,
     _split_csv,
@@ -439,7 +440,7 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
             annotate_tables=False,
             error_message=f"Invalid UPDATE format: {query}",
         )
-        assignments.append({"column": col.strip(), "value": parsed_value})
+        assignments.append({"column": _parse_column_identifier(col.strip()), "value": parsed_value})
 
     where = None
     if where_part:

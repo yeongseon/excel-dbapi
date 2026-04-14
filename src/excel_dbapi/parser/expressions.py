@@ -6,16 +6,21 @@ from typing import Any, Dict, List, Optional
 from ._constants import (
     _AGGREGATE_FUNCTIONS,
     _IDENTIFIER_PATTERN,
-    _QUALIFIED_IDENTIFIER_PATTERN,
     _SCALAR_FUNCTION_NAMES,
     _WINDOW_FUNCTIONS,
 )
 from .tokenizer import (
     _collapse_aggregate_tokens,
     _find_matching_parenthesis,
+    _is_double_quoted_token,
+    _is_identifier_or_quoted,
     _is_quoted_token,
+    _is_qualified_identifier_or_quoted,
+    _is_single_quoted_token,
+    _parse_column_identifier,
     _parse_numeric_literal,
     _parse_value,
+    _split_qualified_identifier,
     _split_csv,
     _tokenize,
     _tokenize_expression,
@@ -256,18 +261,23 @@ def _parse_column_expression(
         literal_value = None
     elif expression == "?":
         literal_value = expression
-    elif _is_quoted_token(expression):
+    elif _is_single_quoted_token(expression):
         literal_value = _parse_value(expression)
 
     if literal_value is not None or expression.upper() == "NULL":
         return {"type": "literal", "value": literal_value}
 
-    if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression):
+    if _is_qualified_identifier_or_quoted(expression):
+        parts = _split_qualified_identifier(expression)
+        if parts is not None:
+            source = _parse_column_identifier(parts[0])
+            name = _parse_column_identifier(parts[1])
+            return {"type": "column", "source": source, "name": name}
         source, name = expression.split(".", 1)
         return {"type": "column", "source": source, "name": name}
 
-    if re.fullmatch(_IDENTIFIER_PATTERN, expression):
-        return expression
+    if _is_identifier_or_quoted(expression):
+        return _parse_column_identifier(expression)
 
     tokens = _tokenize_expression(expression)
     position = 0
@@ -381,15 +391,23 @@ def _parse_column_expression(
         if numeric is not None:
             return {"type": "literal", "value": numeric}
 
-        if token.upper() == "NULL" or token == "?" or _is_quoted_token(token):
+        if token.upper() == "NULL" or token == "?" or _is_single_quoted_token(token):
             return {"type": "literal", "value": _parse_value(token)}
 
-        if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, token):
+        if _is_double_quoted_token(token):
+            return _parse_column_identifier(token)
+
+        if _is_qualified_identifier_or_quoted(token):
+            parts = _split_qualified_identifier(token)
+            if parts is not None:
+                source = _parse_column_identifier(parts[0])
+                name = _parse_column_identifier(parts[1])
+                return {"type": "column", "source": source, "name": name}
             source, name = token.split(".", 1)
             return {"type": "column", "source": source, "name": name}
 
-        if re.fullmatch(_IDENTIFIER_PATTERN, token):
-            return token
+        if _is_identifier_or_quoted(token):
+            return _parse_column_identifier(token)
 
         if re.fullmatch(
             r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
@@ -484,10 +502,7 @@ def _parse_aggregate_token(token: str) -> dict[str, Any] | None:
             raise ValueError("DISTINCT is only supported with COUNT")
         if arg == "*":
             raise ValueError("Invalid aggregate expression")
-        if not re.fullmatch(
-            rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}",
-            arg,
-        ):
+        if not (_is_identifier_or_quoted(arg) or _is_qualified_identifier_or_quoted(arg)):
             raise ValueError(
                 f"Unsupported aggregate expression: COUNT(DISTINCT {arg}). "
                 "Only bare and qualified column names are supported with DISTINCT"
@@ -495,9 +510,8 @@ def _parse_aggregate_token(token: str) -> dict[str, Any] | None:
 
     if arg == "*" and func != "COUNT":
         raise ValueError(f"{func} does not support *")
-    if arg != "*" and not re.fullmatch(
-        rf"{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN}",
-        arg,
+    if arg != "*" and not (
+        _is_identifier_or_quoted(arg) or _is_qualified_identifier_or_quoted(arg)
     ):
         raise ValueError(
             f"Unsupported aggregate expression: {func}({arg}). "
@@ -1115,8 +1129,14 @@ def _bind_where_conditions(
 def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
     refs: set[str] = set()
     if isinstance(expression, str):
-        if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression):
-            refs.add(expression)
+        if _is_qualified_identifier_or_quoted(expression):
+            parts = _split_qualified_identifier(expression)
+            if parts is not None:
+                refs.add(
+                    f"{_parse_column_identifier(parts[0])}.{_parse_column_identifier(parts[1])}"
+                )
+            else:
+                refs.add(expression)
         return refs
 
     if not isinstance(expression, dict):
@@ -1138,8 +1158,14 @@ def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
 
     if expression_type == "aggregate":
         arg = expression.get("arg")
-        if isinstance(arg, str) and re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, arg):
-            refs.add(arg)
+        if isinstance(arg, str) and _is_qualified_identifier_or_quoted(arg):
+            parts = _split_qualified_identifier(arg)
+            if parts is not None:
+                refs.add(
+                    f"{_parse_column_identifier(parts[0])}.{_parse_column_identifier(parts[1])}"
+                )
+            else:
+                refs.add(arg)
         filter_clause = expression.get("filter")
         if isinstance(filter_clause, dict):
             from .where import _collect_qualified_references_from_where
@@ -1171,11 +1197,16 @@ def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
                     )
                     continue
                 order_column = item.get("column")
-                if isinstance(order_column, str) and re.fullmatch(
-                    _QUALIFIED_IDENTIFIER_PATTERN,
-                    order_column,
+                if isinstance(order_column, str) and _is_qualified_identifier_or_quoted(
+                    order_column
                 ):
-                    refs.add(order_column)
+                    parts = _split_qualified_identifier(order_column)
+                    if parts is not None:
+                        refs.add(
+                            f"{_parse_column_identifier(parts[0])}.{_parse_column_identifier(parts[1])}"
+                        )
+                    else:
+                        refs.add(order_column)
 
         filter_clause = expression.get("filter")
         if isinstance(filter_clause, dict):

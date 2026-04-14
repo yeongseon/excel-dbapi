@@ -823,7 +823,15 @@ class SharedExecutor:
 
     @staticmethod
     def _resolve_header_index(column: str, header_index: dict[str, int]) -> int | None:
-        return header_index.get(column.casefold())
+        result = header_index.get(column.casefold())
+        if result is not None:
+            return result
+        # For qualified names like "Sheet1.Full Name" in single-table queries,
+        # strip the table prefix and try the bare column name.
+        if "." in column:
+            _, _, col_part = column.partition(".")
+            return header_index.get(col_part.casefold())
+        return None
 
     @staticmethod
     def _resolve_header_name(

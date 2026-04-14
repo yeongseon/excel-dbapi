@@ -5,6 +5,10 @@ class _QuotedString(str):
     pass
 
 
+class _QuotedIdentifier(str):
+    pass
+
+
 class _OrderByClause(list[dict[str, Any]]):
     def __getitem__(self, index: SupportsIndex | slice | str) -> Any:
         if isinstance(index, str):
@@ -59,5 +63,5 @@ _SCALAR_FUNCTION_NAMES = frozenset(
         "DAY",
     }
 )
-_IDENTIFIER_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
+_IDENTIFIER_PATTERN = r"[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*"
 _QUALIFIED_IDENTIFIER_PATTERN = rf"{_IDENTIFIER_PATTERN}\.{_IDENTIFIER_PATTERN}"

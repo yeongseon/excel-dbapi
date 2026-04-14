@@ -1,6 +1,12 @@
+import re
 from typing import Any, List
 
-from ._constants import _AGGREGATE_FUNCTIONS, _QuotedString
+from ._constants import (
+    _AGGREGATE_FUNCTIONS,
+    _IDENTIFIER_PATTERN,
+    _QUALIFIED_IDENTIFIER_PATTERN,
+    _QuotedString,
+)
 
 
 def _split_csv(text: str) -> List[str]:
@@ -291,7 +297,7 @@ def _parse_table_identifier(token: str) -> str:
     identifier = token.strip()
     if not identifier:
         raise ValueError("Table name is required")
-    if _is_quoted_token(identifier):
+    if _is_double_quoted_token(identifier):
         return str(_parse_value(identifier))
     return identifier
 
@@ -419,10 +425,78 @@ def _tokenize_expression(text: str) -> list[str]:
 
 
 def _is_quoted_token(token: str) -> bool:
-    return len(token) >= 2 and (
-        (token.startswith("'") and token.endswith("'"))
-        or (token.startswith('"') and token.endswith('"'))
-    )
+    return _is_single_quoted_token(token) or _is_double_quoted_token(token)
+
+
+def _is_double_quoted_token(token: str) -> bool:
+    return len(token) >= 2 and token.startswith('"') and token.endswith('"')
+
+
+def _is_single_quoted_token(token: str) -> bool:
+    return len(token) >= 2 and token.startswith("'") and token.endswith("'")
+
+
+def _parse_column_identifier(token: str) -> str:
+    token = token.strip()
+    if _is_double_quoted_token(token):
+        return token[1:-1].replace('""', '"')
+    return token
+
+
+def _split_qualified_identifier(token: str) -> list[str] | None:
+    value = token.strip()
+    if not value:
+        return None
+
+    in_double = False
+    dot_index = -1
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == '"':
+            if in_double:
+                if index + 1 < len(value) and value[index + 1] == '"':
+                    index += 2
+                    continue
+                in_double = False
+                index += 1
+                continue
+            in_double = True
+            index += 1
+            continue
+
+        if char == "." and not in_double:
+            if dot_index >= 0:
+                return None
+            dot_index = index
+
+        index += 1
+
+    if in_double or dot_index <= 0 or dot_index >= len(value) - 1:
+        return None
+
+    left = value[:dot_index].strip()
+    right = value[dot_index + 1 :].strip()
+    if not left or not right:
+        return None
+    return [left, right]
+
+
+def _is_identifier_or_quoted(token: str) -> bool:
+    token = token.strip()
+    if _is_double_quoted_token(token):
+        return True
+    return bool(re.fullmatch(_IDENTIFIER_PATTERN, token))
+
+
+def _is_qualified_identifier_or_quoted(token: str) -> bool:
+    token = token.strip()
+    if bool(re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, token)):
+        return True
+    parts = _split_qualified_identifier(token)
+    if parts is None or len(parts) != 2:
+        return False
+    return all(_is_identifier_or_quoted(part) for part in parts)
 
 
 def _collapse_aggregate_tokens(tokens: List[str]) -> List[str]:

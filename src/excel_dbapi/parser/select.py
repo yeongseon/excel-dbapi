@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional
 
 from ._constants import (
-    _IDENTIFIER_PATTERN,
     _OrderByClause,
-    _QUALIFIED_IDENTIFIER_PATTERN,
     _is_placeholder,
 )
 from .tokenizer import (
     _collapse_aggregate_tokens,
     _find_top_level_keyword_index,
+    _is_identifier_or_quoted,
     _is_quoted_token,
+    _is_qualified_identifier_or_quoted,
+    _parse_column_identifier,
     _parse_table_identifier,
     _parse_value,
+    _split_qualified_identifier,
     _split_csv,
     _tokenize,
 )
@@ -108,7 +109,7 @@ def _parse_columns(
         return ["*"]
 
     def _is_valid_alias_name(alias_name: str) -> bool:
-        if not re.fullmatch(_IDENTIFIER_PATTERN, alias_name):
+        if not _is_identifier_or_quoted(alias_name):
             return False
         if _is_reserved_select_token(alias_name):
             return False
@@ -136,7 +137,7 @@ def _parse_columns(
             expression_tokens = collapsed_tokens[:-2]
             if not expression_tokens:
                 raise ValueError("Invalid column list")
-            alias_name = candidate_alias
+            alias_name = _parse_column_identifier(candidate_alias)
         elif len(collapsed_tokens) >= 2:
             candidate_alias = collapsed_tokens[-1]
             if _is_valid_alias_name(candidate_alias):
@@ -152,7 +153,7 @@ def _parse_columns(
                     parsed_expression = None
                 else:
                     expression_tokens = candidate_expression_tokens
-                    alias_name = candidate_alias
+                    alias_name = _parse_column_identifier(candidate_alias)
 
         if parsed_expression is None:
             expression = " ".join(expression_tokens).strip()
@@ -231,8 +232,14 @@ def _collect_qualified_references_from_query(query: Dict[str, Any]) -> set[str]:
     if isinstance(group_by, list):
         for group_column in group_by:
             if isinstance(group_column, str):
-                if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, group_column):
-                    refs.add(group_column)
+                if _is_qualified_identifier_or_quoted(group_column):
+                    parts = _split_qualified_identifier(group_column)
+                    if parts is not None:
+                        refs.add(
+                            f"{_parse_column_identifier(parts[0])}.{_parse_column_identifier(parts[1])}"
+                        )
+                    else:
+                        refs.add(group_column)
                 continue
             refs.update(_collect_qualified_references_from_expression(group_column))
 
@@ -246,10 +253,16 @@ def _collect_qualified_references_from_query(query: Dict[str, Any]) -> set[str]:
                 refs.update(_collect_qualified_references_from_expression(expression))
                 continue
             order_column = item.get("column")
-            if isinstance(order_column, str) and re.fullmatch(
-                _QUALIFIED_IDENTIFIER_PATTERN, order_column
+            if isinstance(order_column, str) and _is_qualified_identifier_or_quoted(
+                order_column
             ):
-                refs.add(order_column)
+                parts = _split_qualified_identifier(order_column)
+                if parts is not None:
+                    refs.add(
+                        f"{_parse_column_identifier(parts[0])}.{_parse_column_identifier(parts[1])}"
+                    )
+                else:
+                    refs.add(order_column)
 
     joins = query.get("joins")
     if isinstance(joins, list):
@@ -287,7 +300,8 @@ def _detect_subquery_correlation(
     inner_sources = _query_source_references(query)
     outer_refs: set[str] = set()
     for reference in _collect_qualified_references_from_query(query):
-        source = reference.split(".", 1)[0]
+        parts = _split_qualified_identifier(reference)
+        source = _parse_column_identifier(parts[0]) if parts is not None else reference.split(".", 1)[0]
         if source in outer_sources and source not in inner_sources:
             outer_refs.add(reference)
 
@@ -368,11 +382,16 @@ def _is_reserved_select_token(token: str) -> bool:
 
 
 def _parse_qualified_column_reference(token: str) -> Dict[str, str]:
-    if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, token):
+    if not _is_qualified_identifier_or_quoted(token):
         raise ValueError(
             f"Invalid column reference in JOIN clause: {token}. Expected source.column"
         )
-    source, name = token.split(".", 1)
+    parts = _split_qualified_identifier(token)
+    if parts is not None:
+        source = _parse_column_identifier(parts[0])
+        name = _parse_column_identifier(parts[1])
+    else:
+        source, name = token.split(".", 1)
     return {"type": "column", "source": source, "name": name}
 
 
@@ -462,11 +481,16 @@ def _validate_join_column_reference(
     context: str,
 ) -> None:
     if isinstance(column, str):
-        if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, column):
+        if not _is_qualified_identifier_or_quoted(column):
             raise ValueError(
                 f"{context} requires qualified column names in JOIN queries"
             )
-        source, name = column.split(".", 1)
+        parts = _split_qualified_identifier(column)
+        if parts is not None:
+            source = _parse_column_identifier(parts[0])
+            name = _parse_column_identifier(parts[1])
+        else:
+            source, name = column.split(".", 1)
         if source not in allowed_sources or not name:
             raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
         return
@@ -491,11 +515,16 @@ def _validate_join_column_reference(
         if column_type == "aggregate":
             arg = str(column.get("arg", ""))
             if arg != "*":
-                if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, arg):
+                if not _is_qualified_identifier_or_quoted(arg):
                     raise ValueError(
                         "Aggregate arguments in JOIN queries must be qualified column names or *"
                     )
-                source, name = arg.split(".", 1)
+                parts = _split_qualified_identifier(arg)
+                if parts is not None:
+                    source = _parse_column_identifier(parts[0])
+                    name = _parse_column_identifier(parts[1])
+                else:
+                    source, name = arg.split(".", 1)
                 if source not in allowed_sources or not name:
                     raise ValueError(
                         f"Invalid source reference in {context}: {source}.{name}"
@@ -613,7 +642,11 @@ def _validate_join_where_node(node: Dict[str, Any], join_sources: set[str]) -> N
             for reference in outer_refs:
                 if not isinstance(reference, str) or "." not in reference:
                     continue
-                source, _ = reference.split(".", 1)
+                parts = _split_qualified_identifier(reference)
+                if parts is not None:
+                    source = _parse_column_identifier(parts[0])
+                else:
+                    source = reference.split(".", 1)[0]
                 if source not in join_sources:
                     raise ValueError(f"Invalid source reference in WHERE: {reference}")
         return
@@ -672,9 +705,9 @@ def _parse_order_by_item_tokens(
         raise ValueError(f"Unsupported SQL syntax: {' '.join(expression_tokens)}")
     if (
         len(expression_tokens) == 2
-        and re.fullmatch(
-            rf"(?:{_IDENTIFIER_PATTERN}|{_QUALIFIED_IDENTIFIER_PATTERN})",
-            expression_tokens[0],
+        and (
+            _is_identifier_or_quoted(expression_tokens[0])
+            or _is_qualified_identifier_or_quoted(expression_tokens[0])
         )
         and expression_tokens[1].isalpha()
     ):
@@ -726,10 +759,16 @@ def _parse_order_by_item_tokens(
             "direction": direction,
         }
 
-    if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, expression_text):
+    if _is_qualified_identifier_or_quoted(expression_text):
+        parts = _split_qualified_identifier(expression_text)
+        if parts is not None:
+            return {
+                "column": f"{_parse_column_identifier(parts[0])}.{_parse_column_identifier(parts[1])}",
+                "direction": direction,
+            }
         return {"column": expression_text, "direction": direction}
-    if re.fullmatch(_IDENTIFIER_PATTERN, expression_text):
-        return {"column": expression_text, "direction": direction}
+    if _is_identifier_or_quoted(expression_text):
+        return {"column": _parse_column_identifier(expression_text), "direction": direction}
 
     parsed_expression = _parse_column_expression(
         expression_text,
@@ -1325,9 +1364,7 @@ def _parse_select(
                         "GROUP BY in JOIN queries requires qualified column names"
                     )
 
-                if not re.fullmatch(
-                    _QUALIFIED_IDENTIFIER_PATTERN, qualified_group_column
-                ):
+                if not _is_qualified_identifier_or_quoted(qualified_group_column):
                     raise ValueError(
                         "GROUP BY in JOIN queries requires qualified column names"
                     )
@@ -1365,9 +1402,7 @@ def _parse_select(
                     and expression.get("type") == "aggregate"
                 ):
                     arg = str(expression.get("arg", "")).strip()
-                    if arg != "*" and not re.fullmatch(
-                        _QUALIFIED_IDENTIFIER_PATTERN, arg
-                    ):
+                    if arg != "*" and not _is_qualified_identifier_or_quoted(arg):
                         raise ValueError(
                             "Aggregate arguments in JOIN queries must be qualified column names or *"
                         )
@@ -1404,10 +1439,7 @@ def _parse_select(
                     and aggregate_expression.get("type") == "aggregate"
                 ):
                     arg = str(aggregate_expression.get("arg", "")).strip()
-                    if arg != "*" and not re.fullmatch(
-                        _QUALIFIED_IDENTIFIER_PATTERN,
-                        arg,
-                    ):
+                    if arg != "*" and not _is_qualified_identifier_or_quoted(arg):
                         raise ValueError(
                             "Aggregate arguments in JOIN queries must be qualified column names or *"
                         )

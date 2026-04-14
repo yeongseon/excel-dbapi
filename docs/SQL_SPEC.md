@@ -31,8 +31,8 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `FROM` | Table aliases | ✅ | Base table and JOIN sources |
 | Identifiers | Unquoted table names | ✅ | Worksheet names follow Excel naming conventions (not strict SQL identifier grammar) |
 | Identifiers | Quoted table names (`"Sales 2024"`) | ✅ | Use double quotes for names with spaces/special characters |
-| Identifiers | Column names (unquoted) | ✅ | Must match `[A-Za-z_][A-Za-z0-9_]*` |
-| Identifiers | Quoted / spaced / non-ASCII column references | ❌ | Not currently supported in column expressions |
+| Identifiers | Column names (unquoted) | ✅ | ASCII and Unicode identifiers: `[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*` |
+| Identifiers | Quoted column identifiers (`"Full Name"`, `"이름"`) | ✅ | Double-quoted identifiers for columns with spaces, special characters, or reserved words |
 | `WHERE` | Comparison operators | ✅ | `= == != <> > >= < <=` |
 | `WHERE` | Boolean logic | ✅ | `AND`, `OR`, `NOT`, nested parentheses |
 | `WHERE` | `BETWEEN` / `NOT BETWEEN` | ✅ | Inclusive bounds |
@@ -75,6 +75,17 @@ This table is the **single authoritative matrix** for SQL feature support.
 - `GROUP BY` and aggregate arguments in JOIN queries must use qualified columns (`t.col`).
 - Subqueries in JOIN `WHERE ... IN (SELECT ...)` are supported.
 
+### 2.2 Identifier Grammar
+
+Identifiers (table and column names) follow these rules:
+
+- **Unquoted identifiers** match the pattern `[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*`.
+  This includes ASCII, Korean (한글), CJK (漢字), and other Unicode letters.
+- **Quoted identifiers** use SQL-standard double quotes: `"Full Name"`, `"이름"`, `"col-1"`.
+  To include a literal double-quote, double it: `"col""name"` → `col"name`.
+- **Qualified identifiers** use dot notation: `Sheet1.이름`, `Sheet1."Full Name"`, `"My Sheet"."My Col"`.
+- Identifiers are resolved **case-insensitively** (via `casefold()`).
+- Single-quoted strings (`'value'`) are always **string literals**, never identifiers.
 ---
 
 ## 3. Statement Syntax Overview
@@ -203,12 +214,10 @@ Subquery limitations:
 - `RETURNING`
 - `CREATE INDEX` / `DROP INDEX`
 - `INTERSECT ALL` / `EXCEPT ALL`
-- Quoted column identifiers/references (for example `"full name"`) in expressions
-- Unquoted non-ASCII identifiers in SQL grammar
 
 ---
 
 ## 8. Notes on Parser Authority
 
-The parser implementation in `src/excel_dbapi/parser.py` is the runtime source of truth.
+The parser implementation in `src/excel_dbapi/parser/` package is the runtime source of truth.
 This specification is maintained to match implemented behavior and is updated with parser changes.

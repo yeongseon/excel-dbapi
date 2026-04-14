@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Union
 
-from ._constants import _IDENTIFIER_PATTERN
 from .tokenizer import (
     _count_unquoted_placeholders,
     _find_matching_parenthesis,
+    _is_identifier_or_quoted,
+    _parse_column_identifier,
     _tokenize,
 )
 from .select import (
@@ -315,8 +315,9 @@ def _parse_with_query(
             raise ValueError("Invalid WITH clause: missing CTE name")
 
         cte_name = tokens[index]
-        if not re.fullmatch(_IDENTIFIER_PATTERN, cte_name):
+        if not _is_identifier_or_quoted(cte_name):
             raise ValueError(f"Invalid CTE name: {cte_name}")
+        cte_name = _parse_column_identifier(cte_name)
         lowered_name = cte_name.casefold()
         if lowered_name in cte_names:
             raise ValueError(f"Duplicate CTE name: {cte_name}")

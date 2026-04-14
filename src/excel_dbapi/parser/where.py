@@ -3,12 +3,15 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from ._constants import _QUALIFIED_IDENTIFIER_PATTERN, _is_placeholder
+from ._constants import _is_placeholder
 from .tokenizer import (
     _collapse_aggregate_tokens,
     _find_matching_parenthesis,
+    _is_qualified_identifier_or_quoted,
     _is_quoted_token,
+    _parse_column_identifier,
     _parse_value,
+    _split_qualified_identifier,
     _split_csv,
     _tokenize,
 )
@@ -965,8 +968,14 @@ def _collect_qualified_references_from_where(where: Dict[str, Any]) -> set[str]:
 
     column = where.get("column")
     if isinstance(column, str):
-        if re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, column):
-            refs.add(column)
+        if _is_qualified_identifier_or_quoted(column):
+            parts = _split_qualified_identifier(column)
+            if parts is not None:
+                refs.add(
+                    f"{_parse_column_identifier(parts[0])}.{_parse_column_identifier(parts[1])}"
+                )
+            else:
+                refs.add(column)
     else:
         refs.update(_collect_qualified_references_from_expression(column))
 
