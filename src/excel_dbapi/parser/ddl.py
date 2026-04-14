@@ -4,6 +4,7 @@ from typing import Any, Dict
 
 from ._constants import _normalize_column_type
 from .tokenizer import (
+    _parse_column_identifier,
     _parse_table_identifier,
     _split_csv_preserve_empty,
     _tokenize,
@@ -37,16 +38,35 @@ def _parse_create(query: str) -> Dict[str, Any]:
         if not col.strip():
             continue
         stripped_col = col.strip()
-        parts = stripped_col.split()
-        if len(parts) > 2:
-            raise ValueError(
-                "Malformed column definition: "
-                f"{stripped_col!r}. Missing comma between column definitions?"
-            )
-        column_name = parts[0]
+        # Parse column name, handling double-quoted identifiers
+        if stripped_col.startswith('"'):
+            # Find closing quote (handle escaped doubles)
+            idx = 1
+            while idx < len(stripped_col):
+                if stripped_col[idx] == '"':
+                    if idx + 1 < len(stripped_col) and stripped_col[idx + 1] == '"':
+                        idx += 2
+                        continue
+                    break
+                idx += 1
+            if idx >= len(stripped_col) or stripped_col[idx] != '"':
+                raise ValueError(f"Malformed column definition: {stripped_col!r}")
+            raw_name = stripped_col[: idx + 1]
+            remainder = stripped_col[idx + 1 :].strip()
+        else:
+            parts = stripped_col.split(None, 1)
+            raw_name = parts[0]
+            remainder = parts[1].strip() if len(parts) > 1 else ""
+        column_name = _parse_column_identifier(raw_name)
         type_name = "TEXT"
-        if len(parts) == 2:
-            type_name = _normalize_column_type(parts[1], context="CREATE TABLE")
+        if remainder:
+            # remainder should be a single type token
+            if " " in remainder:
+                raise ValueError(
+                    "Malformed column definition: "
+                    f"{stripped_col!r}. Missing comma between column definitions?"
+                )
+            type_name = _normalize_column_type(remainder, context="CREATE TABLE")
         columns.append(column_name)
         column_definitions.append({"name": column_name, "type_name": type_name})
     if not columns:
@@ -85,7 +105,7 @@ def _parse_alter(query: str) -> Dict[str, Any]:
             "action": "ALTER",
             "table": table,
             "operation": "ADD_COLUMN",
-            "column": tokens[5],
+            "column": _parse_column_identifier(tokens[5]),
             "type_name": type_name,
         }
 
@@ -96,7 +116,7 @@ def _parse_alter(query: str) -> Dict[str, Any]:
             "action": "ALTER",
             "table": table,
             "operation": "DROP_COLUMN",
-            "column": tokens[5],
+            "column": _parse_column_identifier(tokens[5]),
         }
 
     if operation == "RENAME":
@@ -110,8 +130,8 @@ def _parse_alter(query: str) -> Dict[str, Any]:
             "action": "ALTER",
             "table": table,
             "operation": "RENAME_COLUMN",
-            "old_column": tokens[5],
-            "new_column": tokens[7],
+            "old_column": _parse_column_identifier(tokens[5]),
+            "new_column": _parse_column_identifier(tokens[7]),
         }
 
     raise ValueError(f"Invalid ALTER TABLE format: {query}")
