@@ -4,17 +4,14 @@ from __future__ import annotations
 
 import datetime
 from collections import Counter
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 from excel_dbapi.engines.base import TableData
-
-if TYPE_CHECKING:
-    from excel_dbapi.connection import ExcelConnection
 
 METADATA_SHEET = "__excel_meta__"
 
 
-def list_tables(connection: ExcelConnection, include_meta: bool = False) -> list[str]:
+def list_tables(connection: Any, include_meta: bool = False) -> list[str]:
     """Return worksheet names, excluding metadata sheet by default."""
     sheets: list[str] = connection.engine.list_sheets()
     if not include_meta:
@@ -22,20 +19,21 @@ def list_tables(connection: ExcelConnection, include_meta: bool = False) -> list
     return sheets
 
 
-def has_table(connection: ExcelConnection, table_name: str) -> bool:
+def has_table(connection: Any, table_name: str) -> bool:
     """Check if a worksheet exists (case-insensitive)."""
     return _resolve_sheet_name(connection, table_name) is not None
 
 
-def _resolve_sheet_name(connection: ExcelConnection, table_name: str) -> str | None:
-    for sheet_name in connection.engine.list_sheets():
+def _resolve_sheet_name(connection: Any, table_name: str) -> str | None:
+    sheet_names = cast(list[str], connection.engine.list_sheets())
+    for sheet_name in sheet_names:
         if sheet_name.lower() == table_name.lower():
             return sheet_name
     return None
 
 
 def get_columns(
-    connection: ExcelConnection, table_name: str, sample_size: int | None = 100
+    connection: Any, table_name: str, sample_size: int | None = 100
 ) -> list[dict[str, Any]]:
     """Return column metadata by sampling data rows."""
     resolved_table_name = _resolve_sheet_name(connection, table_name)
@@ -101,7 +99,7 @@ def _classify_value_type(value: Any) -> str:
 
 
 def write_table_metadata(
-    connection: ExcelConnection, table_name: str, columns: list[dict[str, Any]]
+    connection: Any, table_name: str, columns: list[dict[str, Any]]
 ) -> None:
     """Write column metadata to the internal metadata sheet."""
     engine = connection.engine
@@ -158,7 +156,7 @@ def write_table_metadata(
 
 
 def read_table_metadata(
-    connection: ExcelConnection, table_name: str
+    connection: Any, table_name: str
 ) -> list[dict[str, Any]] | None:
     """Read column metadata from the metadata sheet."""
     sheets = connection.engine.list_sheets()
@@ -188,7 +186,7 @@ def read_table_metadata(
     ]
 
 
-def remove_table_metadata(connection: ExcelConnection, table_name: str) -> None:
+def remove_table_metadata(connection: Any, table_name: str) -> None:
     """Remove metadata for a table from the metadata sheet."""
     sheets = connection.engine.list_sheets()
     if METADATA_SHEET not in sheets:

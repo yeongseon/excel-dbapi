@@ -1,4 +1,5 @@
 import os
+import importlib
 from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
@@ -6,12 +7,17 @@ from types import TracebackType
 from typing import Any, Concatenate, Optional, ParamSpec, Protocol, Type, TypeVar, cast, runtime_checkable
 import warnings
 
-from .cursor import ExcelCursor
 from .engines.base import WorkbookBackend
 from .engines.registry import get_engine, resolve_engine_from_dsn
 from .executor import SharedExecutor
 from .engines.result import ExecutionResult
-from .exceptions import InterfaceError, NotSupportedError, OperationalError
+from .exceptions import (
+    DatabaseError,
+    InterfaceError,
+    NotSupportedError,
+    OperationalError,
+    ProgrammingError,
+)
 
 
 @runtime_checkable
@@ -142,14 +148,18 @@ class ExcelConnection:
             )
 
         self._executor = SharedExecutor(
-            self.engine, sanitize_formulas=sanitize_formulas
+            self.engine,
+            sanitize_formulas=sanitize_formulas,
+            connection=self,
         )
         if not self.autocommit:
             self.engine.ensure_write_lock()
         self._snapshot: Any = self.engine.snapshot()
 
     @check_closed
-    def cursor(self) -> ExcelCursor:
+    def cursor(self) -> Any:
+        cursor_module = importlib.import_module("excel_dbapi.cursor")
+        ExcelCursor = cursor_module.ExcelCursor
         return ExcelCursor(self)
 
     @check_closed
@@ -172,10 +182,23 @@ class ExcelConnection:
     def execute(
         self, query: str, params: Optional[tuple[Any, ...]] = None
     ) -> ExecutionResult:
-        self._ensure_write_lock_for_query(query)
-        result = self._executor.execute_with_params(query, params)
-        self._finalize_autocommit(result.action)
-        return result
+        try:
+            self._ensure_write_lock_for_query(query)
+            result = self._executor.execute_with_params(query, params)
+            self._finalize_autocommit(result.action)
+            return result
+        except ValueError as exc:
+            raise ProgrammingError(str(exc)) from exc
+        except NotImplementedError as exc:
+            raise NotSupportedError(str(exc)) from exc
+        except (KeyError, TypeError, IndexError) as exc:
+            raise ProgrammingError(str(exc)) from exc
+        except OSError as exc:
+            raise OperationalError(str(exc)) from exc
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise DatabaseError(str(exc)) from exc
 
     def _ensure_write_lock_for_query(self, query: str) -> None:
         action = query.strip().split(None, 1)[0].upper() if query.strip() else ""

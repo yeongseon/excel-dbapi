@@ -1,10 +1,11 @@
 from typing import Any
 import os
+import re
 import tempfile
 
 import pandas as pd
 
-from ...exceptions import NotSupportedError
+from ...exceptions import DataError, NotSupportedError
 from ...executor import SharedExecutor
 from ..base import TableData, WorkbookBackend, _normalize_headers
 from ..result import ExecutionResult
@@ -20,6 +21,10 @@ class PandasBackend(WorkbookBackend):
         sanitize_formulas: bool = True,
         **options: Any,
     ) -> None:
+        if not data_only:
+            raise NotSupportedError(
+                "The pandas backend does not support data_only=False; use the openpyxl backend instead"
+            )
         super().__init__(
             file_path,
             data_only=data_only,
@@ -41,6 +46,42 @@ class PandasBackend(WorkbookBackend):
             wb.save(self.file_path)
             wb.close()
         self.data = pd.read_excel(self.file_path, sheet_name=None)
+        for sheet_name, frame in self.data.items():
+            self._validate_columns(sheet_name, frame.columns)
+
+    def _validate_columns(self, sheet_name: str, columns: pd.Index) -> None:
+        normalized_headers: set[str] = set()
+        normalized_pairs: set[tuple[str, str]] = set()
+
+        for index, column in enumerate(columns, start=1):
+            column_name = str(column)
+            trimmed = column_name.strip()
+            if not trimmed or trimmed.startswith("Unnamed:"):
+                raise DataError(f"Empty or None header at column index {index}")
+
+            match = re.match(r"^(?P<base>.+)\.(?P<suffix>[1-9]\d*)$", trimmed)
+            if match is not None:
+                base = match.group("base").strip()
+                base_key = base.casefold()
+                if base_key in normalized_headers:
+                    raise DataError(
+                        f"Duplicate header: '{base}' (sheet '{sheet_name}')"
+                    )
+                normalized_pairs.add((base_key, trimmed.casefold()))
+
+            header_key = trimmed.casefold()
+            if header_key in normalized_headers:
+                raise DataError(
+                    f"Duplicate header: '{trimmed}' (sheet '{sheet_name}')"
+                )
+            normalized_headers.add(header_key)
+
+        for base_key, suffixed_key in normalized_pairs:
+            if base_key == suffixed_key:
+                continue
+            if base_key not in normalized_headers:
+                continue
+            raise DataError(f"Duplicate header detected in sheet '{sheet_name}'")
 
     def save(self) -> None:
         directory = os.path.dirname(self.file_path) or "."
@@ -106,7 +147,7 @@ class PandasBackend(WorkbookBackend):
         self.data[sheet_name] = pd.concat(
             [frame, pd.DataFrame([row_data])], ignore_index=True
         )
-        return len(self.data[sheet_name])
+        return len(self.data[sheet_name]) + 1
 
     def create_sheet(self, name: str, headers: list[str]) -> None:
         if name in self.data:

@@ -361,7 +361,9 @@ class TestGraphConnectionCreateDrop:
         add_reqs = [
             r for r in state["requests"] if r[0] == "POST" and "/worksheets/add" in r[1]
         ]
-        assert len(add_reqs) == 1
+        created_names = [str(req[2].get("name", "")) for req in add_reqs]
+        assert "Products" in created_names
+        assert len(add_reqs) >= 1
         conn.close()
 
     def test_drop_table(self):

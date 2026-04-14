@@ -296,7 +296,8 @@ conn.close()
 The Graph backend is **read-only by default**. Write operations require explicit opt-in
 and a valid Azure credential with appropriate Graph API permissions.
 
-For details, see the [Usage Guide](docs/USAGE.md).
+For DSN formats and dependency choices, see the
+[Usage Guide Graph section](docs/USAGE.md#graph-backend-dsn-and-installation).
 
 ---
 

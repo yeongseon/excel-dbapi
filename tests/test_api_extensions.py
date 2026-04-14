@@ -162,14 +162,9 @@ class TestDataOnlyControl:
         assert rows[0][2] == "=A2+B2"
         conn.close()
 
-    def test_data_only_pandas_engine_accepted(self, tmp_xlsx):
-        """pandas engine should accept data_only without error (ignored)."""
-        conn = ExcelConnection(tmp_xlsx, engine="pandas", data_only=False)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM Sheet1")
-        rows = cursor.fetchall()
-        assert len(rows) == 2
-        conn.close()
+    def test_data_only_pandas_engine_rejected(self, tmp_xlsx):
+        with pytest.raises(NotSupportedError, match="does not support data_only=False"):
+            ExcelConnection(tmp_xlsx, engine="pandas", data_only=False)
 
 
 # ==============================================================================

@@ -6,6 +6,41 @@
 pip install excel-dbapi
 ```
 
+## Graph Backend DSN and Installation
+
+Use the Graph backend to query remote workbooks on Microsoft 365.
+
+### Extras
+
+- `pip install excel-dbapi[graph]`: Graph backend with generic token provider support.
+- `pip install excel-dbapi[graph-azure]`: includes Azure Identity for `DefaultAzureCredential` and other Azure credential flows.
+
+Choose `graph-azure` when you want excel-dbapi to acquire tokens through `azure-identity` directly.
+
+### DSN Formats
+
+- `msgraph://drives/{drive_id}/items/{item_id}`
+  - Generic Graph endpoint form when you already know drive/item IDs.
+- `sharepoint://{tenant}.sharepoint.com/sites/{site}/Shared Documents/path/to/workbook.xlsx`
+  - SharePoint site path form; excel-dbapi resolves the target workbook through Graph.
+- `onedrive://path/to/workbook.xlsx`
+  - OneDrive path form for the signed-in user's drive.
+
+### Example
+
+```python
+from excel_dbapi.connection import ExcelConnection
+
+with ExcelConnection(
+    "msgraph://drives/{drive_id}/items/{item_id}",
+    engine="graph",
+    credential=your_credential,
+) as conn:
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM Sheet1")
+    print(cursor.fetchall())
+```
+
 ## Basic Example
 
 ```python

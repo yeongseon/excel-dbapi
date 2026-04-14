@@ -1,5 +1,6 @@
 import copy
 from datetime import date, datetime, time
+import importlib
 import re
 from typing import Any, Callable, Protocol, cast
 
@@ -207,12 +208,35 @@ def _tv_or(a: bool | None, b: bool | None) -> bool | None:
 
 
 class SharedExecutor:
-    def __init__(self, backend: WorkbookBackend, *, sanitize_formulas: bool = True):
+    def __init__(
+        self,
+        backend: WorkbookBackend,
+        *,
+        sanitize_formulas: bool = True,
+        connection: Any | None = None,
+    ):
         self.backend = backend
         self.sanitize_formulas = sanitize_formulas
+        self._connection = connection
         self._subquery_cache: dict[int, Any] = {}
         self._outer_row_stack: list[dict[str, Any]] = []
         self._cte_tables: dict[str, TableData] = {}
+
+    def _write_metadata_for_headers(self, table_name: str, headers: list[str]) -> None:
+        if self._connection is None:
+            return
+        reflection_module = importlib.import_module("excel_dbapi.reflection")
+
+        columns = [
+            {
+                "name": header,
+                "type_name": "TEXT",
+                "nullable": True,
+                "primary_key": False,
+            }
+            for header in headers
+        ]
+        reflection_module.write_table_metadata(self._connection, table_name, columns)
 
     def _ensure_writable(self, action: str) -> None:
         """Raise NotSupportedError if backend is read-only and action mutates data."""
@@ -641,6 +665,7 @@ class SharedExecutor:
                     )
                 seen.add(lower)
             self.backend.create_sheet(table, columns)
+            self._write_metadata_for_headers(table, columns)
             return ExecutionResult(
                 action=action,
                 rows=[],
@@ -652,9 +677,19 @@ class SharedExecutor:
         if action == "DROP":
             if resolved_table is None:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
-            if len(self.backend.list_sheets()) <= 1:
+            reflection_module = importlib.import_module("excel_dbapi.reflection")
+            metadata_sheet = reflection_module.METADATA_SHEET
+
+            user_sheets = [
+                sheet_name
+                for sheet_name in self.backend.list_sheets()
+                if sheet_name != metadata_sheet
+            ]
+            if len(user_sheets) <= 1:
                 raise ValueError("Cannot drop the only remaining sheet")
             self.backend.drop_sheet(resolved_table)
+            if self._connection is not None:
+                reflection_module.remove_table_metadata(self._connection, resolved_table)
             return ExecutionResult(
                 action=action,
                 rows=[],
@@ -679,6 +714,7 @@ class SharedExecutor:
                 for row in data.rows:
                     row.append(None)
                 self.backend.write_sheet(resolved_table, data)
+                self._write_metadata_for_headers(resolved_table, list(data.headers))
             elif operation == "DROP_COLUMN":
                 col = parsed["column"]
                 if col not in data.headers:
@@ -693,6 +729,7 @@ class SharedExecutor:
                     if idx < len(row):
                         row.pop(idx)
                 self.backend.write_sheet(resolved_table, data)
+                self._write_metadata_for_headers(resolved_table, list(data.headers))
             elif operation == "RENAME_COLUMN":
                 old_col = parsed["old_column"]
                 new_col = parsed["new_column"]
@@ -705,6 +742,7 @@ class SharedExecutor:
                 idx = data.headers.index(old_col)
                 data.headers[idx] = new_col
                 self.backend.write_sheet(resolved_table, data)
+                self._write_metadata_for_headers(resolved_table, list(data.headers))
             else:
                 raise ValueError(f"Unsupported ALTER operation: {operation}")
 

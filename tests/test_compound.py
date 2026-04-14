@@ -4,6 +4,7 @@ import pytest
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.exceptions import ProgrammingError
 from excel_dbapi.parser import parse_sql
 
 
@@ -119,7 +120,7 @@ def test_union_column_count_mismatch(tmp_path: Path) -> None:
     _create_compound_workbook(file_path)
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
-        with pytest.raises(ValueError, match="column counts"):
+        with pytest.raises(ProgrammingError, match="column counts"):
             conn.execute("SELECT id FROM t1 UNION SELECT id, name FROM t2")
 
 
