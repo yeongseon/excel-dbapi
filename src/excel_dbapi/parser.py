@@ -885,6 +885,9 @@ _SCALAR_FUNCTION_NAMES = frozenset(
         "LENGTH",
         "SUBSTR",
         "SUBSTRING",
+        "ABS",
+        "ROUND",
+        "REPLACE",
         "CONCAT",
         "YEAR",
         "MONTH",
@@ -4328,30 +4331,31 @@ def _annotate_column_tables(expression: Any) -> None:
         _annotate_column_tables(expression.get(key))
 
 
-def _parse_upsert_assignment_value(value_text: str) -> Any:
+def _parse_assignment_expression(
+    value_text: str,
+    *,
+    annotate_tables: bool,
+    error_message: str,
+) -> Any:
     stripped = value_text.strip()
     if not stripped:
-        raise ValueError("Invalid ON CONFLICT clause format")
-
-    is_expression = bool(re.match(r"(?i)^CASE\b", stripped)) or bool(
-        re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, stripped)
+        raise ValueError(error_message)
+    parsed = _parse_column_expression(
+        stripped,
+        allow_wildcard=False,
+        allow_aggregates=False,
     )
-    if not is_expression:
-        expression_tokens = _tokenize_expression(stripped)
-        is_expression = any(
-            token in {"+", "-", "*", "/", "||", "(", ")"} for token in expression_tokens
-        )
-
-    if is_expression:
-        parsed = _parse_column_expression(
-            stripped,
-            allow_wildcard=False,
-            allow_aggregates=False,
-        )
+    if annotate_tables:
         _annotate_column_tables(parsed)
-        return parsed
+    return parsed
 
-    return _parse_value(stripped)
+
+def _parse_upsert_assignment_value(value_text: str) -> Any:
+    return _parse_assignment_expression(
+        value_text,
+        annotate_tables=True,
+        error_message="Invalid ON CONFLICT clause format",
+    )
 
 
 def _parse_on_conflict_clause(
@@ -5186,16 +5190,11 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         if "=" not in assignment:
             raise ValueError(f"Invalid UPDATE format: {query}")
         col, value = assignment.split("=", 1)
-        parsed_value: Any
-        value_text = value.strip()
-        if re.match(r"(?i)^CASE\b", value_text):
-            parsed_value = _parse_column_expression(
-                value_text,
-                allow_wildcard=False,
-                allow_aggregates=False,
-            )
-        else:
-            parsed_value = _parse_value(value)
+        parsed_value = _parse_assignment_expression(
+            value,
+            annotate_tables=False,
+            error_message=f"Invalid UPDATE format: {query}",
+        )
         assignments.append({"column": col.strip(), "value": parsed_value})
 
     where = None

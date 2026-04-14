@@ -12,7 +12,7 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
         {
             "action": "UPDATE",
             "table": "Users",
-            "set": [{"column": "name", "value": "Bob"}],
+            "set": [{"column": "name", "value": {"type": "literal", "value": "Bob"}}],
             "where": {
                 "conditions": [{"column": "id", "operator": "=", "value": 1}],
                 "conjunctions": [],
@@ -26,8 +26,11 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "UPDATE",
             "table": "Users",
             "set": [
-                {"column": "score", "value": 9},
-                {"column": "note", "value": "done"},
+                {"column": "score", "value": {"type": "literal", "value": 9}},
+                {
+                    "column": "note",
+                    "value": {"type": "literal", "value": "done"},
+                },
             ],
             "where": {
                 "conditions": [{"column": "id", "operator": "IN", "value": (1, 2)}],
@@ -41,7 +44,7 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
         {
             "action": "UPDATE",
             "table": "Users",
-            "set": [{"column": "note", "value": "x,y"}],
+            "set": [{"column": "note", "value": {"type": "literal", "value": "x,y"}}],
             "where": None,
             "params": None,
         },

@@ -101,6 +101,12 @@ class ExcelCursor:
     def executemany(
         self, query: str, seq_of_params: Iterable[Sequence[Any]]
     ) -> "ExcelCursor":
+        self._results = []
+        self._index = 0
+        self.description = None
+        self.rowcount = -1
+        self.lastrowid = None
+        self._has_result_set = False
         ensure_write_lock = getattr(
             self.connection, "_ensure_write_lock_for_query", None
         )
@@ -121,6 +127,12 @@ class ExcelCursor:
                     query, tuple(params)
                 )
             except ValueError as exc:
+                self._results = []
+                self._index = 0
+                self.description = None
+                self.rowcount = -1
+                self.lastrowid = None
+                self._has_result_set = False
                 mapped: Exception = ProgrammingError(str(exc))
                 if supports_transactions:
                     self.connection.engine.restore(snapshot)
@@ -130,6 +142,12 @@ class ExcelCursor:
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
             except NotImplementedError as exc:
+                self._results = []
+                self._index = 0
+                self.description = None
+                self.rowcount = -1
+                self.lastrowid = None
+                self._has_result_set = False
                 mapped = NotSupportedError(str(exc))
                 if supports_transactions:
                     self.connection.engine.restore(snapshot)
@@ -139,6 +157,12 @@ class ExcelCursor:
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
             except (KeyError, TypeError, IndexError) as exc:
+                self._results = []
+                self._index = 0
+                self.description = None
+                self.rowcount = -1
+                self.lastrowid = None
+                self._has_result_set = False
                 mapped = ProgrammingError(str(exc))
                 if supports_transactions:
                     self.connection.engine.restore(snapshot)
@@ -148,6 +172,12 @@ class ExcelCursor:
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
             except OSError as exc:
+                self._results = []
+                self._index = 0
+                self.description = None
+                self.rowcount = -1
+                self.lastrowid = None
+                self._has_result_set = False
                 mapped = OperationalError(str(exc))
                 if supports_transactions:
                     self.connection.engine.restore(snapshot)
@@ -157,6 +187,12 @@ class ExcelCursor:
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
             except DatabaseError as exc:
+                self._results = []
+                self._index = 0
+                self.description = None
+                self.rowcount = -1
+                self.lastrowid = None
+                self._has_result_set = False
                 if supports_transactions:
                     self.connection.engine.restore(snapshot)
                     raise
@@ -165,6 +201,12 @@ class ExcelCursor:
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
             except Exception as exc:
+                self._results = []
+                self._index = 0
+                self.description = None
+                self.rowcount = -1
+                self.lastrowid = None
+                self._has_result_set = False
                 mapped = DatabaseError(str(exc))
                 if supports_transactions:
                     self.connection.engine.restore(snapshot)

@@ -63,7 +63,7 @@ def test_parser_on_conflict_do_update() -> None:
     assert first_value["source"] == "excluded"
     assert first_value["table"] == "excluded"
     assert first_value["name"] == "name"
-    assert on_conflict["set"][1]["value"] == 31
+    assert on_conflict["set"][1]["value"] == {"type": "literal", "value": 31}
 
 
 @pytest.mark.parametrize(

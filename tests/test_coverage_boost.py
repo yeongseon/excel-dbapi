@@ -460,7 +460,7 @@ def test_update_with_where_param_binding() -> None:
         "UPDATE Sheet1 SET name = ? WHERE id = ?",
         ("Alice", 42),
     )
-    assert parsed["set"][0]["value"] == "Alice"
+    assert parsed["set"][0]["value"] == {"type": "literal", "value": "Alice"}
     assert parsed["where"]["conditions"][0]["value"] == 42
 
 

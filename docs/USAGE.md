@@ -149,7 +149,7 @@ with ExcelConnection("sample.xlsx") as conn:
 ## Limitations
 
 - `PandasEngine` rewrites workbooks and may drop formatting, charts, and formulas.
-- `OpenpyxlEngine` loads with `data_only=True`, so formulas are evaluated to values when reading.
+- `OpenpyxlEngine` defaults to `data_only=True`, so formulas are read as cached values unless you set `data_only=False` on `ExcelConnection(...)`.
 - Some advanced SQL patterns remain limited; see [SQL_SPEC.md](SQL_SPEC.md) for the
   exact supported subset and restrictions.
 - No concurrent write support — use a single-writer model.

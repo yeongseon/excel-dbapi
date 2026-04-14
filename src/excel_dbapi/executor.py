@@ -125,6 +125,55 @@ def _concat(args: list[Any]) -> str:
     return "".join(str(value) for value in args if value is not None)
 
 
+def _abs(args: list[Any]) -> Any:
+    value = args[0]
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("expected numeric value")
+    if isinstance(value, (int, float)):
+        return abs(value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError("expected numeric value")
+        return abs(float(text))
+    raise ValueError("expected numeric value")
+
+
+def _round(args: list[Any]) -> Any:
+    value = args[0]
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError("expected numeric value")
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError("expected numeric value")
+        numeric = float(text)
+    else:
+        raise ValueError("expected numeric value")
+
+    if len(args) < 2 or args[1] is None:
+        return round(numeric)
+    precision = _to_int_like(args[1])
+    return round(numeric, precision)
+
+
+def _replace(args: list[Any]) -> Any:
+    source = args[0]
+    if source is None:
+        return None
+    old = args[1]
+    if old is None:
+        return str(source)
+    new = args[2]
+    return str(source).replace(str(old), "" if new is None else str(new))
+
+
 def _date_value(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value.replace(tzinfo=None) if value.tzinfo is not None else value
@@ -184,6 +233,9 @@ _SCALAR_FUNCTIONS: dict[str, ScalarFunctionSpec] = {
     "LENGTH": (1, 1, _length),
     "SUBSTR": (2, 3, _substr),
     "SUBSTRING": (2, 3, _substr),
+    "ABS": (1, 1, _abs),
+    "ROUND": (1, 2, _round),
+    "REPLACE": (3, 3, _replace),
     "CONCAT": (1, None, _concat),
     "YEAR": (1, 1, _year),
     "MONTH": (1, 1, _month),
@@ -456,14 +508,23 @@ class SharedExecutor:
                 for update in updates:
                     col_index = headers.index(update["column"])
                     raw_value = update["value"]
-                    if isinstance(raw_value, dict) and raw_value.get("type") in {
-                        "case",
-                        "binary_op",
-                        "unary_op",
-                        "literal",
-                        "function",
-                        "cast",
-                    }:
+                    should_eval_str = (
+                        isinstance(raw_value, str) and raw_value in scoped_row
+                    )
+                    if should_eval_str or (
+                        isinstance(raw_value, dict)
+                        and raw_value.get("type")
+                        in {
+                            "alias",
+                            "case",
+                            "binary_op",
+                            "unary_op",
+                            "literal",
+                            "column",
+                            "function",
+                            "cast",
+                        }
+                    ):
                         evaluated = self._eval_expression(
                             raw_value,
                             scoped_row,
@@ -692,16 +753,27 @@ class SharedExecutor:
                     for update in upsert_updates:
                         col_index = headers.index(update["column"])
                         raw_value = update["value"]
-                        if isinstance(raw_value, dict) and raw_value.get("type") in {
-                            "alias",
-                            "case",
-                            "binary_op",
-                            "unary_op",
-                            "literal",
-                            "column",
-                            "function",
-                            "cast",
-                        }:
+                        should_eval_str = isinstance(raw_value, str) and (
+                            raw_value in row_map
+                            or (
+                                raw_value.startswith("excluded.")
+                                and raw_value.split(".", 1)[1] in excluded_map
+                            )
+                        )
+                        if should_eval_str or (
+                            isinstance(raw_value, dict)
+                            and raw_value.get("type")
+                            in {
+                                "alias",
+                                "case",
+                                "binary_op",
+                                "unary_op",
+                                "literal",
+                                "column",
+                                "function",
+                                "cast",
+                            }
+                        ):
                             evaluated = self._eval_expression(
                                 raw_value,
                                 row_map,
@@ -3174,6 +3246,44 @@ class SharedExecutor:
                             f"Cannot cast value {value!r} to DATE"
                         ) from exc
             raise ProgrammingError(f"Cannot cast value {value!r} to DATE")
+
+        if normalized_target == "DATETIME":
+            if isinstance(value, datetime):
+                return value.replace(tzinfo=None) if value.tzinfo is not None else value
+            if isinstance(value, date):
+                return datetime.combine(value, time.min)
+            if isinstance(value, str):
+                stripped = value.strip()
+                if not stripped:
+                    raise ProgrammingError("Cannot cast empty string to DATETIME")
+                normalized_datetime = stripped
+                if normalized_datetime.endswith("Z"):
+                    normalized_datetime = normalized_datetime[:-1] + "+00:00"
+                try:
+                    parsed_datetime = datetime.fromisoformat(normalized_datetime)
+                except ValueError as exc:
+                    raise ProgrammingError(
+                        f"Cannot cast value {value!r} to DATETIME"
+                    ) from exc
+                return (
+                    parsed_datetime.replace(tzinfo=None)
+                    if parsed_datetime.tzinfo is not None
+                    else parsed_datetime
+                )
+            raise ProgrammingError(f"Cannot cast value {value!r} to DATETIME")
+
+        if normalized_target == "BOOLEAN":
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)) and value in {0, 1}:
+                return bool(value)
+            if isinstance(value, str):
+                normalized_boolean = value.strip().lower()
+                if normalized_boolean in {"1", "true", "yes"}:
+                    return True
+                if normalized_boolean in {"0", "false", "no"}:
+                    return False
+            raise ProgrammingError(f"Cannot cast value {value!r} to BOOLEAN")
 
         raise ProgrammingError(f"Unsupported CAST target type: {target_type}")
 

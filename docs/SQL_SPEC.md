@@ -40,8 +40,8 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `WHERE` | `IS NULL` / `IS NOT NULL` | ✅ | |
 | `WHERE` | Subquery in `IN` / `NOT IN` | ✅ | Single-column `SELECT`; non-correlated only |
 | `WHERE` | `EXISTS (SELECT ...)` | ✅ | Correlated and non-correlated supported |
-| Expressions | `CAST(expr AS type)` | ✅ | Type coercion in SELECT and WHERE |
-| Expressions | Scalar functions | ✅ | `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTR`, `COALESCE`, `ABS`, `ROUND`, `REPLACE` |
+| Expressions | `CAST(expr AS type)` | ✅ | Supported target types: `INTEGER`/`INT`, `REAL`/`FLOAT`/`NUMERIC`, `TEXT`, `DATE`, `DATETIME`, `BOOLEAN` |
+| Expressions | Scalar functions | ✅ | `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTR`, `COALESCE`, `NULLIF`, `CONCAT`, `YEAR`, `MONTH`, `DAY`, `ABS`, `ROUND`, `REPLACE` |
 | Aggregation | `FILTER (WHERE ...)` | ✅ | Per-aggregate filtering clause |
 | `JOIN` | `INNER`, `LEFT`, `RIGHT` | ✅ | Chained joins supported |
 | `JOIN` | `FULL OUTER` / `FULL` | ✅ | |
@@ -61,7 +61,7 @@ This table is the **single authoritative matrix** for SQL feature support.
 | DML | `INSERT` single-row / multi-row | ✅ | `VALUES (...)`, `VALUES (...), (...)` |
 | DML | `INSERT ... SELECT` | ✅ | |
 | DML | UPSERT (`ON CONFLICT`) | ✅ | `DO NOTHING`, `DO UPDATE SET ...` |
-| DML | `UPDATE ... SET ... [WHERE ...]` | ✅ | CASE in SET is supported |
+| DML | `UPDATE ... SET ... [WHERE ...]` | ✅ | SET supports row-level expressions (columns, arithmetic, functions, CAST, CASE) |
 | DML | `DELETE FROM ... [WHERE ...]` | ✅ | |
 | DDL | `CREATE TABLE`, `DROP TABLE` | ✅ | |
 | DDL | `ALTER TABLE ADD/DROP/RENAME COLUMN` | ✅ | `COLUMN` keyword required |

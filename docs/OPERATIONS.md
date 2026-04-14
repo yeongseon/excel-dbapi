@@ -15,7 +15,7 @@ If multiple writers are required, coordinate with an external lock.
 
 - Better workbook fidelity for most classroom/business spreadsheets.
 - Good default for mixed read/write workloads.
-- Loads with `data_only=True` — formulas are evaluated to their cached values.
+- Defaults to `data_only=True` — formulas are read as cached values unless you configure `data_only=False` when creating the connection.
 
 ### pandas engine
 

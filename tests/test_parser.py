@@ -62,7 +62,7 @@ def test_parse_update_and_delete():
     parsed = parse_sql("UPDATE Sheet1 SET name = 'Bob' WHERE id = 1")
     assert parsed["action"] == "UPDATE"
     assert parsed["set"][0]["column"] == "name"
-    assert parsed["set"][0]["value"] == "Bob"
+    assert parsed["set"][0]["value"] == {"type": "literal", "value": "Bob"}
     assert parsed["where"]["conditions"][0]["value"] == 1
 
     parsed = parse_sql("DELETE FROM Sheet1 WHERE id = 2")
