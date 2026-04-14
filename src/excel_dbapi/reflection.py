@@ -27,7 +27,7 @@ def has_table(connection: Any, table_name: str) -> bool:
 def _resolve_sheet_name(connection: Any, table_name: str) -> str | None:
     sheet_names = cast(list[str], connection.engine.list_sheets())
     for sheet_name in sheet_names:
-        if sheet_name.lower() == table_name.lower():
+        if sheet_name.casefold() == table_name.casefold():
             return sheet_name
     return None
 

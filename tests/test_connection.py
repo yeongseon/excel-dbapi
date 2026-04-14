@@ -47,3 +47,23 @@ def test_connection_execute_maps_exceptions(raised, expected):
         conn.execute("SELECT * FROM Sheet1")
 
     conn.close()
+
+
+def test_nonexistent_file_raises_operational_error():
+    """Issue 1: FileNotFoundError should be wrapped as OperationalError."""
+    with pytest.raises(Exception) as exc_info:
+        ExcelConnection("nonexistent_file.xlsx")
+    # Should be OperationalError, not raw FileNotFoundError
+    assert "OperationalError" in str(type(exc_info.value)) or "Operational" in str(
+        exc_info.value
+    )
+
+
+def test_bad_graph_dsn_raises_operational_error():
+    """Issue 1: Invalid DSN ValueError should be wrapped as OperationalError."""
+    with pytest.raises(Exception) as exc_info:
+        ExcelConnection("bad://dsn")
+    # Should be OperationalError, not raw ValueError
+    assert "OperationalError" in str(type(exc_info.value)) or "Operational" in str(
+        exc_info.value
+    )

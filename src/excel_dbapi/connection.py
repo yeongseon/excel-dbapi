@@ -29,6 +29,13 @@ from .exceptions import (
     ProgrammingError,
 )
 
+try:
+    from openpyxl.utils.exceptions import InvalidFileException as _InvalidFileException
+
+    InvalidFileException: type[Exception] | None = _InvalidFileException
+except ImportError:
+    InvalidFileException = None
+
 
 @runtime_checkable
 class _TokenProvider(Protocol):
@@ -141,13 +148,28 @@ class ExcelConnection:
         if credential is not None:
             opts["credential"] = credential
 
-        self.engine: WorkbookBackend = engine_cls(
-            self.file_path,
-            data_only=data_only,
-            create=create,
-            sanitize_formulas=sanitize_formulas,
-            **opts,
-        )
+        # ── Instantiate backend with exception translation ────────────────
+        try:
+            self.engine: WorkbookBackend = engine_cls(
+                self.file_path,
+                data_only=data_only,
+                create=create,
+                sanitize_formulas=sanitize_formulas,
+                **opts,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            # Translate backend construction errors to OperationalError
+            raise OperationalError(str(exc)) from exc
+        except Exception as exc:
+            # Catch and translate openpyxl's InvalidFileException and other errors
+            exc_class_name = type(exc).__name__
+            if exc_class_name == "InvalidFileException" or (
+                InvalidFileException is not None
+                and isinstance(exc, InvalidFileException)
+            ):
+                raise OperationalError(str(exc)) from exc
+            # Re-raise other unexpected exceptions
+            raise
 
         # Guard: non-transactional backends reject autocommit=False
         if not autocommit and not getattr(self.engine, "supports_transactions", True):

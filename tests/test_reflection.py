@@ -275,3 +275,34 @@ def test_table_metadata_operations_are_case_insensitive(tmp_path: Path) -> None:
 
         remove_table_metadata(conn, "PEOPLE")
         assert read_table_metadata(conn, "People") is None
+
+
+def test_resolve_sheet_name_casefold():
+    """Issue 2: _resolve_sheet_name should use casefold for Unicode case-insensitivity."""
+    from excel_dbapi.reflection import _resolve_sheet_name
+    from openpyxl import Workbook
+    from pathlib import Path
+    import tempfile
+
+    # Create a workbook with a Unicode sheet name
+    with tempfile.TemporaryDirectory() as tmpdir:
+        wb_path = Path(tmpdir) / "unicode_test.xlsx"
+        wb = Workbook()
+        ws = wb.active
+        assert ws is not None
+        ws.title = "Straße"  # German ß which casefolds to "strasse"
+        wb.save(wb_path)
+
+        conn = ExcelConnection(str(wb_path))
+
+        # Test that both lowercase and the original name resolve correctly
+        result = _resolve_sheet_name(conn, "straße")
+        assert result == "Straße", f"Expected 'Straße', got {result!r}"
+
+        # Test that casefold handles the German ß correctly
+        result = _resolve_sheet_name(
+            conn, "STRASSE"
+        )  # uppercase would match via casefold
+        assert result == "Straße", f"Expected 'Straße', got {result!r}"
+
+        conn.close()
