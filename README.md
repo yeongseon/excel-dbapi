@@ -300,7 +300,7 @@ conn.close()
 ```
 
 The Graph backend is **read-only by default**. Write operations require explicit opt-in
-and a valid Azure credential with appropriate Graph API permissions.
+and a credential/token provider with appropriate Graph API permissions.
 
 Graph metadata sync is best-effort for write operations: if worksheet mutation succeeds
 but metadata sync fails, excel-dbapi keeps the worksheet change and logs a warning.

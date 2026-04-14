@@ -3,12 +3,14 @@ from datetime import date, datetime, time
 import importlib
 import logging
 import re
+import warnings
 from typing import Any, Callable, Protocol, cast
 
 from .engines.base import TableData, WorkbookBackend
 from .engines.result import Description, ExecutionResult
 from .exceptions import ProgrammingError
 from .parser import _parse_column_expression, parse_sql
+from .reflection import METADATA_SHEET
 from .sanitize import sanitize_cell_value, sanitize_row
 
 _READONLY_ACTIONS = frozenset({"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"})
@@ -247,6 +249,24 @@ class SharedExecutor:
                 exc,
             )
             existing_metadata = None
+            normalized_type_by_column = (
+                {key.casefold(): value for key, value in type_by_column.items()}
+                if type_by_column is not None
+                else {}
+            )
+            has_complete_type_map = all(
+                header.casefold() in normalized_type_by_column for header in headers
+            )
+            if not has_complete_type_map:
+                warnings.warn(
+                    (
+                        f"Could not read metadata for '{table_name}'; "
+                        "skipping metadata update to avoid data loss"
+                    ),
+                    UserWarning,
+                    stacklevel=2,
+                )
+                return
 
         if existing_metadata is not None:
             existing_type_by_column = {
@@ -724,6 +744,10 @@ class SharedExecutor:
             )
 
         if action == "CREATE":
+            if table.casefold() == METADATA_SHEET.casefold():
+                raise ProgrammingError(
+                    "Cannot perform DDL on reserved metadata table '__excel_meta__'"
+                )
             if resolved_table is not None:
                 raise ValueError(f"Sheet '{table}' already exists")
             columns = parsed["columns"]
@@ -748,15 +772,18 @@ class SharedExecutor:
             )
 
         if action == "DROP":
+            if table.casefold() == METADATA_SHEET.casefold():
+                raise ProgrammingError(
+                    "Cannot perform DDL on reserved metadata table '__excel_meta__'"
+                )
             if resolved_table is None:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
             reflection_module = importlib.import_module("excel_dbapi.reflection")
-            metadata_sheet = reflection_module.METADATA_SHEET
 
             user_sheets = [
                 sheet_name
                 for sheet_name in self.backend.list_sheets()
-                if sheet_name != metadata_sheet
+                if sheet_name != METADATA_SHEET
             ]
             if len(user_sheets) <= 1:
                 raise ValueError("Cannot drop the only remaining sheet")
@@ -778,6 +805,10 @@ class SharedExecutor:
             )
 
         if action == "ALTER":
+            if table.casefold() == METADATA_SHEET.casefold():
+                raise ProgrammingError(
+                    "Cannot perform DDL on reserved metadata table '__excel_meta__'"
+                )
             if resolved_table is None:
                 raise ValueError(f"Sheet '{table}' not found in Excel")
             operation = parsed.get("operation")
@@ -800,13 +831,21 @@ class SharedExecutor:
                 )
             elif operation == "DROP_COLUMN":
                 col = parsed["column"]
-                if col not in data.headers:
+                target = col.casefold()
+                idx = next(
+                    (
+                        i
+                        for i, header in enumerate(data.headers)
+                        if header.casefold() == target
+                    ),
+                    -1,
+                )
+                if idx == -1:
                     raise ValueError(f"Column '{col}' not found in '{table}'")
                 if len(data.headers) == 1:
                     raise ValueError(
                         f"Cannot drop the only column '{col}' from '{table}'"
                     )
-                idx = data.headers.index(col)
                 data.headers.pop(idx)
                 for row in data.rows:
                     if idx < len(row):
@@ -816,13 +855,22 @@ class SharedExecutor:
             elif operation == "RENAME_COLUMN":
                 old_col = parsed["old_column"]
                 new_col = parsed["new_column"]
-                if old_col not in data.headers:
+                target = old_col.casefold()
+                idx = next(
+                    (
+                        i
+                        for i, header in enumerate(data.headers)
+                        if header.casefold() == target
+                    ),
+                    -1,
+                )
+                if idx == -1:
                     raise ValueError(f"Column '{old_col}' not found in '{table}'")
-                if new_col in data.headers or new_col.lower() in {
-                    h.lower() for h in data.headers if h != old_col
+                matched_old_col = data.headers[idx]
+                if new_col in data.headers or new_col.casefold() in {
+                    h.casefold() for h in data.headers if h != matched_old_col
                 }:
                     raise ValueError(f"Column '{new_col}' already exists in '{table}'")
-                idx = data.headers.index(old_col)
                 data.headers[idx] = new_col
                 self.backend.write_sheet(resolved_table, data)
                 self._write_metadata_for_headers(resolved_table, list(data.headers))

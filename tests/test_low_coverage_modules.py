@@ -22,7 +22,7 @@ from excel_dbapi.engines.graph.session import WorkbookSession
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
 from excel_dbapi.engines.pandas.backend import PandasBackend
 from excel_dbapi.engines.result import ExecutionResult
-from excel_dbapi.exceptions import NotSupportedError, OperationalError
+from excel_dbapi.exceptions import NotSupportedError, OperationalError, ProgrammingError
 from excel_dbapi.executor import SharedExecutor
 
 
@@ -253,8 +253,10 @@ def test_cursor_paths_for_executemany_and_fetch() -> None:
     cursor = ExcelCursor(cast(Any, FakeConnection()))
     with pytest.raises(NotSupportedError):
         cursor.executemany("SELECT 1", [(1,)])
-    assert cursor.fetchone() is None
-    assert cursor.fetchmany(0) == []
+    with pytest.raises(ProgrammingError, match="No result set"):
+        cursor.fetchone()
+    with pytest.raises(ProgrammingError, match="No result set"):
+        cursor.fetchmany(0)
 
 
 def test_connection_str_and_repr(tmp_path: Path) -> None:

@@ -44,7 +44,11 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
 INVALID_CASES: list[tuple[str, type[Exception], str]] = [
     ("CREATE TABLE", ValueError, "Invalid CREATE TABLE format"),
     ("CREATE TABLE Bad", ValueError, "Invalid CREATE TABLE format"),
-    ("CREATE TABLE Bad (,)", ValueError, "Invalid CREATE TABLE format"),
+    (
+        "CREATE TABLE Bad (,)",
+        ValueError,
+        "Malformed column definitions: empty column definition found",
+    ),
     ("DROP TABLE", ValueError, "Invalid DROP TABLE format"),
     ("DROP TABLE A B", ValueError, "Invalid DROP TABLE format"),
 ]

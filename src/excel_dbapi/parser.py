@@ -110,6 +110,106 @@ def _split_csv(text: str) -> List[str]:
     return items
 
 
+def _split_csv_preserve_empty(text: str) -> List[str]:
+    items: List[str] = []
+    current: List[str] = []
+    in_single = False
+    in_double = False
+    paren_depth = 0
+    case_depth = 0
+    index = 0
+
+    while index < len(text):
+        char = text[index]
+
+        if in_single:
+            current.append(char)
+            if char == "'":
+                if index + 1 < len(text) and text[index + 1] == "'":
+                    current.append(text[index + 1])
+                    index += 1
+                else:
+                    in_single = False
+            index += 1
+            continue
+
+        if in_double:
+            current.append(char)
+            if char == '"':
+                if index + 1 < len(text) and text[index + 1] == '"':
+                    current.append(text[index + 1])
+                    index += 1
+                else:
+                    in_double = False
+            index += 1
+            continue
+
+        if char == "'":
+            in_single = True
+            current.append(char)
+            index += 1
+            continue
+
+        if char == '"':
+            in_double = True
+            current.append(char)
+            index += 1
+            continue
+
+        if char == "(":
+            paren_depth += 1
+            current.append(char)
+            index += 1
+            continue
+
+        if char == ")":
+            if paren_depth > 0:
+                paren_depth -= 1
+            current.append(char)
+            index += 1
+            continue
+
+        if char.isalpha() or char == "_":
+            start = index
+            while index < len(text) and (text[index].isalnum() or text[index] == "_"):
+                index += 1
+            word = text[start:index]
+            upper = word.upper()
+            if upper == "CASE":
+                case_depth += 1
+            elif upper == "END" and case_depth > 0:
+                case_depth -= 1
+            current.append(word)
+            continue
+
+        if char == "," and paren_depth == 0 and case_depth == 0:
+            items.append("".join(current).strip())
+            current = []
+            index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    items.append("".join(current).strip())
+    return items
+
+
+_COLUMN_TYPE_ALIASES = {
+    "INT": "INTEGER",
+    "FLOAT": "REAL",
+}
+
+_SUPPORTED_COLUMN_TYPES = {"TEXT", "INTEGER", "REAL", "BOOLEAN", "DATE", "DATETIME"}
+
+
+def _normalize_column_type(type_name: str, *, context: str) -> str:
+    normalized = _COLUMN_TYPE_ALIASES.get(type_name.upper(), type_name.upper())
+    if normalized not in _SUPPORTED_COLUMN_TYPES:
+        raise ValueError(f"Unsupported {context} column type: {type_name}")
+    return normalized
+
+
 def _tokenize(text: str) -> List[str]:
     tokens: List[str] = []
     current: List[str] = []
@@ -4563,12 +4663,22 @@ def _parse_create(query: str) -> Dict[str, Any]:
         raise ValueError(f"Invalid CREATE TABLE format: {query}")
     table_name, cols_part = table_and_cols.split("(", 1)
     table = table_name.strip()
+    if not table:
+        raise ValueError("Table name is required in CREATE TABLE")
     cols_part = cols_part.rsplit(")", 1)[0]
-    raw_columns = _split_csv(cols_part)
+    raw_columns = _split_csv_preserve_empty(cols_part)
+    empty_indexes = [
+        index for index, definition in enumerate(raw_columns) if not definition.strip()
+    ]
+    has_single_trailing_empty = (
+        len(empty_indexes) == 1 and empty_indexes[0] == len(raw_columns) - 1
+    )
+    if empty_indexes and not has_single_trailing_empty:
+        raise ValueError("Malformed column definitions: empty column definition found")
     columns = []
     column_definitions = []
     for col in raw_columns:
-        if not col:
+        if not col.strip():
             continue
         stripped_col = col.strip()
         parts = stripped_col.split()
@@ -4580,12 +4690,7 @@ def _parse_create(query: str) -> Dict[str, Any]:
         column_name = parts[0]
         type_name = "TEXT"
         if len(parts) == 2:
-            parsed_type = parts[1].upper()
-            if parsed_type == "INT":
-                parsed_type = "INTEGER"
-            elif parsed_type == "FLOAT":
-                parsed_type = "REAL"
-            type_name = parsed_type
+            type_name = _normalize_column_type(parts[1], context="CREATE TABLE")
         columns.append(column_name)
         column_definitions.append({"name": column_name, "type_name": type_name})
     if not columns:
@@ -4619,12 +4724,7 @@ def _parse_alter(query: str) -> Dict[str, Any]:
     if operation == "ADD":
         if len(tokens) != 7 or tokens[4].upper() != "COLUMN":
             raise ValueError(f"Invalid ALTER TABLE format: {query}")
-        type_name = tokens[6].upper()
-        if type_name == "FLOAT":
-            type_name = "REAL"
-        supported_types = {"TEXT", "INTEGER", "REAL", "BOOLEAN", "DATE", "DATETIME"}
-        if type_name not in supported_types:
-            raise ValueError(f"Unsupported ALTER TABLE column type: {tokens[6]}")
+        type_name = _normalize_column_type(tokens[6], context="ALTER TABLE")
         return {
             "action": "ALTER",
             "table": table,

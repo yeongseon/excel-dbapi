@@ -62,6 +62,7 @@ class ExcelCursor:
         self.rowcount = -1
         self.lastrowid: int | None = None
         self.arraysize = 1
+        self._has_result_set = False
 
     @check_closed
     def execute(
@@ -86,6 +87,7 @@ class ExcelCursor:
         self.description = result.description
         if not self.description:
             self.description = None
+        self._has_result_set = result.action in {"SELECT", "COMPOUND"}
         self.rowcount = result.rowcount
         self.lastrowid = result.lastrowid
         return self
@@ -172,6 +174,7 @@ class ExcelCursor:
         self._results = []
         self._index = 0
         self.description = None
+        self._has_result_set = False
         self.rowcount = total_rowcount
         self.lastrowid = last_rowid
         if self.connection.autocommit and last_action is not None:
@@ -180,6 +183,10 @@ class ExcelCursor:
 
     @check_closed
     def fetchone(self) -> Optional[tuple[Any, ...]]:
+        if not self._has_result_set:
+            raise ProgrammingError(
+                "No result set: call execute() with a SELECT statement first"
+            )
         if self._index >= len(self._results):
             return None
         result = self._results[self._index]
@@ -188,12 +195,20 @@ class ExcelCursor:
 
     @check_closed
     def fetchall(self) -> List[tuple[Any, ...]]:
+        if not self._has_result_set:
+            raise ProgrammingError(
+                "No result set: call execute() with a SELECT statement first"
+            )
         results = self._results[self._index :]
         self._index = len(self._results)
         return results
 
     @check_closed
     def fetchmany(self, size: Optional[int] = None) -> List[tuple[Any, ...]]:
+        if not self._has_result_set:
+            raise ProgrammingError(
+                "No result set: call execute() with a SELECT statement first"
+            )
         count = self.arraysize if size is None else size
         if count <= 0:
             return []
