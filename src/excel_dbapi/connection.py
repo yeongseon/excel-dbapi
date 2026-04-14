@@ -203,19 +203,35 @@ class ExcelConnection:
 
     @check_closed
     def commit(self) -> None:
-        self.engine.save()
-        self._snapshot = self.engine.snapshot()
+        try:
+            self.engine.save()
+            self._snapshot = self.engine.snapshot()
+        except Exception as exc:
+            from excel_dbapi.exceptions import Error as _DBAPIError
+
+            if isinstance(exc, _DBAPIError):
+                raise
+            raise OperationalError(str(exc)) from exc
 
     @check_closed
     def rollback(self) -> None:
-        if not getattr(self.engine, "supports_transactions", True):
-            raise NotSupportedError(
-                f"Backend '{self.engine.__class__.__name__}' does not support "
-                f"rollback (non-transactional backend)"
-            )
-        if self.autocommit:
-            raise NotSupportedError("Rollback is disabled when autocommit is enabled")
-        self.engine.restore(self._snapshot)
+        try:
+            if not getattr(self.engine, "supports_transactions", True):
+                raise NotSupportedError(
+                    f"Backend '{self.engine.__class__.__name__}' does not support "
+                    f"rollback (non-transactional backend)"
+                )
+            if self.autocommit:
+                raise NotSupportedError(
+                    "Rollback is disabled when autocommit is enabled"
+                )
+            self.engine.restore(self._snapshot)
+        except Exception as exc:
+            from excel_dbapi.exceptions import Error as _DBAPIError
+
+            if isinstance(exc, _DBAPIError):
+                raise
+            raise OperationalError(str(exc)) from exc
 
     @check_closed
     def execute(
@@ -256,8 +272,15 @@ class ExcelConnection:
             self._snapshot = self.engine.snapshot()
 
     def close(self) -> None:
-        self.engine.close()
-        self.closed = True
+        try:
+            self.engine.close()
+            self.closed = True
+        except Exception as exc:
+            from excel_dbapi.exceptions import Error as _DBAPIError
+
+            if isinstance(exc, _DBAPIError):
+                raise
+            raise OperationalError(str(exc)) from exc
 
     @property
     def engine_name(self) -> str:

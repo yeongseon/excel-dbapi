@@ -479,9 +479,10 @@ class SharedExecutor:
                     f"No columns defined in sheet '{resolved_table}' — cannot resolve column references"
                 )
             headers = list(table_data.headers)
+            header_index = self._build_header_index(headers)
             updates = parsed["set"]
             for update in updates:
-                if update["column"] not in headers:
+                if not self._has_header(update["column"], header_index):
                     raise ValueError(
                         f"Unknown column: {update['column']}. Available columns: {headers}"
                     )
@@ -506,10 +507,17 @@ class SharedExecutor:
                 if where and not self._matches_where(scoped_row, where):
                     continue
                 for update in updates:
-                    col_index = headers.index(update["column"])
+                    col_index = self._resolve_header_index(
+                        update["column"], header_index
+                    )
+                    if col_index is None:
+                        raise ValueError(
+                            f"Unknown column: {update['column']}. Available columns: {headers}"
+                        )
                     raw_value = update["value"]
                     should_eval_str = (
-                        isinstance(raw_value, str) and raw_value in scoped_row
+                        isinstance(raw_value, str)
+                        and self._resolve_row_value(scoped_row, raw_value) is not None
                     )
                     if should_eval_str or (
                         isinstance(raw_value, dict)
@@ -528,7 +536,7 @@ class SharedExecutor:
                         evaluated = self._eval_expression(
                             raw_value,
                             scoped_row,
-                            lambda c: scoped_row.get(c),
+                            lambda c: self._resolve_row_value(scoped_row, c),
                         )
                     else:
                         evaluated = raw_value
@@ -615,12 +623,13 @@ class SharedExecutor:
             if not table_data.headers:
                 raise ValueError("Cannot insert into sheet without headers")
             headers = list(table_data.headers)
+            header_index = self._build_header_index(headers)
 
             values = parsed["values"]
             insert_columns = parsed.get("columns")
 
             if insert_columns is not None:
-                missing = [col for col in insert_columns if col not in headers]
+                missing = self._missing_headers(insert_columns, header_index)
                 if missing:
                     raise ValueError(
                         f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}"
@@ -672,7 +681,12 @@ class SharedExecutor:
                 else:
                     row_values = [None for _ in headers]
                     for col, value in zip(insert_columns, values_row):
-                        row_values[headers.index(col)] = value
+                        col_index = self._resolve_header_index(col, header_index)
+                        if col_index is None:
+                            raise ValueError(
+                                f"Unknown column: {col}. Available columns: {headers}"
+                            )
+                        row_values[col_index] = value
                 sanitized_row = (
                     sanitize_row(row_values) if self.sanitize_formulas else row_values
                 )
@@ -682,19 +696,28 @@ class SharedExecutor:
             if on_conflict is not None:
                 target_cols = on_conflict["target_columns"]
                 for target_col in target_cols:
-                    if target_col not in headers:
+                    if not self._has_header(target_col, header_index):
                         raise ValueError(
                             f"ON CONFLICT column '{target_col}' not found in headers"
                         )
 
+                unresolved_target_indices = [
+                    self._resolve_header_index(target_col, header_index)
+                    for target_col in target_cols
+                ]
+                if any(
+                    target_index is None for target_index in unresolved_target_indices
+                ):
+                    raise ValueError("ON CONFLICT target column resolution failed")
                 target_indices = [
-                    headers.index(target_col) for target_col in target_cols
+                    cast(int, target_index)
+                    for target_index in unresolved_target_indices
                 ]
                 action_name = str(on_conflict.get("action", "")).upper()
                 upsert_updates = on_conflict.get("set", [])
                 if action_name == "UPDATE":
                     for update in upsert_updates:
-                        if update["column"] not in headers:
+                        if not self._has_header(update["column"], header_index):
                             raise ValueError(
                                 f"Unknown column: {update['column']}. Available columns: {headers}"
                             )
@@ -747,17 +770,30 @@ class SharedExecutor:
 
                     def _resolve_upsert_column(column_name: str) -> Any:
                         if column_name.startswith("excluded."):
-                            return excluded_map.get(column_name.split(".", 1)[1])
-                        return row_map.get(column_name)
+                            excluded_column = column_name.split(".", 1)[1]
+                            return self._resolve_row_value(
+                                excluded_map, excluded_column
+                            )
+                        return self._resolve_row_value(row_map, column_name)
 
                     for update in upsert_updates:
-                        col_index = headers.index(update["column"])
+                        col_index = self._resolve_header_index(
+                            update["column"], header_index
+                        )
+                        if col_index is None:
+                            raise ValueError(
+                                f"Unknown column: {update['column']}. Available columns: {headers}"
+                            )
                         raw_value = update["value"]
                         should_eval_str = isinstance(raw_value, str) and (
-                            raw_value in row_map
+                            self._resolve_row_value(row_map, raw_value) is not None
                             or (
                                 raw_value.startswith("excluded.")
-                                and raw_value.split(".", 1)[1] in excluded_map
+                                and self._resolve_row_value(
+                                    excluded_map,
+                                    raw_value.split(".", 1)[1],
+                                )
+                                is not None
                             )
                         )
                         if should_eval_str or (
@@ -984,7 +1020,10 @@ class SharedExecutor:
         deduped: list[dict[str, Any]] = []
         for row in rows:
             key = self._normalize_row_key(
-                tuple(row.get(column_name) for column_name in projected_columns)
+                tuple(
+                    self._resolve_row_value(row, column_name)
+                    for column_name in projected_columns
+                )
             )
             if key in seen:
                 continue
@@ -999,25 +1038,81 @@ class SharedExecutor:
     ) -> None:
         if not order_by:
             return
-        selected = set(selected_columns)
+        selected = {column.casefold() for column in selected_columns}
         for item in order_by:
             column_name = str(item["column"])
-            if column_name not in selected:
+            if column_name.casefold() not in selected:
                 raise ValueError(
                     "ORDER BY columns must appear in SELECT list when using DISTINCT"
                 )
 
     @staticmethod
+    def _build_header_index(headers: list[str]) -> dict[str, int]:
+        header_index: dict[str, int] = {}
+        for index, header in enumerate(headers):
+            lowered = header.casefold()
+            if lowered not in header_index:
+                header_index[lowered] = index
+        return header_index
+
+    @staticmethod
+    def _resolve_header_index(column: str, header_index: dict[str, int]) -> int | None:
+        return header_index.get(column.casefold())
+
+    @staticmethod
+    def _resolve_header_name(
+        column: str,
+        headers: list[str],
+        header_index: dict[str, int],
+    ) -> str | None:
+        index = SharedExecutor._resolve_header_index(column, header_index)
+        if index is None:
+            return None
+        return headers[index]
+
+    @staticmethod
+    def _has_header(column: str, header_index: dict[str, int]) -> bool:
+        return SharedExecutor._resolve_header_index(column, header_index) is not None
+
+    @staticmethod
+    def _missing_headers(
+        columns: list[str],
+        header_index: dict[str, int],
+    ) -> list[str]:
+        return [
+            column
+            for column in columns
+            if not SharedExecutor._has_header(column, header_index)
+        ]
+
+    @staticmethod
+    def _resolve_row_value(row: dict[str, Any], key: str) -> Any:
+        if key in row:
+            return row.get(key)
+        lowered = key.casefold()
+        for column, value in row.items():
+            if isinstance(column, str) and column.casefold() == lowered:
+                return value
+        return None
+
+    @staticmethod
     def _normalize_single_source_aggregate_arg(arg: str, headers: list[str]) -> str:
+        header_index = SharedExecutor._build_header_index(headers)
         if arg == "*" or "." not in arg:
-            return arg
-        if arg in headers:
-            return arg
+            resolved = SharedExecutor._resolve_header_name(arg, headers, header_index)
+            return resolved or arg
+        if SharedExecutor._has_header(arg, header_index):
+            resolved = SharedExecutor._resolve_header_name(arg, headers, header_index)
+            if resolved is not None:
+                return resolved
         if any("." in header for header in headers):
             return arg
         _, bare_column = arg.split(".", 1)
-        if bare_column in headers:
-            return bare_column
+        resolved_bare = SharedExecutor._resolve_header_name(
+            bare_column, headers, header_index
+        )
+        if resolved_bare is not None:
+            return resolved_bare
         return arg
 
     @staticmethod
@@ -1495,9 +1590,12 @@ class SharedExecutor:
         if not order_by:
             return rows
         if available_columns is not None:
+            available_columns_casefold = {
+                column_name.casefold() for column_name in available_columns
+            }
             for item in order_by:
                 col = str(item["column"])
-                if col not in available_columns:
+                if col.casefold() not in available_columns_casefold:
                     raise ValueError(
                         f"Unknown column: {col}. Available columns: {sorted(available_columns)}"
                     )
@@ -1551,7 +1649,7 @@ class SharedExecutor:
                 row[col_ref] = self._eval_expression(
                     expression,
                     row,
-                    lambda col_name: row.get(col_name),
+                    lambda col_name: self._resolve_row_value(row, col_name),
                 )
 
         return expression_columns
@@ -1697,7 +1795,7 @@ class SharedExecutor:
                 self._eval_expression(
                     partition_expression,
                     row,
-                    lambda col_name: row.get(col_name),
+                    lambda col_name: self._resolve_row_value(row, col_name),
                 )
                 for partition_expression in partition_expressions
             ]
@@ -1717,8 +1815,9 @@ class SharedExecutor:
                 ordered_rows = self._apply_order_by(
                     partition_rows,
                     order_by,
-                    value_getter=lambda candidate, column_name: candidate.get(
-                        column_name
+                    value_getter=lambda candidate, column_name: self._resolve_row_value(
+                        candidate,
+                        column_name,
                     ),
                 )
 
@@ -1738,7 +1837,9 @@ class SharedExecutor:
                 dense_rank = 1
                 for position, row in enumerate(ordered_rows, start=1):
                     current_key = tuple(
-                        self._sort_key(row.get(str(item["column"])))
+                        self._sort_key(
+                            self._resolve_row_value(row, str(item["column"]))
+                        )
                         for item in order_by
                     )
                     if previous_key is None:
@@ -2557,7 +2658,7 @@ class SharedExecutor:
                 rows_for_output = self._apply_order_by(
                     rows_for_output,
                     order_by,
-                    value_getter=lambda r, col: r.get(col),
+                    value_getter=lambda r, col: self._resolve_row_value(r, col),
                     available_columns=available_cols,
                 )
 
@@ -2568,7 +2669,10 @@ class SharedExecutor:
                 rows_for_output = rows_for_output[:limit]
 
             rows_out = [
-                tuple(row.get(column_name) for column_name in selected_columns)
+                tuple(
+                    self._resolve_row_value(row, column_name)
+                    for column_name in selected_columns
+                )
                 for row in rows_for_output
             ]
         else:
@@ -2583,7 +2687,7 @@ class SharedExecutor:
                     projected_row[key] = self._eval_expression(
                         inner,
                         row,
-                        lambda col_name: row.get(col_name),
+                        lambda col_name: self._resolve_row_value(row, col_name),
                     )
                 projected_rows.append(projected_row)
 
@@ -2608,7 +2712,7 @@ class SharedExecutor:
                 projected_rows = self._apply_order_by(
                     projected_rows,
                     order_by,
-                    value_getter=lambda r, col: r.get(col),
+                    value_getter=lambda r, col: self._resolve_row_value(r, col),
                     available_columns=available_columns,
                 )
 
@@ -2619,7 +2723,10 @@ class SharedExecutor:
                 projected_rows = projected_rows[:limit]
 
             rows_out = [
-                tuple(row.get(column_name) for column_name in selected_columns)
+                tuple(
+                    self._resolve_row_value(row, column_name)
+                    for column_name in selected_columns
+                )
                 for row in projected_rows
             ]
         description: Description = [
@@ -2663,6 +2770,7 @@ class SharedExecutor:
             )
 
         # --- Non-aggregate path ---
+        header_index = self._build_header_index(headers)
         selected_columns: list[str]
         output_names: list[str]
         needs_expression_projection = any(
@@ -2673,19 +2781,27 @@ class SharedExecutor:
             output_names = list(headers)
         else:
             selected_columns = [self._source_key(column) for column in columns]
+            selected_columns = [
+                self._resolve_header_name(column, headers, header_index) or column
+                for column in selected_columns
+            ]
             output_names = [self._output_name(column) for column in columns]
 
         missing: list[str]
         if columns == ["*"]:
-            missing = [col for col in selected_columns if col not in headers]
+            missing = []
         elif needs_expression_projection:
             referenced_columns: set[str] = set()
             for column in columns:
                 inner = self._unwrap_alias(column)
                 referenced_columns.update(self._collect_expression_column_refs(inner))
-            missing = sorted(col for col in referenced_columns if col not in headers)
+            missing = sorted(
+                col
+                for col in referenced_columns
+                if not self._has_header(col, header_index)
+            )
         else:
-            missing = [col for col in selected_columns if col not in headers]
+            missing = self._missing_headers(selected_columns, header_index)
         if missing:
             raise ValueError(
                 f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}"
@@ -2714,7 +2830,7 @@ class SharedExecutor:
                     projected_row[key] = self._eval_expression(
                         inner,
                         row,
-                        lambda col_name: row.get(col_name),
+                        lambda col_name: self._resolve_row_value(row, col_name),
                     )
                 projected_rows.append(projected_row)
         else:
@@ -2739,7 +2855,7 @@ class SharedExecutor:
             projected_rows = self._apply_order_by(
                 projected_rows,
                 order_by,
-                value_getter=lambda r, col: r.get(col),
+                value_getter=lambda r, col: self._resolve_row_value(r, col),
                 available_columns=available_columns,
             )
 
@@ -2750,7 +2866,9 @@ class SharedExecutor:
             projected_rows = projected_rows[:limit]
 
         rows_out = [
-            tuple(projected_row.get(col) for col in selected_columns)
+            tuple(
+                self._resolve_row_value(projected_row, col) for col in selected_columns
+            )
             for projected_row in projected_rows
         ]
 
@@ -2861,6 +2979,7 @@ class SharedExecutor:
         group_by: list[Any] | None,
         having: dict[str, Any] | None,
     ) -> ExecutionResult:
+        header_index = self._build_header_index(headers)
         group_entries: list[tuple[str, Any]] = []
         if group_by is not None:
             for group_expression in group_by:
@@ -2871,7 +2990,7 @@ class SharedExecutor:
                 missing_group_columns = sorted(
                     column_name
                     for column_name in referenced_columns
-                    if column_name not in headers
+                    if not self._has_header(column_name, header_index)
                 )
                 if missing_group_columns:
                     raise ValueError(
@@ -2926,7 +3045,7 @@ class SharedExecutor:
                 aggregate_column = inner
                 raw_arg = str(aggregate_column.get("arg"))
                 arg = self._normalize_single_source_aggregate_arg(raw_arg, headers)
-                if arg != "*" and arg not in headers:
+                if arg != "*" and not self._has_header(arg, header_index):
                     raise ValueError(
                         f"Unknown column: {raw_arg}. Available columns: {headers}"
                     )
@@ -2948,7 +3067,9 @@ class SharedExecutor:
             column_name = self._source_key(column)
             referenced_columns = self._collect_expression_column_refs(inner)
             missing_selected_columns = sorted(
-                ref for ref in referenced_columns if ref not in headers
+                ref
+                for ref in referenced_columns
+                if not self._has_header(ref, header_index)
             )
             if missing_selected_columns:
                 raise ValueError(
@@ -2974,7 +3095,9 @@ class SharedExecutor:
                 normalized_arg = self._normalize_single_source_aggregate_arg(
                     arg, headers
                 )
-                if normalized_arg != "*" and normalized_arg not in headers:
+                if normalized_arg != "*" and not self._has_header(
+                    normalized_arg, header_index
+                ):
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
@@ -3008,7 +3131,9 @@ class SharedExecutor:
                 normalized_arg = self._normalize_single_source_aggregate_arg(
                     arg, headers
                 )
-                if normalized_arg != "*" and normalized_arg not in headers:
+                if normalized_arg != "*" and not self._has_header(
+                    normalized_arg, header_index
+                ):
                     raise ValueError(
                         f"Unknown column: {arg}. Available columns: {headers}"
                     )
@@ -3039,11 +3164,13 @@ class SharedExecutor:
                             self._eval_expression(
                                 group_expression,
                                 row,
-                                lambda col_name: row.get(col_name),
+                                lambda col_name: self._resolve_row_value(row, col_name),
                             )
                         )
                     else:
-                        group_values.append(row.get(str(group_expression)))
+                        group_values.append(
+                            self._resolve_row_value(row, str(group_expression))
+                        )
                 groups.setdefault(tuple(group_values), []).append(row)
 
             for grouped_key, group_values in groups.items():
@@ -3091,7 +3218,7 @@ class SharedExecutor:
             seen: set[tuple[Any, ...]] = set()
             deduped: list[dict[str, Any]] = []
             for row in grouped_rows:
-                key = tuple(row.get(col) for col in output_sources)
+                key = tuple(self._resolve_row_value(row, col) for col in output_sources)
                 if key not in seen:
                     seen.add(key)
                     deduped.append(row)
@@ -3109,7 +3236,7 @@ class SharedExecutor:
             grouped_rows = self._apply_order_by(
                 grouped_rows,
                 order_by_clause,
-                value_getter=lambda r, col: r.get(col),
+                value_getter=lambda r, col: self._resolve_row_value(r, col),
                 available_columns=available_order_columns,
             )
 
@@ -3120,7 +3247,8 @@ class SharedExecutor:
             grouped_rows = grouped_rows[:limit]
 
         rows_out = [
-            tuple(row.get(col) for col in output_sources) for row in grouped_rows
+            tuple(self._resolve_row_value(row, col) for col in output_sources)
+            for row in grouped_rows
         ]
         description: Description = [
             (col, None, None, None, None, None, None) for col in output_columns
@@ -3199,18 +3327,22 @@ class SharedExecutor:
                     raise ValueError("COUNT(DISTINCT *) is not supported")
                 return len(
                     {
-                        row.get(arg)
+                        self._resolve_row_value(row, arg)
                         for row in applicable_rows
-                        if row.get(arg) is not None
+                        if self._resolve_row_value(row, arg) is not None
                     }
                 )
             if arg == "*":
                 return len(applicable_rows)
-            return sum(1 for row in applicable_rows if row.get(arg) is not None)
+            return sum(
+                1
+                for row in applicable_rows
+                if self._resolve_row_value(row, arg) is not None
+            )
 
         values: list[_SupportsOrder] = []
         for row in applicable_rows:
-            value = row.get(arg)
+            value = self._resolve_row_value(row, arg)
             if value is not None:
                 values.append(cast(_SupportsOrder, value))
         if not values:
@@ -3495,12 +3627,16 @@ class SharedExecutor:
                 if operand.get("type") in {"subquery", "exists"}:
                     return self._eval_subquery(operand, outer_row=row)
                 return self._eval_expression(
-                    operand, row, lambda col_name: row.get(col_name)
+                    operand,
+                    row,
+                    lambda col_name: self._resolve_row_value(row, col_name),
                 )
             if as_column:
-                return row.get(str(operand))
-            if type(operand) is str and operand in row:
-                return row.get(operand)
+                return self._resolve_row_value(row, str(operand))
+            if type(operand) is str:
+                resolved_operand = self._resolve_row_value(row, operand)
+                if resolved_operand is not None:
+                    return resolved_operand
             return operand
 
         row_value = _resolve_operand(column, as_column=True)
@@ -3594,8 +3730,8 @@ class SharedExecutor:
             row_text = str(row_value)
             pattern = value
             if operator in {"ILIKE", "NOT ILIKE"}:
-                row_text = row_text.lower()
-                pattern = pattern.lower()
+                row_text = row_text.casefold()
+                pattern = pattern.casefold()
 
             regex = _build_like_regex(pattern, escape_value)
             is_match = bool(re.match(regex, row_text))

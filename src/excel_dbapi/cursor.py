@@ -226,7 +226,14 @@ class ExcelCursor:
         self.rowcount = total_rowcount
         self.lastrowid = last_rowid
         if self.connection.autocommit and last_action is not None:
-            self.connection._finalize_autocommit(last_action)
+            try:
+                self.connection._finalize_autocommit(last_action)
+            except Exception as exc:
+                from excel_dbapi.exceptions import Error as _DBAPIError
+
+                if isinstance(exc, _DBAPIError):
+                    raise
+                raise OperationalError(str(exc)) from exc
         return self
 
     @check_closed

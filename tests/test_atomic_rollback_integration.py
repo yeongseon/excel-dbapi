@@ -4,6 +4,7 @@ import openpyxl
 import pytest
 
 from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.exceptions import OperationalError
 
 
 @pytest.fixture
@@ -46,7 +47,7 @@ def test_atomic_save_preserves_original_file_on_replace_failure(
     with ExcelConnection(str(workbook_path), autocommit=False) as conn:
         cursor = conn.cursor()
         cursor.execute("UPDATE Sheet1 SET name = 'Bob' WHERE id = 1")
-        with pytest.raises(OSError):
+        with pytest.raises(OperationalError, match="replace failed"):
             conn.commit()
 
     assert workbook_path.read_bytes() == original_bytes
