@@ -104,7 +104,7 @@ excel-dbapi/
 │   ├── engines/             # Backend engine implementations
 │   ├── openpyxl/            # Openpyxl-specific engine
 │   └── py.typed             # PEP 561 marker
-├── tests/                   # 1,187+ tests (coverage tracked in CI)
+├── tests/                   # 1,235+ tests (coverage tracked in CI)
 ├── docs/
 │   ├── SQL_SPEC.md          # Formal SQL grammar (EBNF)
 │   ├── USAGE.md             # Usage guide

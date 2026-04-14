@@ -4,7 +4,7 @@ import importlib
 import logging
 import re
 import warnings
-from typing import Any, Callable, Protocol, cast
+from typing import Any, Callable, Iterator, Protocol, cast
 
 from .engines.base import TableData, WorkbookBackend
 from .engines.result import Description, ExecutionResult
@@ -2858,6 +2858,33 @@ class SharedExecutor:
                 return self._source_key(operand)
             return None
 
+        def _iter_having_operand_refs(node: Any) -> Iterator[str]:
+            if not isinstance(node, dict):
+                return
+
+            node_type = node.get("type")
+            if node_type == "not":
+                yield from _iter_having_operand_refs(node.get("operand"))
+                return
+            if node_type == "exists":
+                return
+
+            if "conditions" in node:
+                for child in node.get("conditions", []):
+                    yield from _iter_having_operand_refs(child)
+                return
+
+            for candidate in (node.get("column"), node.get("value")):
+                if isinstance(candidate, (list, tuple)):
+                    for item in candidate:
+                        ref = _operand_reference(item)
+                        if ref is not None:
+                            yield ref
+                    continue
+                ref = _operand_reference(candidate)
+                if ref is not None:
+                    yield ref
+
         output_columns: list[str] = []
         output_sources: list[str] = []
         required_aggregates: dict[
@@ -2909,19 +2936,7 @@ class SharedExecutor:
             output_sources.append(column_name)
 
         if having is not None:
-            refs: list[str] = []
-            if "conditions" in having:
-                for condition in having["conditions"]:
-                    if not isinstance(condition, dict):
-                        continue
-                    ref = _operand_reference(condition.get("column"))
-                    if ref is not None:
-                        refs.append(ref)
-            else:
-                ref = _operand_reference(having.get("column"))
-                if ref is not None:
-                    refs.append(ref)
-            for ref in refs:
+            for ref in _iter_having_operand_refs(having):
                 aggregate_spec = self._aggregate_spec_from_label(ref)
                 if aggregate_spec is None:
                     continue
@@ -2975,12 +2990,7 @@ class SharedExecutor:
                 )
 
         if having is not None:
-            for condition in having["conditions"]:
-                if not isinstance(condition, dict):
-                    continue
-                column_ref = _operand_reference(condition.get("column"))
-                if column_ref is None:
-                    continue
+            for column_ref in self._collect_where_column_refs(having):
                 if self._aggregate_spec_from_label(column_ref) is not None:
                     continue
                 if group_by is None or column_ref not in group_by_keys:
@@ -3459,6 +3469,8 @@ class SharedExecutor:
                 )
             if as_column:
                 return row.get(str(operand))
+            if type(operand) is str and operand in row:
+                return row.get(operand)
             return operand
 
         row_value = _resolve_operand(column, as_column=True)

@@ -323,6 +323,15 @@ def _parse_value(token: str) -> Any:
         return token
 
 
+def _parse_table_identifier(token: str) -> str:
+    identifier = token.strip()
+    if not identifier:
+        raise ValueError("Table name is required")
+    if _is_quoted_token(identifier):
+        return str(_parse_value(identifier))
+    return identifier
+
+
 def _parse_numeric_literal(token: str) -> int | float | None:
     if token.startswith(("'", '"')) and token.endswith(("'", '"')):
         return None
@@ -3577,7 +3586,7 @@ def _parse_select(
 
     if len(tokens) <= from_index + 1:
         raise ValueError(f"Invalid SQL query format: {query}")
-    table = tokens[from_index + 1]
+    table = _parse_table_identifier(tokens[from_index + 1])
     from_entry: Dict[str, Any] = {"table": table, "alias": None, "ref": table}
     token_index = from_index + 2
     if token_index < len(tokens):
@@ -3645,7 +3654,7 @@ def _parse_select(
 
         if token_index >= len(tokens):
             raise ValueError("Invalid JOIN clause: missing table")
-        join_table = tokens[token_index]
+        join_table = _parse_table_identifier(tokens[token_index])
         token_index += 1
 
         join_source: Dict[str, Any] = {
@@ -4490,16 +4499,33 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         raise ValueError(f"Invalid INSERT format: {query}")
 
     split_index = 0
-    while (
-        split_index < len(remainder)
-        and not remainder[split_index].isspace()
-        and remainder[split_index] != "("
-    ):
-        split_index += 1
-    table = remainder[:split_index].strip()
+    if remainder[0] in {'"', "'"}:
+        quote_char = remainder[0]
+        split_index = 1
+        while split_index < len(remainder):
+            if remainder[split_index] != quote_char:
+                split_index += 1
+                continue
+            if (
+                split_index + 1 < len(remainder)
+                and remainder[split_index + 1] == quote_char
+            ):
+                split_index += 2
+                continue
+            split_index += 1
+            break
+    else:
+        while (
+            split_index < len(remainder)
+            and not remainder[split_index].isspace()
+            and remainder[split_index] != "("
+        ):
+            split_index += 1
+
+    table = _parse_table_identifier(remainder[:split_index])
+    remainder = remainder[split_index:].strip()
     if not table:
         raise ValueError(f"Invalid INSERT format: {query}")
-    remainder = remainder[split_index:].strip()
 
     columns = None
     if remainder.startswith("("):
@@ -4675,7 +4701,7 @@ def _parse_create(query: str) -> Dict[str, Any]:
     if "(" not in table_and_cols or not table_and_cols.endswith(")"):
         raise ValueError(f"Invalid CREATE TABLE format: {query}")
     table_name, cols_part = table_and_cols.split("(", 1)
-    table = table_name.strip()
+    table = _parse_table_identifier(table_name)
     if not table:
         raise ValueError("Table name is required in CREATE TABLE")
     cols_part = cols_part.rsplit(")", 1)[0]
@@ -4722,7 +4748,7 @@ def _parse_drop(query: str) -> Dict[str, Any]:
         raise ValueError(f"Invalid DROP TABLE format: {query}")
     return {
         "action": "DROP",
-        "table": tokens[2],
+        "table": _parse_table_identifier(tokens[2]),
     }
 
 
@@ -4731,7 +4757,7 @@ def _parse_alter(query: str) -> Dict[str, Any]:
     if len(tokens) < 6 or tokens[0].upper() != "ALTER" or tokens[1].upper() != "TABLE":
         raise ValueError(f"Invalid ALTER TABLE format: {query}")
 
-    table = tokens[2]
+    table = _parse_table_identifier(tokens[2])
     operation = tokens[3].upper()
 
     if operation == "ADD":
@@ -5187,7 +5213,7 @@ def _parse_update(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     before_tokens = _tokenize(before_set.strip())
     if len(before_tokens) < 2 or before_tokens[0].upper() != "UPDATE":
         raise ValueError(f"Invalid UPDATE format: {query}")
-    table = before_tokens[1].strip()
+    table = _parse_table_identifier(before_tokens[1])
 
     where_part = None
     after_set_tokens = _tokenize(after_set.strip())
@@ -5268,7 +5294,7 @@ def _parse_delete(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
     tokens = _tokenize(query.strip())
     if len(tokens) < 3 or tokens[0].upper() != "DELETE" or tokens[1].upper() != "FROM":
         raise ValueError(f"Invalid DELETE format: {query}")
-    table = tokens[2]
+    table = _parse_table_identifier(tokens[2])
 
     where = None
     if len(tokens) > 3:

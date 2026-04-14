@@ -29,8 +29,10 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `SELECT` | Window functions (`OVER (...)`) | ⚠️ Experimental | Core support for `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` |
 | `SELECT` | CTEs (`WITH`) | ⚠️ Experimental | Non-recursive CTEs only |
 | `FROM` | Table aliases | ✅ | Base table and JOIN sources |
-| Identifiers | Unquoted table/column names | ✅ | Must match `[A-Za-z_][A-Za-z0-9_]*` |
-| Identifiers | Quoted / spaced / non-ASCII identifiers | ❌ | Not currently supported for table/column references |
+| Identifiers | Unquoted table names | ✅ | Worksheet names follow Excel naming conventions (not strict SQL identifier grammar) |
+| Identifiers | Quoted table names (`"Sales 2024"`) | ✅ | Use double quotes for names with spaces/special characters |
+| Identifiers | Column names (unquoted) | ✅ | Must match `[A-Za-z_][A-Za-z0-9_]*` |
+| Identifiers | Quoted / spaced / non-ASCII column references | ❌ | Not currently supported in column expressions |
 | `WHERE` | Comparison operators | ✅ | `= == != <> > >= < <=` |
 | `WHERE` | Boolean logic | ✅ | `AND`, `OR`, `NOT`, nested parentheses |
 | `WHERE` | `BETWEEN` / `NOT BETWEEN` | ✅ | Inclusive bounds |

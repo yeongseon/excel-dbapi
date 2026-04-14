@@ -1,3 +1,4 @@
+import datetime
 from typing import Any
 
 from .connection import Credential, ExcelConnection
@@ -29,6 +30,58 @@ paramstyle = "qmark"
 __version__ = "0.4.1"
 
 
+class DBAPITypeObject:
+    def __init__(self, *values: object) -> None:
+        self.values = values
+
+    def __eq__(self, other: object) -> bool:
+        return other in self.values
+
+
+def Date(year: int, month: int, day: int) -> datetime.date:
+    return datetime.date(year, month, day)
+
+
+def Time(hour: int, minute: int, second: int) -> datetime.time:
+    return datetime.time(hour, minute, second)
+
+
+def Timestamp(
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
+    second: int,
+) -> datetime.datetime:
+    return datetime.datetime(year, month, day, hour, minute, second)
+
+
+def DateFromTicks(ticks: float) -> datetime.date:
+    return datetime.date.fromtimestamp(ticks)
+
+
+def TimeFromTicks(ticks: float) -> datetime.time:
+    return datetime.datetime.fromtimestamp(ticks).time()
+
+
+def TimestampFromTicks(ticks: float) -> datetime.datetime:
+    return datetime.datetime.fromtimestamp(ticks)
+
+
+def Binary(string: Any) -> bytes:
+    if isinstance(string, str):
+        return string.encode()
+    return bytes(string)
+
+
+STRING = DBAPITypeObject(str)
+BINARY = DBAPITypeObject(bytes, bytearray, memoryview)
+NUMBER = DBAPITypeObject(int, float, bool)
+DATETIME = DBAPITypeObject(datetime.date, datetime.time, datetime.datetime)
+ROWID = DBAPITypeObject(int)
+
+
 def connect(
     file_path: str,
     engine: str | None = None,
@@ -57,6 +110,18 @@ __all__ = [
     "apilevel",
     "threadsafety",
     "paramstyle",
+    "Date",
+    "Time",
+    "Timestamp",
+    "DateFromTicks",
+    "TimeFromTicks",
+    "TimestampFromTicks",
+    "Binary",
+    "STRING",
+    "BINARY",
+    "NUMBER",
+    "DATETIME",
+    "ROWID",
     "__version__",
     "Error",
     "Warning",

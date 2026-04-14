@@ -1,6 +1,6 @@
 # excel-dbapi Roadmap
 
-> Current line: 0.6.x series  
+> Current line: 0.4.x series  
 > SQL support reference: [`docs/SQL_SPEC.md`](SQL_SPEC.md)
 
 ---

@@ -1,5 +1,7 @@
 """Tests for PEP 249 compliance details."""
 
+import datetime
+
 import pytest
 
 
@@ -215,3 +217,58 @@ class TestConnectSanitizeFormulasParam:
         conn = ExcelConnection(xlsx_path, sanitize_formulas=False)
         assert conn.engine.sanitize_formulas is False
         conn.close()
+
+
+class TestPep249ConstructorsAndTypeObjects:
+    def test_datetime_constructors(self) -> None:
+        import excel_dbapi
+
+        assert excel_dbapi.Date(2026, 4, 14) == datetime.date(2026, 4, 14)
+        assert excel_dbapi.Time(9, 8, 7) == datetime.time(9, 8, 7)
+        assert excel_dbapi.Timestamp(2026, 4, 14, 9, 8, 7) == datetime.datetime(
+            2026, 4, 14, 9, 8, 7
+        )
+
+    def test_tick_constructors(self) -> None:
+        import excel_dbapi
+
+        ticks = 1_700_000_000.0
+        assert excel_dbapi.DateFromTicks(ticks) == datetime.date.fromtimestamp(ticks)
+        assert (
+            excel_dbapi.TimeFromTicks(ticks)
+            == datetime.datetime.fromtimestamp(ticks).time()
+        )
+        assert excel_dbapi.TimestampFromTicks(ticks) == datetime.datetime.fromtimestamp(
+            ticks
+        )
+
+    def test_binary_constructor(self) -> None:
+        import excel_dbapi
+
+        assert excel_dbapi.Binary("abc") == b"abc"
+        assert excel_dbapi.Binary(b"xyz") == b"xyz"
+
+    def test_type_objects_exported_and_comparable(self) -> None:
+        import excel_dbapi
+
+        for name in [
+            "Date",
+            "Time",
+            "Timestamp",
+            "DateFromTicks",
+            "TimeFromTicks",
+            "TimestampFromTicks",
+            "Binary",
+            "STRING",
+            "BINARY",
+            "NUMBER",
+            "DATETIME",
+            "ROWID",
+        ]:
+            assert name in excel_dbapi.__all__
+
+        assert excel_dbapi.STRING.__eq__(str)
+        assert excel_dbapi.BINARY.__eq__(bytes)
+        assert excel_dbapi.NUMBER.__eq__(int)
+        assert excel_dbapi.DATETIME.__eq__(datetime.datetime)
+        assert excel_dbapi.ROWID.__eq__(int)
