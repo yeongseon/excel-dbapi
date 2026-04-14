@@ -863,8 +863,8 @@ def _parse_select(
                 raise ValueError("Expected alias after AS")
             maybe_alias = tokens[token_index]
         if not _is_reserved_select_token(maybe_alias):
-            from_entry["alias"] = maybe_alias
-            from_entry["ref"] = maybe_alias
+            from_entry["alias"] = _parse_column_identifier(maybe_alias)
+            from_entry["ref"] = _parse_column_identifier(maybe_alias)
             token_index += 1
 
     joins: List[Dict[str, Any]] = []
@@ -938,8 +938,8 @@ def _parse_select(
                     raise ValueError("Expected alias after AS")
                 maybe_alias = tokens[token_index]
             if not _is_reserved_select_token(maybe_alias):
-                join_source["alias"] = maybe_alias
-                join_source["ref"] = maybe_alias
+                join_source["alias"] = _parse_column_identifier(maybe_alias)
+                join_source["ref"] = _parse_column_identifier(maybe_alias)
                 token_index += 1
 
         right_sources = {str(join_source["table"]), str(join_source["ref"])}
