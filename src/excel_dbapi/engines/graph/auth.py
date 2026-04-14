@@ -65,6 +65,14 @@ def _has_get_token_with_args(obj: Any) -> bool:
         sig = inspect.signature(method)
     except (ValueError, TypeError):
         return False
+    for parameter in sig.parameters.values():
+        if parameter.name == "self":
+            continue
+        if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if parameter.name == "scopes":
+            return True
+
     required = [
         p
         for p in sig.parameters.values()

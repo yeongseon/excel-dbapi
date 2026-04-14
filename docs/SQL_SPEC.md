@@ -203,7 +203,7 @@ Subquery limitations:
 - `RETURNING`
 - `CREATE INDEX` / `DROP INDEX`
 - `INTERSECT ALL` / `EXCEPT ALL`
-- Quoted identifiers for table/column references (for example `"full name"`)
+- Quoted column identifiers/references (for example `"full name"`) in expressions
 - Unquoted non-ASCII identifiers in SQL grammar
 
 ---

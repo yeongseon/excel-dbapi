@@ -1611,6 +1611,9 @@ class SharedExecutor:
                 if not isinstance(when_branch, dict):
                     continue
                 SharedExecutor._collect_window_expressions(
+                    when_branch.get("condition"), collected
+                )
+                SharedExecutor._collect_window_expressions(
                     when_branch.get("match"), collected
                 )
                 SharedExecutor._collect_window_expressions(
@@ -1619,6 +1622,33 @@ class SharedExecutor:
             SharedExecutor._collect_window_expressions(
                 expression.get("else"), collected
             )
+            return
+
+        if expression_type == "not":
+            SharedExecutor._collect_window_expressions(
+                expression.get("operand"), collected
+            )
+            return
+
+        if "conditions" in expression:
+            for condition in expression.get("conditions", []):
+                SharedExecutor._collect_window_expressions(condition, collected)
+            return
+
+        if (
+            "column" in expression
+            and "operator" in expression
+            and "value" in expression
+        ):
+            SharedExecutor._collect_window_expressions(
+                expression.get("column"), collected
+            )
+            value = expression.get("value")
+            if isinstance(value, (list, tuple)):
+                for candidate in value:
+                    SharedExecutor._collect_window_expressions(candidate, collected)
+            else:
+                SharedExecutor._collect_window_expressions(value, collected)
 
     def _apply_window_functions(
         self,

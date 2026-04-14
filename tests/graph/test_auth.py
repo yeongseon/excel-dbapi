@@ -78,6 +78,18 @@ class TestNormalizeTokenProvider:
         tp = normalize_token_provider(DuckCred())
         assert isinstance(tp, AzureIdentityTokenProvider)
 
+    def test_azure_credential_varargs_get_token_is_wrapped(self):
+        class VarArgsCred:
+            def get_token(self, *scopes):
+                class T:
+                    token = f"varargs-{','.join(scopes)}"
+
+                return T()
+
+        tp = normalize_token_provider(VarArgsCred())
+        assert isinstance(tp, AzureIdentityTokenProvider)
+        assert tp.get_token() == "varargs-https://graph.microsoft.com/.default"
+
     def test_none_without_azure_identity_raises(self):
         # This test assumes azure-identity is NOT installed in CI.
         # If it IS installed, the test will still pass (just takes

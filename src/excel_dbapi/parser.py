@@ -5169,6 +5169,9 @@ def _parse_with_query(
 
 
 def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str, Any]:
+    if params and _count_unquoted_placeholders(query) == 0:
+        raise ValueError("Too many parameters for placeholders")
+
     tokens = _tokenize(query.strip())
     if not tokens:
         raise ValueError(f"Invalid SQL query format: {query}")
