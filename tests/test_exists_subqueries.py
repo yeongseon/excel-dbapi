@@ -143,7 +143,9 @@ def test_scalar_subquery_multiple_rows_raises(tmp_path: Path) -> None:
     file_path = tmp_path / "scalar_error.xlsx"
     _create_workbook(file_path)
 
-    with pytest.raises(ProgrammingError, match="Scalar subquery returned more than one row"):
+    with pytest.raises(
+        ProgrammingError, match="Scalar subquery returned more than one row"
+    ):
         _select(file_path, "SELECT id FROM users WHERE id = (SELECT id FROM admins)")
 
 

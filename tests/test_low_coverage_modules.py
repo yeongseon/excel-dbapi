@@ -256,6 +256,7 @@ def test_cursor_paths_for_executemany_and_fetch() -> None:
     assert cursor.fetchone() is None
     assert cursor.fetchmany(0) == []
 
+
 def test_connection_str_and_repr(tmp_path: Path) -> None:
     file_path = tmp_path / "repr.xlsx"
     _xlsx(file_path)

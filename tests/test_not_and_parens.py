@@ -5,7 +5,6 @@ Phase 10 of the SQL feature implementation.
 
 from pathlib import Path
 
-import pytest
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -60,9 +59,7 @@ class TestParserNotOperator:
     """Unary NOT operator in WHERE expressions."""
 
     def test_not_simple_condition(self) -> None:
-        result = _parse_where_expression(
-            "NOT x = 1", params=None, bind_params=False
-        )
+        result = _parse_where_expression("NOT x = 1", params=None, bind_params=False)
         assert "conditions" in result
         cond = result["conditions"][0]
         assert cond["type"] == "not"
@@ -70,9 +67,7 @@ class TestParserNotOperator:
         assert cond["operand"]["operator"] == "="
 
     def test_not_greater_than(self) -> None:
-        result = _parse_where_expression(
-            "NOT x > 5", params=None, bind_params=False
-        )
+        result = _parse_where_expression("NOT x > 5", params=None, bind_params=False)
         cond = result["conditions"][0]
         assert cond["type"] == "not"
         assert cond["operand"]["operator"] == ">"
@@ -161,9 +156,7 @@ class TestParserParenthesizedWhere:
     """Parenthesized expressions in WHERE clause."""
 
     def test_simple_parenthesized(self) -> None:
-        result = _parse_where_expression(
-            "(x = 1)", params=None, bind_params=False
-        )
+        result = _parse_where_expression("(x = 1)", params=None, bind_params=False)
         cond = result["conditions"][0]
         # Simple (x = 1) is semantically x = 1 — compound wrapper is unwrapped
         assert cond["column"] == "x"
@@ -203,9 +196,7 @@ class TestParserParenthesizedWhere:
         assert right["conjunctions"] == ["AND"]
 
     def test_nested_parentheses(self) -> None:
-        result = _parse_where_expression(
-            "((x = 1))", params=None, bind_params=False
-        )
+        result = _parse_where_expression("((x = 1))", params=None, bind_params=False)
         # Double parens unwrap to simple atom at top level
         cond = result["conditions"][0]
         assert cond["column"] == "x"
@@ -232,34 +223,26 @@ class TestParserParameterBinding:
         assert cond["operand"]["value"] == 42
 
     def test_parenthesized_with_placeholders(self) -> None:
-        result = _parse_where_expression(
-            "(x = ? OR y = ?) AND z = ?", params=(1, 2, 3)
-        )
+        result = _parse_where_expression("(x = ? OR y = ?) AND z = ?", params=(1, 2, 3))
         group = result["conditions"][0]
         assert group["conditions"][0]["value"] == 1
         assert group["conditions"][1]["value"] == 2
         assert result["conditions"][1]["value"] == 3
 
     def test_not_in_with_placeholders(self) -> None:
-        result = _parse_where_expression(
-            "name NOT IN (?, ?)", params=("Alice", "Bob")
-        )
+        result = _parse_where_expression("name NOT IN (?, ?)", params=("Alice", "Bob"))
         cond = result["conditions"][0]
         assert cond["operator"] == "NOT IN"
         assert cond["value"] == ("Alice", "Bob")
 
     def test_not_between_with_placeholders(self) -> None:
-        result = _parse_where_expression(
-            "score NOT BETWEEN ? AND ?", params=(70, 90)
-        )
+        result = _parse_where_expression("score NOT BETWEEN ? AND ?", params=(70, 90))
         cond = result["conditions"][0]
         assert cond["operator"] == "NOT BETWEEN"
         assert cond["value"] == (70, 90)
 
     def test_not_like_with_placeholder(self) -> None:
-        result = _parse_where_expression(
-            "name NOT LIKE ?", params=("A%",)
-        )
+        result = _parse_where_expression("name NOT LIKE ?", params=("A%",))
         cond = result["conditions"][0]
         assert cond["operator"] == "NOT LIKE"
         assert cond["value"] == "A%"
@@ -311,16 +294,12 @@ class TestParserRegression:
         assert cond["value"] == (1, 10)
 
     def test_like_clause(self) -> None:
-        result = _parse_where_expression(
-            "x LIKE 'A%'", params=None, bind_params=False
-        )
+        result = _parse_where_expression("x LIKE 'A%'", params=None, bind_params=False)
         cond = result["conditions"][0]
         assert cond["operator"] == "LIKE"
 
     def test_is_null(self) -> None:
-        result = _parse_where_expression(
-            "x IS NULL", params=None, bind_params=False
-        )
+        result = _parse_where_expression("x IS NULL", params=None, bind_params=False)
         cond = result["conditions"][0]
         assert cond["operator"] == "IS"
         assert cond["value"] is None
@@ -382,9 +361,7 @@ class TestE2ENotOperator:
         _create_basic_workbook(f)
         with ExcelConnection(str(f), engine="openpyxl") as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT name FROM data WHERE NOT (grade = 'A' OR grade = 'B')"
-            )
+            cur.execute("SELECT name FROM data WHERE NOT (grade = 'A' OR grade = 'B')")
             names = sorted(r[0] for r in cur.fetchall())
             assert names == ["Diana", "Eve"]
 
@@ -397,9 +374,7 @@ class TestE2ENotInLikeBetween:
         _create_basic_workbook(f)
         with ExcelConnection(str(f), engine="openpyxl") as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT name FROM data WHERE name NOT IN ('Alice', 'Bob')"
-            )
+            cur.execute("SELECT name FROM data WHERE name NOT IN ('Alice', 'Bob')")
             names = sorted(r[0] for r in cur.fetchall())
             assert names == ["Charlie", "Diana", "Eve"]
 
@@ -421,8 +396,7 @@ class TestE2ENotInLikeBetween:
         with ExcelConnection(str(f), engine="openpyxl") as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT name FROM users WHERE id NOT IN "
-                "(SELECT user_id FROM scores)"
+                "SELECT name FROM users WHERE id NOT IN (SELECT user_id FROM scores)"
             )
             names = [r[0] for r in cur.fetchall()]
             # users id=3 (Charlie) is not in scores
@@ -442,9 +416,7 @@ class TestE2ENotInLikeBetween:
         _create_basic_workbook(f)
         with ExcelConnection(str(f), engine="openpyxl") as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT name FROM data WHERE name NOT LIKE ?", ("A%",)
-            )
+            cur.execute("SELECT name FROM data WHERE name NOT LIKE ?", ("A%",))
             names = sorted(r[0] for r in cur.fetchall())
             assert names == ["Bob", "Charlie", "Diana", "Eve"]
 
@@ -453,9 +425,7 @@ class TestE2ENotInLikeBetween:
         _create_basic_workbook(f)
         with ExcelConnection(str(f), engine="openpyxl") as conn:
             cur = conn.cursor()
-            cur.execute(
-                "SELECT name FROM data WHERE score NOT BETWEEN 70 AND 90"
-            )
+            cur.execute("SELECT name FROM data WHERE score NOT BETWEEN 70 AND 90")
             names = sorted(r[0] for r in cur.fetchall())
             # 85 is between, 72 is between, 91 NOT between, 68 NOT between, 45 NOT between
             assert names == ["Charlie", "Diana", "Eve"]
@@ -591,9 +561,7 @@ class TestE2EComplexCombinations:
         _create_basic_workbook(f)
         with ExcelConnection(str(f), engine="openpyxl", autocommit=True) as conn:
             cur = conn.cursor()
-            cur.execute(
-                "DELETE FROM data WHERE score NOT BETWEEN 70 AND 92"
-            )
+            cur.execute("DELETE FROM data WHERE score NOT BETWEEN 70 AND 92")
             cur.execute("SELECT name FROM data")
             names = sorted(r[0] for r in cur.fetchall())
             # Kept: Alice(85), Bob(72), Charlie(91) — all between 70-92
@@ -732,8 +700,7 @@ class TestNestedSubqueryResolution:
         with ExcelConnection(str(f), engine="openpyxl") as conn:
             cur = conn.cursor()
             cur.execute(
-                "SELECT name FROM users WHERE NOT (id IN "
-                "(SELECT user_id FROM scores))"
+                "SELECT name FROM users WHERE NOT (id IN (SELECT user_id FROM scores))"
             )
             rows = cur.fetchall()
             names = sorted(r[0] for r in rows)
@@ -747,7 +714,11 @@ class TestNestedSubqueryResolution:
         # Flat subquery (already worked before)
         where_flat: dict[str, object] = {
             "conditions": [
-                {"column": "id", "operator": "IN", "value": {"type": "subquery", "query": "SELECT 1"}}
+                {
+                    "column": "id",
+                    "operator": "IN",
+                    "value": {"type": "subquery", "query": "SELECT 1"},
+                }
             ],
             "conjunctions": [],
         }
@@ -775,7 +746,11 @@ class TestNestedSubqueryResolution:
                 {
                     "type": "compound",
                     "conditions": [
-                        {"column": "id", "operator": "IN", "value": {"type": "subquery", "query": "SELECT 1"}}
+                        {
+                            "column": "id",
+                            "operator": "IN",
+                            "value": {"type": "subquery", "query": "SELECT 1"},
+                        }
                     ],
                     "conjunctions": [],
                 }
@@ -848,7 +823,10 @@ class TestPrecedenceGroupedNodes:
                         {
                             "column": "id",
                             "operator": "NOT IN",
-                            "value": {"type": "subquery", "query": "SELECT user_id FROM scores"},
+                            "value": {
+                                "type": "subquery",
+                                "query": "SELECT user_id FROM scores",
+                            },
                         },
                         {"column": "id", "operator": ">", "value": 0},
                     ],

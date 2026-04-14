@@ -26,7 +26,9 @@ def test_custom_timeout_flows_from_connection_backend_options() -> None:
         if path.endswith("/closeSession"):
             return httpx.Response(204)
         if path.endswith("/worksheets") or "/worksheets?" in str(request.url):
-            return httpx.Response(200, json={"value": [{"id": "ws-1", "name": "Users"}]})
+            return httpx.Response(
+                200, json={"value": [{"id": "ws-1", "name": "Users"}]}
+            )
         if "usedRange" in path:
             return httpx.Response(200, json={"values": [["id", "name"], [1, "Ada"]]})
         return httpx.Response(404)

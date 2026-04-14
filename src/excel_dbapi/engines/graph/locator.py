@@ -45,7 +45,12 @@ def parse_msgraph_dsn(dsn: str) -> GraphWorkbookLocator:
     ):
         return GraphWorkbookLocator(drive_id=parts[3], item_id=parts[5])
 
-    if len(parts) == 4 and parts[0] == "me" and parts[1] == "drive" and parts[2] == "items":
+    if (
+        len(parts) == 4
+        and parts[0] == "me"
+        and parts[1] == "drive"
+        and parts[2] == "items"
+    ):
         return GraphWorkbookLocator(drive_id="me", item_id=parts[3])
 
     if scheme == "msgraph":

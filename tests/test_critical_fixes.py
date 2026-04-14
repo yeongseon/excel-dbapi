@@ -27,16 +27,20 @@ from excel_dbapi.exceptions import (
 )
 
 
-def _make_xlsx(path: Path, sheet: str = "users", headers: list[str] | None = None,
-               rows: list[list[Any]] | None = None) -> str:
+def _make_xlsx(
+    path: Path,
+    sheet: str = "users",
+    headers: list[str] | None = None,
+    rows: list[list[Any]] | None = None,
+) -> str:
     wb = Workbook()
     ws = wb.active
     assert ws is not None
     ws.title = sheet
-    for h in (headers or ["id", "name"]):
+    for h in headers or ["id", "name"]:
         pass
     ws.append(headers or ["id", "name"])
-    for row in (rows or []):
+    for row in rows or []:
         ws.append(row)
     fpath = str(path)
     wb.save(fpath)
@@ -82,7 +86,9 @@ class TestConnectionExecuteAutocommit:
             result = conn.execute("SELECT * FROM users")
             assert len(result.rows) == 1
 
-    def test_connection_execute_no_save_without_autocommit(self, tmp_path: Path) -> None:
+    def test_connection_execute_no_save_without_autocommit(
+        self, tmp_path: Path
+    ) -> None:
         """connection.execute() does NOT save when autocommit=False."""
         fpath = _make_xlsx(tmp_path / "test.xlsx")
         with ExcelConnection(fpath, engine="openpyxl", autocommit=False) as conn:
@@ -97,7 +103,7 @@ class TestConnectionExecuteAutocommit:
     def test_connection_execute_select_no_save(self, tmp_path: Path) -> None:
         """SELECT via connection.execute() does NOT trigger save."""
         fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Alice"]])
-        mod_time_before = os.path.getmtime(fpath)
+        os.path.getmtime(fpath)
         with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
             result = conn.execute("SELECT * FROM users")
             assert len(result.rows) == 1
@@ -110,10 +116,12 @@ class TestConnectionExecuteAutocommit:
         save_count = 0
         with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
             original_save = conn.engine.save
+
             def counting_save() -> None:
                 nonlocal save_count
                 save_count += 1
                 original_save()
+
             conn.engine.save = counting_save  # type: ignore[assignment]
             cursor = conn.cursor()
             cursor.executemany(
@@ -169,9 +177,7 @@ class TestDSNAutoEngineSelection:
         from excel_dbapi.connection import _resolve_engine_and_location
 
         with pytest.raises(ValueError, match="Engine mismatch"):
-            _resolve_engine_and_location(
-                "msgraph://drives/fake/items/fake", "openpyxl"
-            )
+            _resolve_engine_and_location("msgraph://drives/fake/items/fake", "openpyxl")
 
     @pytest.mark.parametrize(
         ("dsn", "expected_location"),
@@ -233,7 +239,9 @@ class TestPackageVersion:
         import excel_dbapi
 
         parts = excel_dbapi.__version__.split(".")
-        assert len(parts) >= 2, f"Version {excel_dbapi.__version__!r} is not semver-like"
+        assert len(parts) >= 2, (
+            f"Version {excel_dbapi.__version__!r} is not semver-like"
+        )
 
 
 # ─── Fix 4: Header normalization (#57) ──────────────────────────────────
@@ -317,6 +325,16 @@ class TestExceptionMapping:
             with pytest.raises(ProgrammingError):
                 cursor.execute("INVALID SQL GIBBERISH")
 
+
+def test_malformed_create_table_missing_comma_raises_programming_error(
+    tmp_path: Path,
+) -> None:
+    fpath = _make_xlsx(tmp_path / "malformed-create.xlsx")
+    with ExcelConnection(fpath, engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="Missing comma"):
+            cursor.execute("CREATE TABLE t (id INTEGER name TEXT)")
+
     def test_not_implemented_becomes_not_supported(self, tmp_path: Path) -> None:
         """NotImplementedError → NotSupportedError."""
         fpath = _make_xlsx(tmp_path / "test.xlsx")
@@ -377,7 +395,6 @@ class TestExceptionMappingDirect:
         """Create a connection whose executor raises the given exception."""
         fpath = _make_xlsx(tmp_path / "test.xlsx")
         conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
-        original_execute = conn._executor.execute_with_params
 
         def raising_execute(query: str, params: Any = None) -> Any:
             raise exc
@@ -399,8 +416,12 @@ class TestExceptionMappingDirect:
             cursor.execute("SELECT * FROM users")
         conn.close()
 
-    def test_index_error_maps_to_programming_error_execute(self, tmp_path: Path) -> None:
-        conn = self._make_conn_with_raising_executor(tmp_path, IndexError("out of range"))
+    def test_index_error_maps_to_programming_error_execute(
+        self, tmp_path: Path
+    ) -> None:
+        conn = self._make_conn_with_raising_executor(
+            tmp_path, IndexError("out of range")
+        )
         cursor = conn.cursor()
         with pytest.raises(ProgrammingError, match="out of range"):
             cursor.execute("SELECT * FROM users")
@@ -413,21 +434,29 @@ class TestExceptionMappingDirect:
             cursor.execute("SELECT * FROM users")
         conn.close()
 
-    def test_generic_exception_maps_to_database_error_execute(self, tmp_path: Path) -> None:
-        conn = self._make_conn_with_raising_executor(tmp_path, RuntimeError("unexpected"))
+    def test_generic_exception_maps_to_database_error_execute(
+        self, tmp_path: Path
+    ) -> None:
+        conn = self._make_conn_with_raising_executor(
+            tmp_path, RuntimeError("unexpected")
+        )
         cursor = conn.cursor()
         with pytest.raises(DatabaseError, match="unexpected"):
             cursor.execute("SELECT * FROM users")
         conn.close()
 
     def test_database_error_passes_through_execute(self, tmp_path: Path) -> None:
-        conn = self._make_conn_with_raising_executor(tmp_path, ProgrammingError("bad sql"))
+        conn = self._make_conn_with_raising_executor(
+            tmp_path, ProgrammingError("bad sql")
+        )
         cursor = conn.cursor()
         with pytest.raises(ProgrammingError, match="bad sql"):
             cursor.execute("SELECT * FROM users")
         conn.close()
 
-    def test_key_error_maps_to_programming_error_executemany(self, tmp_path: Path) -> None:
+    def test_key_error_maps_to_programming_error_executemany(
+        self, tmp_path: Path
+    ) -> None:
         fpath = _make_xlsx(tmp_path / "test.xlsx")
         conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
         original = conn._executor.execute_with_params
@@ -446,7 +475,9 @@ class TestExceptionMappingDirect:
             cursor.executemany("INSERT INTO users VALUES (?, ?)", [(1, "a"), (2, "b")])
         conn.close()
 
-    def test_os_error_maps_to_operational_error_executemany(self, tmp_path: Path) -> None:
+    def test_os_error_maps_to_operational_error_executemany(
+        self, tmp_path: Path
+    ) -> None:
         fpath = _make_xlsx(tmp_path / "test.xlsx")
         conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
 
@@ -459,7 +490,9 @@ class TestExceptionMappingDirect:
             cursor.executemany("INSERT INTO users VALUES (?, ?)", [(1, "a")])
         conn.close()
 
-    def test_generic_exception_maps_to_database_error_executemany(self, tmp_path: Path) -> None:
+    def test_generic_exception_maps_to_database_error_executemany(
+        self, tmp_path: Path
+    ) -> None:
         fpath = _make_xlsx(tmp_path / "test.xlsx")
         conn = ExcelConnection(fpath, engine="openpyxl", autocommit=True)
 

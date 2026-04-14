@@ -26,13 +26,7 @@ from .reflection import (
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as _pkg_version
-
-try:
-    __version__ = _pkg_version("excel-dbapi")
-except PackageNotFoundError:
-    __version__ = "0.0.0"
+__version__ = "0.4.1"
 
 
 def connect(

@@ -259,7 +259,9 @@ def test_select_star_right_join(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM t1 a RIGHT JOIN t2 b ON a.id = b.id ORDER BY b.id")
+        cursor.execute(
+            "SELECT * FROM t1 a RIGHT JOIN t2 b ON a.id = b.id ORDER BY b.id"
+        )
         rows = cursor.fetchall()
         description = cursor.description
 
@@ -422,9 +424,7 @@ def test_select_star_mixed_with_columns_rejected(tmp_path: Path) -> None:
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
         with pytest.raises(ProgrammingError, match="SELECT \\* cannot be mixed"):
-            cursor.execute(
-                "SELECT *, a.id FROM t1 a JOIN t2 b ON a.id = b.id"
-            )
+            cursor.execute("SELECT *, a.id FROM t1 a JOIN t2 b ON a.id = b.id")
 
 
 def test_select_star_mixed_trailing_rejected(tmp_path: Path) -> None:
@@ -435,9 +435,7 @@ def test_select_star_mixed_trailing_rejected(tmp_path: Path) -> None:
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
         with pytest.raises(ProgrammingError, match="SELECT \\* cannot be mixed"):
-            cursor.execute(
-                "SELECT a.id, * FROM t1 a JOIN t2 b ON a.id = b.id"
-            )
+            cursor.execute("SELECT a.id, * FROM t1 a JOIN t2 b ON a.id = b.id")
 
 
 def test_select_table_dot_star_rejected(tmp_path: Path) -> None:
@@ -448,9 +446,7 @@ def test_select_table_dot_star_rejected(tmp_path: Path) -> None:
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
         with pytest.raises(ProgrammingError):
-            cursor.execute(
-                "SELECT a.* FROM t1 a JOIN t2 b ON a.id = b.id"
-            )
+            cursor.execute("SELECT a.* FROM t1 a JOIN t2 b ON a.id = b.id")
 
 
 def test_select_star_with_alias_and_no_alias_description(tmp_path: Path) -> None:
@@ -460,9 +456,7 @@ def test_select_star_with_alias_and_no_alias_description(tmp_path: Path) -> None
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM t1 a JOIN t2 ON a.id = t2.id"
-        )
+        cursor.execute("SELECT * FROM t1 a JOIN t2 ON a.id = t2.id")
         rows = cursor.fetchall()
         description = cursor.description
 
@@ -805,7 +799,9 @@ def test_cross_join_rejects_on_clause(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="CROSS JOIN does not accept ON condition"):
+        with pytest.raises(
+            ProgrammingError, match="CROSS JOIN does not accept ON condition"
+        ):
             cursor.execute("SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id")
 
 
@@ -815,7 +811,9 @@ def test_cross_join_on_rejected(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="CROSS JOIN does not accept ON condition"):
+        with pytest.raises(
+            ProgrammingError, match="CROSS JOIN does not accept ON condition"
+        ):
             cursor.execute(
                 "SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id WHERE a.id = b.id"
             )

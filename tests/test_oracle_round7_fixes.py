@@ -5,10 +5,16 @@ from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
 from excel_dbapi.exceptions import DataError, NotSupportedError, ProgrammingError
-from excel_dbapi.reflection import METADATA_SHEET, read_table_metadata, write_table_metadata
+from excel_dbapi.reflection import (
+    METADATA_SHEET,
+    read_table_metadata,
+    write_table_metadata,
+)
 
 
-def _create_workbook(path: Path, headers: list[object], rows: list[list[object]]) -> None:
+def _create_workbook(
+    path: Path, headers: list[object], rows: list[list[object]]
+) -> None:
     workbook = Workbook()
     sheet = workbook.active
     assert sheet is not None
@@ -71,20 +77,31 @@ def test_ddl_updates_reflection_metadata(tmp_path: Path) -> None:
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
 
-        cursor.execute("CREATE TABLE people (id, name)")
+        cursor.execute("CREATE TABLE people (id INTEGER, name TEXT)")
         metadata = read_table_metadata(conn, "people")
         assert metadata is not None
         assert [entry["name"] for entry in metadata] == ["id", "name"]
+        assert [entry["type_name"] for entry in metadata] == ["INTEGER", "TEXT"]
 
         cursor.execute("ALTER TABLE people ADD COLUMN email TEXT")
         metadata = read_table_metadata(conn, "people")
         assert metadata is not None
         assert [entry["name"] for entry in metadata] == ["id", "name", "email"]
+        assert [entry["type_name"] for entry in metadata] == [
+            "INTEGER",
+            "TEXT",
+            "TEXT",
+        ]
 
         cursor.execute("ALTER TABLE people RENAME COLUMN name TO full_name")
         metadata = read_table_metadata(conn, "people")
         assert metadata is not None
         assert [entry["name"] for entry in metadata] == ["id", "full_name", "email"]
+        assert [entry["type_name"] for entry in metadata] == [
+            "INTEGER",
+            "TEXT",
+            "TEXT",
+        ]
 
         cursor.execute("ALTER TABLE people DROP COLUMN email")
         metadata = read_table_metadata(conn, "people")
@@ -115,5 +132,7 @@ def test_drop_table_guard_ignores_metadata_sheet(tmp_path: Path) -> None:
         assert METADATA_SHEET in conn.engine.list_sheets()
 
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="Cannot drop the only remaining sheet"):
+        with pytest.raises(
+            ProgrammingError, match="Cannot drop the only remaining sheet"
+        ):
             cursor.execute("DROP TABLE Sheet1")

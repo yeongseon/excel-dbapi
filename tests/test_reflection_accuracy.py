@@ -9,7 +9,9 @@ from excel_dbapi.connection import ExcelConnection
 from excel_dbapi.reflection import _infer_type, get_columns
 
 
-def _write_sheet(path: Path, headers: list[str], rows: list[list[object | None]]) -> None:
+def _write_sheet(
+    path: Path, headers: list[str], rows: list[list[object | None]]
+) -> None:
     workbook = Workbook()
     sheet = workbook.active
     assert sheet is not None
@@ -51,13 +53,16 @@ def test_infer_type_prefers_float_for_int_float_mix() -> None:
 
 
 def test_infer_type_prefers_datetime_for_date_datetime_mix() -> None:
-    assert _infer_type(
-        [
-            datetime.date(2024, 1, 1),
-            datetime.datetime(2024, 1, 2, 8, 30, 0),
-            None,
-        ]
-    )["type"] == "DATETIME"
+    assert (
+        _infer_type(
+            [
+                datetime.date(2024, 1, 1),
+                datetime.datetime(2024, 1, 2, 8, 30, 0),
+                None,
+            ]
+        )["type"]
+        == "DATETIME"
+    )
 
 
 def test_infer_type_returns_text_for_truly_mixed_values() -> None:

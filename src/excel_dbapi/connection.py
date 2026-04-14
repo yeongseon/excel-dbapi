@@ -4,7 +4,17 @@ from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Concatenate, Optional, ParamSpec, Protocol, Type, TypeVar, cast, runtime_checkable
+from typing import (
+    Any,
+    Concatenate,
+    Optional,
+    ParamSpec,
+    Protocol,
+    Type,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 import warnings
 
 from .engines.base import WorkbookBackend

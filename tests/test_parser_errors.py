@@ -53,6 +53,18 @@ def test_parse_create_invalid_format():
         parse_sql("CREATE TABLE Foo")
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE TABLE t (id INTEGER name TEXT)",
+        "CREATE TABLE t (id INTEGER, name TEXT age INTEGER)",
+    ],
+)
+def test_parse_create_rejects_malformed_column_definitions(sql: str) -> None:
+    with pytest.raises(ValueError, match="Malformed column definition"):
+        parse_sql(sql)
+
+
 def test_parse_drop_invalid_format():
     with pytest.raises(ValueError):
         parse_sql("DROP Foo")

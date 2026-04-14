@@ -103,13 +103,17 @@ def test_pandas_create_drop_errors(tmp_path: Path) -> None:
             cursor.execute("DROP TABLE NewSheet")
 
 
-def test_select_column_on_headerless_sheet_raises_programming_error(tmp_path: Path) -> None:
+def test_select_column_on_headerless_sheet_raises_programming_error(
+    tmp_path: Path,
+) -> None:
     file_path = tmp_path / "headerless-select.xlsx"
     _create_headerless_workbook(file_path)
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="No columns defined in sheet 'Sheet1'"):
+        with pytest.raises(
+            ProgrammingError, match="No columns defined in sheet 'Sheet1'"
+        ):
             cursor.execute("SELECT id FROM Sheet1")
 
 
@@ -129,17 +133,23 @@ def test_update_headerless_sheet_raises_programming_error(tmp_path: Path) -> Non
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="No columns defined in sheet 'Sheet1'"):
+        with pytest.raises(
+            ProgrammingError, match="No columns defined in sheet 'Sheet1'"
+        ):
             cursor.execute("UPDATE Sheet1 SET id = 1")
 
 
-def test_delete_where_on_headerless_sheet_raises_programming_error(tmp_path: Path) -> None:
+def test_delete_where_on_headerless_sheet_raises_programming_error(
+    tmp_path: Path,
+) -> None:
     file_path = tmp_path / "headerless-delete.xlsx"
     _create_headerless_workbook(file_path)
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="No columns defined in sheet 'Sheet1'"):
+        with pytest.raises(
+            ProgrammingError, match="No columns defined in sheet 'Sheet1'"
+        ):
             cursor.execute("DELETE FROM Sheet1 WHERE id = 1")
 
 
@@ -149,5 +159,7 @@ def test_drop_only_remaining_sheet_raises_programming_error(tmp_path: Path) -> N
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="Cannot drop the only remaining sheet"):
+        with pytest.raises(
+            ProgrammingError, match="Cannot drop the only remaining sheet"
+        ):
             cursor.execute("DROP TABLE Sheet1")

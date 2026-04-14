@@ -16,6 +16,8 @@ make install
 ```
 
 This creates a virtual environment (`.venv/`), installs all dependencies in editable mode, and sets up pre-commit hooks.
+The `dev` extra includes `pre-commit` and `build`, so `make install` and
+`make build` work in a fresh virtual environment.
 
 Or manually:
 

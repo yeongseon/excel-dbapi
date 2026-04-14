@@ -50,7 +50,9 @@ def test_parser_accepts_compound_variants() -> None:
     parsed = parse_sql("SELECT id FROM t1 EXCEPT SELECT id FROM t2")
     assert parsed["operators"] == ["EXCEPT"]
 
-    parsed = parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 UNION SELECT id FROM t3")
+    parsed = parse_sql(
+        "SELECT id FROM t1 UNION SELECT id FROM t2 UNION SELECT id FROM t3"
+    )
     assert parsed["operators"] == ["UNION", "UNION"]
     assert len(parsed["queries"]) == 3
 
@@ -111,7 +113,9 @@ def test_union_with_where(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM t1 WHERE id <= 2 UNION SELECT id FROM t2 WHERE id >= 3")
+        cursor.execute(
+            "SELECT id FROM t1 WHERE id <= 2 UNION SELECT id FROM t2 WHERE id >= 3"
+        )
         assert cursor.fetchall() == [(1,), (2,), (3,), (4,)]
 
 
@@ -130,7 +134,9 @@ def test_chained_union(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM t1 UNION SELECT id FROM t2 UNION SELECT id FROM t3")
+        cursor.execute(
+            "SELECT id FROM t1 UNION SELECT id FROM t2 UNION SELECT id FROM t3"
+        )
         assert cursor.fetchall() == [(1,), (2,), (3,), (4,), (5,)]
 
 
@@ -140,7 +146,9 @@ def test_mixed_compound(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id FROM t1 UNION SELECT id FROM t2 EXCEPT SELECT id FROM t3")
+        cursor.execute(
+            "SELECT id FROM t1 UNION SELECT id FROM t2 EXCEPT SELECT id FROM t3"
+        )
         assert cursor.fetchall() == [(1,), (2,), (3,)]
 
 
@@ -200,7 +208,9 @@ def test_union_null_handling(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT name FROM t1 WHERE id = 3 UNION SELECT name FROM t2 WHERE id = 3")
+        cursor.execute(
+            "SELECT name FROM t1 WHERE id = 3 UNION SELECT name FROM t2 WHERE id = 3"
+        )
         assert cursor.fetchall() == [(None,)]
 
 
@@ -319,9 +329,7 @@ def test_parser_compound_placeholder_counting() -> None:
 
 def test_parser_parenthesized_branch(tmp_path: Path) -> None:
     """Parser accepts parenthesized compound branches (e.g. from SQLAlchemy)."""
-    parsed = parse_sql(
-        "(SELECT id FROM t1 ORDER BY id DESC) UNION SELECT id FROM t2"
-    )
+    parsed = parse_sql("(SELECT id FROM t1 ORDER BY id DESC) UNION SELECT id FROM t2")
     assert parsed["action"] == "COMPOUND"
     assert parsed["operators"] == ["UNION"]
     assert len(parsed["queries"]) == 2
@@ -369,9 +377,7 @@ def test_compound_outer_order_by_e2e(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id FROM t1 UNION ALL SELECT id FROM t2 ORDER BY id DESC"
-        )
+        cursor.execute("SELECT id FROM t1 UNION ALL SELECT id FROM t2 ORDER BY id DESC")
         rows = cursor.fetchall()
         # t1 ids: [1,2,3,2], t2 ids: [2,3,4,4]
         # UNION ALL: [1,2,3,2,2,3,4,4], ORDER BY id DESC: [4,4,3,3,2,2,2,1]
@@ -400,16 +406,12 @@ def test_parenthesized_branch_e2e(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "(SELECT id FROM t1 ORDER BY id DESC) UNION SELECT id FROM t2"
-        )
+        cursor.execute("(SELECT id FROM t1 ORDER BY id DESC) UNION SELECT id FROM t2")
         rows = cursor.fetchall()
         # Branch 1: t1 ids [3,2,1,2] ORDER BY DESC → [3,2,2,1]
         # Branch 2: t2 ids [2,3,4,4]
         # UNION (dedup): {1, 2, 3, 4}
         assert sorted(rows) == [(1,), (2,), (3,), (4,)]
-
-
 
 
 def test_mixed_union_intersect_left_to_right(tmp_path: Path) -> None:
@@ -471,9 +473,7 @@ def test_compound_quoted_question_mark_not_counted(tmp_path: Path) -> None:
         # WHERE name = '?' uses a literal '?' string, NOT a placeholder.
         # Only the ? in WHERE id = ? is a real placeholder (1 total).
         cursor.execute(
-            "SELECT id FROM t1 WHERE name = '?' "
-            "UNION "
-            "SELECT id FROM t2 WHERE id = ?",
+            "SELECT id FROM t1 WHERE name = '?' UNION SELECT id FROM t2 WHERE id = ?",
             (2,),
         )
         rows = cursor.fetchall()

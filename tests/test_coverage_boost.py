@@ -86,13 +86,17 @@ def test_where_operator_missing_value() -> None:
 def test_subquery_with_join_inside() -> None:
     """Subqueries cannot contain JOIN."""
     with pytest.raises(ValueError, match="JOIN is not supported in subqueries"):
-        parse_sql("SELECT * FROM t WHERE id IN (SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id)")
+        parse_sql(
+            "SELECT * FROM t WHERE id IN (SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id)"
+        )
 
 
 def test_subquery_with_having() -> None:
     """Subqueries cannot contain HAVING."""
     with pytest.raises(ValueError, match="HAVING is not supported in subqueries"):
-        parse_sql("SELECT * FROM t WHERE id IN (SELECT id FROM t2 GROUP BY id HAVING COUNT(*) > 1)")
+        parse_sql(
+            "SELECT * FROM t WHERE id IN (SELECT id FROM t2 GROUP BY id HAVING COUNT(*) > 1)"
+        )
 
 
 def test_subquery_with_order_by() -> None:
@@ -224,7 +228,9 @@ def test_group_by_before_where() -> None:
 
 def test_having_before_where() -> None:
     with pytest.raises(ValueError):
-        parse_sql("SELECT x, COUNT(*) FROM t GROUP BY x HAVING COUNT(*) > 1 WHERE x = 1")
+        parse_sql(
+            "SELECT x, COUNT(*) FROM t GROUP BY x HAVING COUNT(*) > 1 WHERE x = 1"
+        )
 
 
 def test_having_before_group_by() -> None:
@@ -364,7 +370,9 @@ def test_join_with_having_supported() -> None:
 
 
 def test_join_with_subquery_where_rejected() -> None:
-    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)")
+    parsed = parse_sql(
+        "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)"
+    )
     assert parsed["joins"] is not None
     where_cond = parsed["where"]["conditions"][0]
     assert where_cond["operator"] == "IN"

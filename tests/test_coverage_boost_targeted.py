@@ -50,10 +50,12 @@ def _make_join_workbook(path: Path) -> OpenpyxlBackend:
 
 
 def test_parser_order_by_clause_string_index_guards_multiple_items() -> None:
-    clause = _OrderByClause([
-        {"column": "a", "direction": "ASC"},
-        {"column": "b", "direction": "DESC"},
-    ])
+    clause = _OrderByClause(
+        [
+            {"column": "a", "direction": "ASC"},
+            {"column": "b", "direction": "DESC"},
+        ]
+    )
     with pytest.raises(TypeError, match="list indices must be integers"):
         _ = clause["column"]
 
@@ -84,12 +86,16 @@ def test_parser_invalid_alter_table_variants() -> None:
 def test_parser_compound_offset_limit_placeholders_missing_params() -> None:
     with pytest.raises(ValueError, match="Not enough parameters for LIMIT placeholder"):
         parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 LIMIT ?", ())
-    with pytest.raises(ValueError, match="Not enough parameters for OFFSET placeholder"):
+    with pytest.raises(
+        ValueError, match="Not enough parameters for OFFSET placeholder"
+    ):
         parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 OFFSET ?", ())
 
 
 def test_parse_compound_rejects_non_select_branch() -> None:
-    with pytest.raises(ValueError, match="Compound queries support only SELECT subqueries"):
+    with pytest.raises(
+        ValueError, match="Compound queries support only SELECT subqueries"
+    ):
         _parse_compound("SELECT id FROM t1 UNION (UPDATE t2 SET id = 1)", None)
 
 
@@ -122,7 +128,10 @@ def test_execute_compound_invalid_operator_and_order_resolution(tmp_path: Path) 
             {
                 "action": "COMPOUND",
                 "operators": ["MERGE"],
-                "queries": [parse_sql("SELECT id FROM t1"), parse_sql("SELECT id FROM t2")],
+                "queries": [
+                    parse_sql("SELECT id FROM t1"),
+                    parse_sql("SELECT id FROM t2"),
+                ],
             }
         )
 
@@ -131,7 +140,9 @@ def test_execute_compound_invalid_operator_and_order_resolution(tmp_path: Path) 
             parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 ORDER BY missing")
         )
 
-    rows = executor.execute(parse_sql("SELECT id FROM t1 UNION ALL SELECT id FROM t2 OFFSET 1")).rows
+    rows = executor.execute(
+        parse_sql("SELECT id FROM t1 UNION ALL SELECT id FROM t2 OFFSET 1")
+    ).rows
     assert rows == [(2,), (1,), (2,)]
     backend.close()
 
@@ -141,7 +152,12 @@ def test_executor_expression_serialization_case_and_where_shapes() -> None:
         "type": "case",
         "mode": "simple",
         "value": {"type": "column", "source": "t1", "name": "id"},
-        "whens": [{"match": {"type": "literal", "value": 1}, "result": {"type": "literal", "value": "one"}}],
+        "whens": [
+            {
+                "match": {"type": "literal", "value": 1},
+                "result": {"type": "literal", "value": "one"},
+            }
+        ],
         "else": {"type": "literal", "value": "other"},
     }
     searched_case = {
@@ -153,7 +169,9 @@ def test_executor_expression_serialization_case_and_where_shapes() -> None:
                     "type": "not",
                     "operand": {
                         "type": "compound",
-                        "conditions": [{"column": "t1.id", "operator": "IN", "value": [1, 2]}],
+                        "conditions": [
+                            {"column": "t1.id", "operator": "IN", "value": [1, 2]}
+                        ],
                         "conjunctions": ["AND"],
                     },
                 },
@@ -164,14 +182,36 @@ def test_executor_expression_serialization_case_and_where_shapes() -> None:
     }
 
     assert SharedExecutor._output_name(simple_case) == "case_expr"
-    assert SharedExecutor._source_key({"type": "alias", "alias": "k", "expression": simple_case}).startswith("__expr__:")
-    assert SharedExecutor._expression_to_sql({"type": "alias", "expression": {"type": "aggregate", "func": "COUNT", "arg": "*"}}) == "COUNT(*)"
+    assert SharedExecutor._source_key(
+        {"type": "alias", "alias": "k", "expression": simple_case}
+    ).startswith("__expr__:")
+    assert (
+        SharedExecutor._expression_to_sql(
+            {
+                "type": "alias",
+                "expression": {"type": "aggregate", "func": "COUNT", "arg": "*"},
+            }
+        )
+        == "COUNT(*)"
+    )
 
-    assert "NOT" in SharedExecutor._where_to_sql({"type": "not", "operand": {"column": "id", "operator": "=", "value": 1}})
+    assert "NOT" in SharedExecutor._where_to_sql(
+        {"type": "not", "operand": {"column": "id", "operator": "=", "value": 1}}
+    )
     assert SharedExecutor._where_to_sql({"type": "not", "operand": "bad"}) == "NOT"
-    assert SharedExecutor._where_to_sql({"type": "compound", "conditions": [{"column": "id", "operator": "=", "value": 1}], "conjunctions": ["AND"]}).startswith("(")
-    assert "(SUBQUERY)" in SharedExecutor._where_operand_to_sql({"type": "subquery"}, is_column=False)
-    assert "BETWEEN" in SharedExecutor._where_to_sql({"column": "id", "operator": "BETWEEN", "value": [1]})
+    assert SharedExecutor._where_to_sql(
+        {
+            "type": "compound",
+            "conditions": [{"column": "id", "operator": "=", "value": 1}],
+            "conjunctions": ["AND"],
+        }
+    ).startswith("(")
+    assert "(SUBQUERY)" in SharedExecutor._where_operand_to_sql(
+        {"type": "subquery"}, is_column=False
+    )
+    assert "BETWEEN" in SharedExecutor._where_to_sql(
+        {"column": "id", "operator": "BETWEEN", "value": [1]}
+    )
     assert "CASE" in SharedExecutor._expression_to_sql(searched_case)
 
 
@@ -202,7 +242,13 @@ def test_executor_collect_expression_and_where_refs_paths() -> None:
         },
     }
 
-    assert SharedExecutor._contains_arithmetic_expression({"type": "alias", "alias": "a", "expression": {"type": "alias", "alias": "b", "expression": expr}})
+    assert SharedExecutor._contains_arithmetic_expression(
+        {
+            "type": "alias",
+            "alias": "a",
+            "expression": {"type": "alias", "alias": "b", "expression": expr},
+        }
+    )
     assert SharedExecutor._collect_expression_column_refs("t1.id") == {"t1.id"}
     assert SharedExecutor._collect_expression_column_refs(3.14) == set()
     refs = SharedExecutor._collect_where_column_refs(where)
@@ -249,9 +295,17 @@ def test_executor_validate_join_where_node_case_branches() -> None:
                             "skip",
                             {
                                 "condition": {
-                                    "column": {"type": "column", "source": "t1", "name": "id"},
+                                    "column": {
+                                        "type": "column",
+                                        "source": "t1",
+                                        "name": "id",
+                                    },
                                     "operator": "=",
-                                    "value": {"type": "column", "source": "t2", "name": "id"},
+                                    "value": {
+                                        "type": "column",
+                                        "source": "t2",
+                                        "name": "id",
+                                    },
                                 },
                                 "result": {"type": "literal", "value": 1},
                             },
@@ -259,7 +313,15 @@ def test_executor_validate_join_where_node_case_branches() -> None:
                     },
                     "operator": "IN",
                     "value": [
-                        {"type": "alias", "alias": "a", "expression": {"type": "column", "source": "t2", "name": "score"}},
+                        {
+                            "type": "alias",
+                            "alias": "a",
+                            "expression": {
+                                "type": "column",
+                                "source": "t2",
+                                "name": "score",
+                            },
+                        },
                         None,
                     ],
                 }
@@ -276,14 +338,24 @@ def test_executor_join_validation_and_case_expression_errors(tmp_path: Path) -> 
     backend = _make_join_workbook(tmp_path / "join_validate.xlsx")
     executor = SharedExecutor(backend)
 
-    with pytest.raises(ValueError, match="Aggregate arguments in JOIN queries must be qualified"):
+    with pytest.raises(
+        ValueError, match="Aggregate arguments in JOIN queries must be qualified"
+    ):
         executor.execute(parse_sql("SELECT SUM(id) FROM t1 a JOIN t2 b ON a.id = b.id"))
 
-    with pytest.raises(ValueError, match="requires qualified column names in JOIN queries"):
-        executor.execute(parse_sql("SELECT CASE id WHEN 1 THEN 'x' ELSE 'y' END FROM t1 a JOIN t2 b ON a.id = b.id"))
+    with pytest.raises(
+        ValueError, match="requires qualified column names in JOIN queries"
+    ):
+        executor.execute(
+            parse_sql(
+                "SELECT CASE id WHEN 1 THEN 'x' ELSE 'y' END FROM t1 a JOIN t2 b ON a.id = b.id"
+            )
+        )
 
     with pytest.raises(ValueError, match="Invalid source reference in WHERE"):
-        executor.execute(parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE c.id = 1"))
+        executor.execute(
+            parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE c.id = 1")
+        )
 
     backend.close()
 
@@ -294,21 +366,66 @@ def test_executor_eval_expression_and_condition_error_paths(tmp_path: Path) -> N
     row = {"t1.id": 1, "t1.value": "text", "x": None}
 
     with pytest.raises(ProgrammingError, match="Unsupported unary operator"):
-        executor._eval_expression({"type": "unary_op", "op": "~", "operand": {"type": "literal", "value": 1}}, row, lambda c: row.get(c))
+        executor._eval_expression(
+            {"type": "unary_op", "op": "~", "operand": {"type": "literal", "value": 1}},
+            row,
+            lambda c: row.get(c),
+        )
     with pytest.raises(ProgrammingError, match="requires numeric operands"):
-        executor._eval_expression({"type": "binary_op", "op": "+", "left": {"type": "literal", "value": "a"}, "right": {"type": "literal", "value": "b"}}, row, lambda c: row.get(c))
+        executor._eval_expression(
+            {
+                "type": "binary_op",
+                "op": "+",
+                "left": {"type": "literal", "value": "a"},
+                "right": {"type": "literal", "value": "b"},
+            },
+            row,
+            lambda c: row.get(c),
+        )
     with pytest.raises(ProgrammingError, match="Unsupported arithmetic operator"):
-        executor._eval_expression({"type": "binary_op", "op": "%", "left": {"type": "literal", "value": 3}, "right": {"type": "literal", "value": 2}}, row, lambda c: row.get(c))
-    with pytest.raises(ProgrammingError, match="Aggregate expressions are not supported"):
-        executor._eval_expression({"type": "aggregate", "func": "COUNT", "arg": "*"}, row, lambda c: row.get(c))
+        executor._eval_expression(
+            {
+                "type": "binary_op",
+                "op": "%",
+                "left": {"type": "literal", "value": 3},
+                "right": {"type": "literal", "value": 2},
+            },
+            row,
+            lambda c: row.get(c),
+        )
+    with pytest.raises(
+        ProgrammingError, match="Aggregate expressions are not supported"
+    ):
+        executor._eval_expression(
+            {"type": "aggregate", "func": "COUNT", "arg": "*"},
+            row,
+            lambda c: row.get(c),
+        )
     with pytest.raises(ProgrammingError, match="Unsupported expression type"):
         executor._eval_expression({"type": "mystery"}, row, lambda c: row.get(c))
 
-    assert executor._evaluate_condition(row, {"column": "x", "operator": "NOT IN", "value": (1, 2)}) is None  # SQL UNKNOWN
-    assert executor._evaluate_condition(row, {"column": "x", "operator": "NOT BETWEEN", "value": (1, 2)}) is None  # SQL UNKNOWN
-    assert executor._evaluate_condition({"x": 5}, {"column": "x", "operator": "NOT BETWEEN", "value": (None, 2)}) is None  # SQL UNKNOWN
+    assert (
+        executor._evaluate_condition(
+            row, {"column": "x", "operator": "NOT IN", "value": (1, 2)}
+        )
+        is None
+    )  # SQL UNKNOWN
+    assert (
+        executor._evaluate_condition(
+            row, {"column": "x", "operator": "NOT BETWEEN", "value": (1, 2)}
+        )
+        is None
+    )  # SQL UNKNOWN
+    assert (
+        executor._evaluate_condition(
+            {"x": 5}, {"column": "x", "operator": "NOT BETWEEN", "value": (None, 2)}
+        )
+        is None
+    )  # SQL UNKNOWN
     with pytest.raises(NotImplementedError, match="Unsupported LIKE pattern type"):
-        executor._evaluate_condition({"x": "abc"}, {"column": "x", "operator": "NOT LIKE", "value": 5})
+        executor._evaluate_condition(
+            {"x": "abc"}, {"column": "x", "operator": "NOT LIKE", "value": 5}
+        )
 
     backend.close()
 
@@ -327,7 +444,9 @@ def test_executor_aggregate_edge_paths(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must appear in GROUP BY"):
         executor.execute(parse_sql("SELECT id, COUNT(*) FROM t1 GROUP BY name"))
     with pytest.raises(ValueError, match="must be a GROUP BY column"):
-        executor.execute(parse_sql("SELECT name, COUNT(*) FROM t1 GROUP BY name HAVING id > 1"))
+        executor.execute(
+            parse_sql("SELECT name, COUNT(*) FROM t1 GROUP BY name HAVING id > 1")
+        )
 
     backend.close()
 
@@ -343,11 +462,16 @@ def test_executor_compound_manual_description_mismatch(tmp_path: Path) -> None:
         def execute(self, parsed: dict[str, Any], **kwargs: Any) -> ExecutionResult:  # type: ignore[override]
             self._idx += 1
             if self._idx == 1:
-                return ExecutionResult("SELECT", [(1,)], [("id", None, None, None, None, None, None)], 1)
+                return ExecutionResult(
+                    "SELECT", [(1,)], [("id", None, None, None, None, None, None)], 1
+                )
             return ExecutionResult(
                 "SELECT",
                 [(1, "x")],
-                [("id", None, None, None, None, None, None), ("name", None, None, None, None, None, None)],
+                [
+                    ("id", None, None, None, None, None, None),
+                    ("name", None, None, None, None, None, None),
+                ],
                 1,
             )
 
@@ -373,7 +497,9 @@ def test_parser_column_expression_internal_error_paths() -> None:
         _parse_column_expression("*", allow_wildcard=False)
     with pytest.raises(ValueError, match="Unsupported column expression"):
         _parse_column_expression("(a + 1")
-    with pytest.raises(ValueError, match="cannot be used inside arithmetic expressions"):
+    with pytest.raises(
+        ValueError, match="cannot be used inside arithmetic expressions"
+    ):
         _parse_column_expression("COUNT(id) + 1")
 
 
@@ -395,17 +521,28 @@ def test_parser_order_by_internal_sql_rendering_branches() -> None:
         "type": "compound",
         "conditions": [
             "a.id = 1",
-            {"column": "a.id", "operator": "NOT IN", "value": [{"type": "literal", "value": "x"}]},
+            {
+                "column": "a.id",
+                "operator": "NOT IN",
+                "value": [{"type": "literal", "value": "x"}],
+            },
         ],
         "conjunctions": ["OR"],
     }
-    where_not = {"type": "not", "operand": {"column": "a.id", "operator": "BETWEEN", "value": [1, 2]}}
+    where_not = {
+        "type": "not",
+        "operand": {"column": "a.id", "operator": "BETWEEN", "value": [1, 2]},
+    }
     where_not_bad = {"type": "not", "operand": "oops"}
     assert _where_to_sql_for_order_by(where_compound).startswith("(")
     assert _where_to_sql_for_order_by(where_not).startswith("NOT")
     assert _where_to_sql_for_order_by(where_not_bad) == "NOT"
-    assert "BETWEEN" in _where_to_sql_for_order_by({"column": "a.id", "operator": "BETWEEN", "value": [1]})
-    assert "IN" in _where_to_sql_for_order_by({"column": "a.id", "operator": "IN", "value": 3})
+    assert "BETWEEN" in _where_to_sql_for_order_by(
+        {"column": "a.id", "operator": "BETWEEN", "value": [1]}
+    )
+    assert "IN" in _where_to_sql_for_order_by(
+        {"column": "a.id", "operator": "IN", "value": 3}
+    )
 
     expr = {
         "type": "case",
@@ -456,7 +593,11 @@ def test_executor_join_helper_edges_without_upsert(tmp_path: Path) -> None:
         {
             "conditions": [
                 {
-                    "column": {"type": "unary_op", "op": "-", "operand": {"type": "column", "source": "a", "name": "id"}},
+                    "column": {
+                        "type": "unary_op",
+                        "op": "-",
+                        "operand": {"type": "column", "source": "a", "name": "id"},
+                    },
                     "operator": "=",
                     "value": {
                         "type": "binary_op",
@@ -482,7 +623,7 @@ def test_executor_join_helper_edges_without_upsert(tmp_path: Path) -> None:
 def test_parser_tokenize_expression_and_case_collection_edges() -> None:
     tokens = _tokenize_expression("'it''s' + \"a\"\"b\" + (x)")
     assert "'it''s'" in tokens
-    assert '\"a\"\"b\"' in tokens
+    assert '"a""b"' in tokens
 
     collected, index, stop = _collect_case_tokens_until(
         _tokenize("CASE WHEN (a = 1) THEN 'x' END"),
@@ -514,7 +655,11 @@ def test_parser_expression_binding_case_paths() -> None:
                     },
                 },
             ],
-            "else": {"type": "unary_op", "op": "-", "operand": {"type": "literal", "value": "?"}},
+            "else": {
+                "type": "unary_op",
+                "op": "-",
+                "operand": {"type": "literal", "value": "?"},
+            },
         },
     }
     values = _expression_values_to_bind(expression)
@@ -542,9 +687,13 @@ def test_parser_insert_multi_row_scanner_edges() -> None:
 def test_parser_alter_valid_paths_and_compound_parenthesized_branches() -> None:
     assert parse_sql("ALTER TABLE t ADD COLUMN c FLOAT")["type_name"] == "REAL"
     assert parse_sql("ALTER TABLE t DROP COLUMN c")["operation"] == "DROP_COLUMN"
-    assert parse_sql("ALTER TABLE t RENAME COLUMN c TO d")["operation"] == "RENAME_COLUMN"
+    assert (
+        parse_sql("ALTER TABLE t RENAME COLUMN c TO d")["operation"] == "RENAME_COLUMN"
+    )
 
-    compound = parse_sql("(SELECT id FROM t1) UNION (SELECT id FROM t2 ORDER BY id DESC LIMIT 2 OFFSET 1)")
+    compound = parse_sql(
+        "(SELECT id FROM t1) UNION (SELECT id FROM t2 ORDER BY id DESC LIMIT 2 OFFSET 1)"
+    )
     assert compound["action"] == "COMPOUND"
 
 
@@ -554,7 +703,9 @@ def test_parser_compound_trailing_clause_validation_errors() -> None:
     with pytest.raises(ValueError, match="Invalid OFFSET clause format"):
         parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 OFFSET")
 
-    parsed = parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 LIMIT ? OFFSET ?", (2, 1))
+    parsed = parse_sql(
+        "SELECT id FROM t1 UNION SELECT id FROM t2 LIMIT ? OFFSET ?", (2, 1)
+    )
     assert parsed["limit"] == 2
     assert parsed["offset"] == 1
 
@@ -598,13 +749,23 @@ def test_executor_sql_rendering_helper_branches() -> None:
         "type": "case",
         "mode": "simple",
         "value": {"type": "column", "source": "a", "name": "id"},
-        "whens": [{"match": {"type": "literal", "value": 1}, "result": {"type": "literal", "value": "x"}}],
+        "whens": [
+            {
+                "match": {"type": "literal", "value": 1},
+                "result": {"type": "literal", "value": "x"},
+            }
+        ],
         "else": {"type": "literal", "value": "y"},
     }
     assert "CASE" in SharedExecutor._expression_to_sql(searched_case)
     assert "WHEN" in SharedExecutor._expression_to_sql(simple_case)
     assert SharedExecutor._expression_to_sql(123) == "123"
-    assert SharedExecutor._where_operand_to_sql({"type": "literal", "value": 3}, is_column=False) == "3"
+    assert (
+        SharedExecutor._where_operand_to_sql(
+            {"type": "literal", "value": 3}, is_column=False
+        )
+        == "3"
+    )
     assert SharedExecutor._where_to_sql({"conditions": []}) == ""
     assert "AND" in SharedExecutor._where_to_sql(
         {
@@ -624,8 +785,18 @@ def test_executor_sql_rendering_helper_branches() -> None:
     assert "AND" in SharedExecutor._where_to_sql(
         {"column": "a.id", "operator": "BETWEEN", "value": [1, 5]}
     )
-    assert SharedExecutor._contains_arithmetic_expression({"type": "alias", "expression": {"type": "alias", "expression": {"type": "literal", "value": 1}}})
-    refs = SharedExecutor._collect_expression_column_refs({"type": "alias", "expression": {"type": "column", "source": "a", "name": "id"}})
+    assert SharedExecutor._contains_arithmetic_expression(
+        {
+            "type": "alias",
+            "expression": {
+                "type": "alias",
+                "expression": {"type": "literal", "value": 1},
+            },
+        }
+    )
+    refs = SharedExecutor._collect_expression_column_refs(
+        {"type": "alias", "expression": {"type": "column", "source": "a", "name": "id"}}
+    )
     assert refs == {"a.id"}
 
 
@@ -675,14 +846,27 @@ def test_parser_join_validation_and_expression_to_sql_branches() -> None:
         allowed,
     )
 
-    assert _expression_to_sql_for_order_by({"type": "aggregate", "func": "COUNT", "arg": "*"}) == "COUNT(*)"
+    assert (
+        _expression_to_sql_for_order_by(
+            {"type": "aggregate", "func": "COUNT", "arg": "*"}
+        )
+        == "COUNT(*)"
+    )
     assert _expression_to_sql_for_order_by({"type": "literal", "value": "x"}) == "'x'"
-    assert _expression_to_sql_for_order_by({"type": "unary_op", "operand": {"type": "literal", "value": 1}}) == "-1"
-    assert _expression_to_sql_for_order_by(
-        {
-            "type": "binary_op",
-            "op": "+",
-            "left": {"type": "literal", "value": 1},
-            "right": {"type": "literal", "value": 2},
-        }
-    ) == "(1 + 2)"
+    assert (
+        _expression_to_sql_for_order_by(
+            {"type": "unary_op", "operand": {"type": "literal", "value": 1}}
+        )
+        == "-1"
+    )
+    assert (
+        _expression_to_sql_for_order_by(
+            {
+                "type": "binary_op",
+                "op": "+",
+                "left": {"type": "literal", "value": 1},
+                "right": {"type": "literal", "value": 2},
+            }
+        )
+        == "(1 + 2)"
+    )

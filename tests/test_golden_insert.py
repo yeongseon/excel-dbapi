@@ -156,7 +156,6 @@ def test_invalid_parse(
         parse_sql(sql, params)
 
 
-
 def test_insert_select_golden() -> None:
     """INSERT...SELECT produces subquery values."""
     parsed = parse_sql("INSERT INTO Target SELECT id, name FROM Source")

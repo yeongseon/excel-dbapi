@@ -2,7 +2,16 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Concatenate, List, Optional, ParamSpec, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Concatenate,
+    List,
+    Optional,
+    ParamSpec,
+    TypeVar,
+    cast,
+)
 
 from .engines.result import Description, ExecutionResult
 
@@ -85,7 +94,9 @@ class ExcelCursor:
     def executemany(
         self, query: str, seq_of_params: Iterable[Sequence[Any]]
     ) -> "ExcelCursor":
-        ensure_write_lock = getattr(self.connection, "_ensure_write_lock_for_query", None)
+        ensure_write_lock = getattr(
+            self.connection, "_ensure_write_lock_for_query", None
+        )
         if callable(ensure_write_lock):
             ensure_write_lock(query)
         total_rowcount = 0
@@ -99,10 +110,8 @@ class ExcelCursor:
 
         for params in seq_of_params:
             try:
-                result: ExecutionResult = (
-                    self.connection._executor.execute_with_params(
-                        query, tuple(params)
-                    )
+                result: ExecutionResult = self.connection._executor.execute_with_params(
+                    query, tuple(params)
                 )
             except ValueError as exc:
                 mapped: Exception = ProgrammingError(str(exc))

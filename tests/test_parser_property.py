@@ -9,23 +9,25 @@ from excel_dbapi.parser import _tokenize, parse_sql
 
 IDENTIFIER = st.from_regex(r"[A-Za-z_][A-Za-z0-9_]{0,8}", fullmatch=True)
 NON_RESERVED_IDENTIFIER = IDENTIFIER.filter(
-    lambda value: value.upper()
-    not in {
-        "SELECT",
-        "FROM",
-        "WHERE",
-        "AND",
-        "OR",
-        "ORDER",
-        "BY",
-        "LIMIT",
-        "OFFSET",
-        "NULL",
-        "IN",
-        "NOT",
-        "BETWEEN",
-        "IS",
-    }
+    lambda value: (
+        value.upper()
+        not in {
+            "SELECT",
+            "FROM",
+            "WHERE",
+            "AND",
+            "OR",
+            "ORDER",
+            "BY",
+            "LIMIT",
+            "OFFSET",
+            "NULL",
+            "IN",
+            "NOT",
+            "BETWEEN",
+            "IS",
+        }
+    )
 )
 INT_LITERAL = st.integers(min_value=-100000, max_value=100000)
 
@@ -163,7 +165,11 @@ def test_select_ast_round_trips(sql: str) -> None:
 @settings(max_examples=80)
 @given(
     st.text(
-        alphabet=st.sampled_from(list(" abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-가나다漢字")),
+        alphabet=st.sampled_from(
+            list(
+                " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-가나다漢字"
+            )
+        ),
         min_size=1,
         max_size=20,
     ).filter(lambda name: name.strip() != "")
@@ -177,7 +183,9 @@ def test_quoted_unicode_and_spaced_names_do_not_crash_parser(name: str) -> None:
 
 @settings(max_examples=120)
 @given(where_condition_sql(), NON_RESERVED_IDENTIFIER)
-def test_valid_where_conditions_do_not_crash_parser(condition_sql: str, table: str) -> None:
+def test_valid_where_conditions_do_not_crash_parser(
+    condition_sql: str, table: str
+) -> None:
     sql = f"SELECT * FROM {table} WHERE {condition_sql}"
     parsed = parse_sql(sql)
     assert parsed["action"] == "SELECT"
@@ -215,9 +223,11 @@ def test_valid_where_conditions_do_not_crash_parser(condition_sql: str, table: s
             ),
             IDENTIFIER,
             INT_LITERAL.map(str),
-            st.text(alphabet=st.characters(blacklist_categories=("Cs",)), min_size=0, max_size=8).map(
-                lambda value: "'" + value.replace("'", "''") + "'"
-            ),
+            st.text(
+                alphabet=st.characters(blacklist_categories=("Cs",)),
+                min_size=0,
+                max_size=8,
+            ).map(lambda value: "'" + value.replace("'", "''") + "'"),
         ),
         min_size=1,
         max_size=25,

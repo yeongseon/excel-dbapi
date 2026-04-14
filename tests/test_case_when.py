@@ -54,9 +54,7 @@ def test_parser_builds_searched_case_ast() -> None:
 
 
 def test_parser_builds_simple_case_ast() -> None:
-    parsed = parse_sql(
-        "SELECT CASE tier WHEN 'gold' THEN 1 ELSE 2 END FROM t"
-    )
+    parsed = parse_sql("SELECT CASE tier WHEN 'gold' THEN 1 ELSE 2 END FROM t")
     case_expr = parsed["columns"][0]
     assert case_expr["type"] == "case"
     assert case_expr["mode"] == "simple"

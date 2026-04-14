@@ -2,12 +2,10 @@
 
 import json
 from typing import Any
-from unittest.mock import Mock, patch
 
 import httpx
 import pytest
 
-from excel_dbapi import connect
 from excel_dbapi.connection import ExcelConnection
 from excel_dbapi.exceptions import DataError
 
@@ -21,12 +19,11 @@ def _make_graph_handler(worksheet_values: list[list[Any]]):
     def handler(request: httpx.Request) -> httpx.Response:
         method = request.method
         path = request.url.path
-        body = None
         if request.content:
             try:
-                body = json.loads(request.content)
+                json.loads(request.content)
             except (json.JSONDecodeError, UnicodeDecodeError):
-                body = None
+                pass
 
         if path.endswith("/createSession"):
             return httpx.Response(201, json={"id": "sess-test"})
@@ -64,7 +61,7 @@ class TestGraphHeaderNormalization:
             engine="graph",
         )
         cursor = conn.cursor()
-        results = cursor.execute("SELECT * FROM Sheet1").fetchall()
+        cursor.execute("SELECT * FROM Sheet1").fetchall()
         conn.close()
 
         # Headers should be ["id", "name", "dept"]
@@ -163,7 +160,7 @@ class TestGraphHeaderNormalization:
             engine="graph",
         )
         cursor = conn.cursor()
-        results = cursor.execute("SELECT * FROM Sheet1").fetchall()
+        cursor.execute("SELECT * FROM Sheet1").fetchall()
         conn.close()
 
         # Headers should be stripped
@@ -184,7 +181,7 @@ class TestGraphHeaderNormalization:
             engine="graph",
         )
         cursor = conn.cursor()
-        results = cursor.execute("SELECT * FROM Sheet1").fetchall()
+        cursor.execute("SELECT * FROM Sheet1").fetchall()
         conn.close()
 
         # Numeric header should be converted to string "1"
@@ -203,7 +200,7 @@ class TestGraphHeaderNormalization:
             transport=transport,
             engine="graph",
         )
-        cursor = conn.cursor()
+        conn.cursor()
         # Reading empty sheet should work (no headers to validate)
         # This depends on how the system handles empty sheets
         conn.close()

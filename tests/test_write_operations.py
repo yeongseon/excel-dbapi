@@ -175,7 +175,6 @@ def test_select_order_limit_with_where_pandas(tmp_path: Path) -> None:
         assert results == [(3, "Cara")]
 
 
-
 # ── Multi-row INSERT & INSERT...SELECT tests ──
 
 
@@ -213,8 +212,7 @@ def test_multi_row_insert_five_rows(tmp_path: Path) -> None:
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO Sheet1 VALUES "
-            "(1, 'A'), (2, 'B'), (3, 'C'), (4, 'D'), (5, 'E')"
+            "INSERT INTO Sheet1 VALUES (1, 'A'), (2, 'B'), (3, 'C'), (4, 'D'), (5, 'E')"
         )
         assert cursor.rowcount == 5
 
@@ -235,9 +233,7 @@ def test_multi_row_insert_with_columns(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO Sheet1 (id, name) VALUES (1, 'Alice'), (2, 'Bob')"
-        )
+        cursor.execute("INSERT INTO Sheet1 (id, name) VALUES (1, 'Alice'), (2, 'Bob')")
         assert cursor.rowcount == 2
 
     wb = load_workbook(file_path, data_only=True)
@@ -311,9 +307,7 @@ def test_insert_select_with_where(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO Target SELECT id, name FROM Source WHERE id >= 2"
-        )
+        cursor.execute("INSERT INTO Target SELECT id, name FROM Source WHERE id >= 2")
         assert cursor.rowcount == 2
 
     wb = load_workbook(file_path, data_only=True)
@@ -337,9 +331,7 @@ def test_insert_select_empty_result(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO Target SELECT id, name FROM Source WHERE id > 999"
-        )
+        cursor.execute("INSERT INTO Target SELECT id, name FROM Source WHERE id > 999")
         assert cursor.rowcount == 0
 
     wb = load_workbook(file_path, data_only=True)
@@ -400,9 +392,7 @@ def test_multi_row_insert_atomicity_on_failure(tmp_path: Path) -> None:
         cursor = conn.cursor()
         # Row 2 has wrong column count — should fail atomically
         with pytest.raises(Exception, match="count"):
-            cursor.execute(
-                "INSERT INTO Sheet1 VALUES (2, 'Good'), (3)"
-            )
+            cursor.execute("INSERT INTO Sheet1 VALUES (2, 'Good'), (3)")
 
     # Verify NO partial rows were inserted
     wb = load_workbook(file_path, data_only=True)

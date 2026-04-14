@@ -274,6 +274,12 @@ The Pandas engine preserves Python types. If a column contains integers,
 
 excel-dbapi can access remote Excel files on OneDrive/SharePoint via the Microsoft Graph API.
 
+Supported Graph DSNs are ID-based:
+
+- `msgraph://drives/{drive_id}/items/{item_id}`
+- `sharepoint://sites/{site_name}/drives/{drive_id}/items/{item_id}`
+- `onedrive://me/drive/items/{item_id}`
+
 ```bash
 pip install excel-dbapi[graph]
 ```
@@ -295,6 +301,9 @@ conn.close()
 
 The Graph backend is **read-only by default**. Write operations require explicit opt-in
 and a valid Azure credential with appropriate Graph API permissions.
+
+Graph metadata sync is best-effort for write operations: if worksheet mutation succeeds
+but metadata sync fails, excel-dbapi keeps the worksheet change and logs a warning.
 
 For DSN formats and dependency choices, see the
 [Usage Guide Graph section](docs/USAGE.md#graph-backend-dsn-and-installation).

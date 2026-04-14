@@ -49,7 +49,9 @@ def test_scalar_edges_and_date_part_null_paths(tmp_path: Path) -> None:
             "YEAR(d), MONTH('2024-01-31'), DAY('2024-01-15T11:22:33Z') "
             "FROM t WHERE id = 1"
         )
-        assert cur.fetchall() == [(None, "lo", "he", "", None, None, None, None, 2024, 1, 15)]
+        assert cur.fetchall() == [
+            (None, "lo", "he", "", None, None, None, None, 2024, 1, 15)
+        ]
 
 
 def test_scalar_argument_validation_paths(tmp_path: Path) -> None:
@@ -80,7 +82,9 @@ def test_like_escape_error_paths(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cur = conn.cursor()
-        with pytest.raises(ProgrammingError, match="ESCAPE requires a single character"):
+        with pytest.raises(
+            ProgrammingError, match="ESCAPE requires a single character"
+        ):
             cur.execute("SELECT id FROM t WHERE name LIKE 'a%' ESCAPE 'xx'")
 
         with pytest.raises(ProgrammingError, match="trailing ESCAPE character"):
@@ -137,7 +141,14 @@ def test_window_programming_error_paths(tmp_path: Path) -> None:
     with pytest.raises(ProgrammingError, match="Unsupported window function"):
         executor._apply_window_functions(
             rows,
-            [{"type": "window_function", "func": "MEDIAN", "args": ["v"], "order_by": []}],
+            [
+                {
+                    "type": "window_function",
+                    "func": "MEDIAN",
+                    "args": ["v"],
+                    "order_by": [],
+                }
+            ],
             None,
         )
 
@@ -164,13 +175,21 @@ def test_expression_and_where_sql_helpers() -> None:
         {
             "type": "case",
             "mode": "searched",
-            "whens": [{"condition": {"type": "exists"}, "result": {"type": "literal", "value": 1}}],
+            "whens": [
+                {
+                    "condition": {"type": "exists"},
+                    "result": {"type": "literal", "value": 1},
+                }
+            ],
             "else": {"type": "literal", "value": 0},
         }
     )
     assert case_sql.startswith("CASE")
 
-    assert SharedExecutor._where_operand_to_sql({"type": "exists"}, is_column=False) == "EXISTS (SUBQUERY)"
+    assert (
+        SharedExecutor._where_operand_to_sql({"type": "exists"}, is_column=False)
+        == "EXISTS (SUBQUERY)"
+    )
     assert SharedExecutor._where_to_sql({"type": "exists"}) == "EXISTS (SUBQUERY)"
     assert SharedExecutor._contains_arithmetic_expression({"type": "mystery"}) is False
 
@@ -185,7 +204,11 @@ def test_collect_expression_refs_paths() -> None:
             {"__expression__": {"type": "column", "source": "t", "name": "v"}},
             {"column": "t.id"},
         ],
-        "filter": {"column": {"type": "column", "source": "u", "name": "id"}, "operator": ">", "value": 0},
+        "filter": {
+            "column": {"type": "column", "source": "u", "name": "id"},
+            "operator": ">",
+            "value": 0,
+        },
     }
     refs = SharedExecutor._collect_expression_column_refs(expr)
     assert "t.v" in refs
@@ -248,7 +271,10 @@ def test_aggregate_distinct_dedupe_path(tmp_path: Path) -> None:
     executor = SharedExecutor(backend)
     data = backend.read_sheet("t")
     headers = list(data.headers)
-    rows = [executor._build_scoped_row(executor._row_from_values(headers, list(r))) for r in data.rows]
+    rows = [
+        executor._build_scoped_row(executor._row_from_values(headers, list(r)))
+        for r in data.rows
+    ]
     result = executor._execute_aggregate_select(
         "SELECT",
         {"distinct": True, "order_by": None, "limit": None, "offset": None},
@@ -282,7 +308,10 @@ def test_join_validation_paths_with_custom_ast(tmp_path: Path) -> None:
         "columns": [
             None,
             {"type": "literal", "value": 1},
-            {"type": "unary_op", "operand": {"type": "column", "source": "t", "name": "v"}},
+            {
+                "type": "unary_op",
+                "operand": {"type": "column", "source": "t", "name": "v"},
+            },
             {
                 "type": "binary_op",
                 "left": {"type": "column", "source": "t", "name": "v"},
@@ -297,14 +326,25 @@ def test_join_validation_paths_with_custom_ast(tmp_path: Path) -> None:
                 "type": "case",
                 "mode": "simple",
                 "value": {"type": "column", "source": "t", "name": "id"},
-                "whens": ["skip", {"match": {"type": "column", "source": "u", "name": "id"}, "result": {"type": "literal", "value": 1}}],
+                "whens": [
+                    "skip",
+                    {
+                        "match": {"type": "column", "source": "u", "name": "id"},
+                        "result": {"type": "literal", "value": 1},
+                    },
+                ],
                 "else": {"type": "subquery"},
             },
             {
                 "type": "window_function",
                 "args": ["*", "t.id", {"type": "column", "source": "u", "name": "v2"}],
                 "partition_by": [{"type": "column", "source": "t", "name": "id"}],
-                "order_by": ["junk", {"__expression__": {"type": "column", "source": "t", "name": "id"}}, {"column": "__expr__:t.id + 1"}, {"column": "t.id"}],
+                "order_by": [
+                    "junk",
+                    {"__expression__": {"type": "column", "source": "t", "name": "id"}},
+                    {"column": "__expr__:t.id + 1"},
+                    {"column": "t.id"},
+                ],
                 "filter": {"column": "u.id", "operator": ">", "value": 0},
             },
         ],
@@ -322,12 +362,23 @@ def test_misc_internal_paths() -> None:
     backend = OpenpyxlBackend("tests/data/sample.xlsx")
     executor = SharedExecutor(backend)
 
-    assert SharedExecutor._normalize_single_source_aggregate_arg("t.value", ["a.b"]) == "t.value"
-    assert SharedExecutor._normalize_single_source_aggregate_arg("t.value", ["value"]) == "value"
-    assert SharedExecutor._normalize_single_source_aggregate_arg("t.value", ["x"]) == "t.value"
+    assert (
+        SharedExecutor._normalize_single_source_aggregate_arg("t.value", ["a.b"])
+        == "t.value"
+    )
+    assert (
+        SharedExecutor._normalize_single_source_aggregate_arg("t.value", ["value"])
+        == "value"
+    )
+    assert (
+        SharedExecutor._normalize_single_source_aggregate_arg("t.value", ["x"])
+        == "t.value"
+    )
 
     assert SharedExecutor._output_name({"type": "case"}) == "case_expr"
-    assert SharedExecutor._source_key({"type": "binary_op", "left": 1, "right": 2, "op": "+"}).startswith("__expr__:")
+    assert SharedExecutor._source_key(
+        {"type": "binary_op", "left": 1, "right": 2, "op": "+"}
+    ).startswith("__expr__:")
 
     assert executor._sort_key(object())[0] == 0
     assert SharedExecutor._coerce_temporal_value(date(2024, 1, 1)) is not None
@@ -342,7 +393,10 @@ def test_misc_internal_paths() -> None:
     with pytest.raises(ValueError, match="Unknown source reference"):
         executor._resolve_join_column({"t": {"id": 1}}, {"source": "x", "name": "id"})
 
-    assert executor._matches_join_on_condition({"t": {"id": 1}}, {"u": {"id": 1}}, None) is True
+    assert (
+        executor._matches_join_on_condition({"t": {"id": 1}}, {"u": {"id": 1}}, None)
+        is True
+    )
 
 
 def test_missing_sheet_errors_include_available_names(tmp_path: Path) -> None:
@@ -437,7 +491,9 @@ def test_direct_helper_branches_and_subquery_errors(tmp_path: Path) -> None:
         executor._call_function("DAY", [object()])
 
     with pytest.raises(ValueError, match="Invalid CTE definition"):
-        executor.execute({"ctes": [{"name": 1, "query": {}}], "action": "SELECT", "table": "t"})
+        executor.execute(
+            {"ctes": [{"name": 1, "query": {}}], "action": "SELECT", "table": "t"}
+        )
 
     with pytest.raises(ProgrammingError, match="Unsupported subquery node type"):
         executor._eval_subquery({"type": "weird"})
@@ -470,10 +526,30 @@ def test_condition_and_expression_normalization_branches(tmp_path: Path) -> None
     executor = SharedExecutor(backend)
 
     row = {"x": 2, "vals": [1, 2, 3], "other": (4, 5), "z": "alpha"}
-    assert executor._evaluate_condition(row, {"column": "x", "operator": "IN", "value": None}) is False
-    assert executor._evaluate_condition(row, {"column": "x", "operator": "IN", "value": [1, 2, 3]}) is True
-    assert executor._evaluate_condition(row, {"column": "x", "operator": "NOT IN", "value": None}) is True
-    assert executor._evaluate_condition(row, {"column": "x", "operator": "NOT IN", "value": (2, 9)}) is False
+    assert (
+        executor._evaluate_condition(
+            row, {"column": "x", "operator": "IN", "value": None}
+        )
+        is False
+    )
+    assert (
+        executor._evaluate_condition(
+            row, {"column": "x", "operator": "IN", "value": [1, 2, 3]}
+        )
+        is True
+    )
+    assert (
+        executor._evaluate_condition(
+            row, {"column": "x", "operator": "NOT IN", "value": None}
+        )
+        is True
+    )
+    assert (
+        executor._evaluate_condition(
+            row, {"column": "x", "operator": "NOT IN", "value": (2, 9)}
+        )
+        is False
+    )
 
     with pytest.raises(ValueError, match="single character"):
         executor._evaluate_condition(
@@ -487,11 +563,26 @@ def test_condition_and_expression_normalization_branches(tmp_path: Path) -> None
         executor._eval_cast(123, "DATE")
 
     assert executor._eval_expression(123, {}, lambda c: c) == 123
-    assert executor._eval_expression({"type": "alias", "expression": {"type": "literal", "value": 7}}, {}, lambda c: c) == 7
+    assert (
+        executor._eval_expression(
+            {"type": "alias", "expression": {"type": "literal", "value": 7}},
+            {},
+            lambda c: c,
+        )
+        == 7
+    )
     with pytest.raises(ProgrammingError, match="missing source"):
         executor._eval_expression({"type": "column", "name": "id"}, {}, lambda c: c)
     with pytest.raises(ProgrammingError, match="requires numeric operands"):
-        executor._eval_expression({"type": "unary_op", "op": "-", "operand": {"type": "literal", "value": "x"}}, {}, lambda c: c)
+        executor._eval_expression(
+            {
+                "type": "unary_op",
+                "op": "-",
+                "operand": {"type": "literal", "value": "x"},
+            },
+            {},
+            lambda c: c,
+        )
 
 
 def test_join_empty_headers_and_resolve_join_column_success(tmp_path: Path) -> None:
@@ -500,7 +591,7 @@ def test_join_empty_headers_and_resolve_join_column_success(tmp_path: Path) -> N
     left = workbook.active
     assert left is not None
     left.title = "left"
-    right = workbook.create_sheet("right")
+    workbook.create_sheet("right")
     workbook.save(file_path)
 
     backend = OpenpyxlBackend(str(file_path))
@@ -516,4 +607,7 @@ def test_join_empty_headers_and_resolve_join_column_success(tmp_path: Path) -> N
     result = executor._execute_join_select("SELECT", parsed, "left", left_data)
     assert result.rows == []
 
-    assert executor._resolve_join_column({"l": {"id": 1}}, {"source": "l", "name": "id"}) == 1
+    assert (
+        executor._resolve_join_column({"l": {"id": 1}}, {"source": "l", "name": "id"})
+        == 1
+    )

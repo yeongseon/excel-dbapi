@@ -166,9 +166,7 @@ def read_table_metadata(
     data = connection.engine.read_sheet(METADATA_SHEET)
     table_name_key = table_name.casefold()
     entries = [
-        row
-        for row in data.rows
-        if row and str(row[0]).casefold() == table_name_key
+        row for row in data.rows if row and str(row[0]).casefold() == table_name_key
     ]
     if not entries:
         return None
@@ -195,9 +193,7 @@ def remove_table_metadata(connection: Any, table_name: str) -> None:
     data = connection.engine.read_sheet(METADATA_SHEET)
     table_name_key = table_name.casefold()
     new_rows = [
-        row
-        for row in data.rows
-        if not row or str(row[0]).casefold() != table_name_key
+        row for row in data.rows if not row or str(row[0]).casefold() != table_name_key
     ]
 
     connection.engine.write_sheet(

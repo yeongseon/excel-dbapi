@@ -21,10 +21,13 @@ Choose `graph-azure` when you want excel-dbapi to acquire tokens through `azure-
 
 - `msgraph://drives/{drive_id}/items/{item_id}`
   - Generic Graph endpoint form when you already know drive/item IDs.
-- `sharepoint://{tenant}.sharepoint.com/sites/{site}/Shared Documents/path/to/workbook.xlsx`
-  - SharePoint site path form; excel-dbapi resolves the target workbook through Graph.
-- `onedrive://path/to/workbook.xlsx`
-  - OneDrive path form for the signed-in user's drive.
+- `sharepoint://sites/{site_name}/drives/{drive_id}/items/{item_id}`
+  - SharePoint workbook by site/drive/item IDs.
+- `onedrive://me/drive/items/{item_id}`
+  - Signed-in user's OneDrive workbook by item ID.
+
+Path-based forms such as `sharepoint://.../Shared Documents/path/to/workbook.xlsx`
+and `onedrive://path/to/workbook.xlsx` are not implemented.
 
 ### Example
 
@@ -40,6 +43,12 @@ with ExcelConnection(
     cursor.execute("SELECT * FROM Sheet1")
     print(cursor.fetchall())
 ```
+
+### Graph Write-Sync Limitation
+
+Graph is a non-transactional backend. If a worksheet mutation succeeds but metadata
+sync fails, excel-dbapi keeps the workbook change and logs a warning instead of
+rolling back the mutation.
 
 ## Basic Example
 

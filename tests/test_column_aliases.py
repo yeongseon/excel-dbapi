@@ -42,9 +42,7 @@ def _create_join_alias_workbook(path: Path) -> None:
 
 def test_parse_select_with_explicit_alias() -> None:
     parsed = parse_sql("SELECT name AS n FROM users")
-    assert parsed["columns"] == [
-        {"type": "alias", "alias": "n", "expression": "name"}
-    ]
+    assert parsed["columns"] == [{"type": "alias", "alias": "n", "expression": "name"}]
 
 
 def test_parse_select_with_aggregate_alias() -> None:
@@ -73,9 +71,7 @@ def test_parse_join_select_with_qualified_alias() -> None:
 
 def test_parse_select_with_implicit_alias() -> None:
     parsed = parse_sql("SELECT name n FROM users")
-    assert parsed["columns"] == [
-        {"type": "alias", "alias": "n", "expression": "name"}
-    ]
+    assert parsed["columns"] == [{"type": "alias", "alias": "n", "expression": "name"}]
 
 
 def test_parse_rejects_alias_on_wildcard() -> None:
@@ -170,7 +166,9 @@ def test_executor_join_alias_description(tmp_path: Path) -> None:
     file_path = tmp_path / "alias_join.xlsx"
     _create_join_alias_workbook(file_path)
 
-    parsed = parse_sql("SELECT t1.name AS user_name FROM t1 JOIN t2 ON t1.id = t2.user_id")
+    parsed = parse_sql(
+        "SELECT t1.name AS user_name FROM t1 JOIN t2 ON t1.id = t2.user_id"
+    )
     results = SharedExecutor(OpenpyxlBackend(str(file_path))).execute(parsed)
 
     assert [col[0] for col in results.description] == ["user_name"]
@@ -206,8 +204,6 @@ def test_executor_select_mixed_alias_and_non_alias_columns(tmp_path: Path) -> No
         ("Evan", 28),
         ("Finn", 31),
     ]
-
-
 
 
 def test_executor_alias_shadows_real_column_name(tmp_path: Path) -> None:

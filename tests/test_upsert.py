@@ -8,7 +8,9 @@ from excel_dbapi.exceptions import ProgrammingError
 from excel_dbapi.parser import parse_sql
 
 
-def _write_sheet(workbook: Workbook, name: str, headers: list[str], rows: list[list[object]]) -> None:
+def _write_sheet(
+    workbook: Workbook, name: str, headers: list[str], rows: list[list[object]]
+) -> None:
     if workbook.sheetnames:
         sheet = workbook.active
         assert sheet is not None
@@ -20,7 +22,9 @@ def _write_sheet(workbook: Workbook, name: str, headers: list[str], rows: list[l
         sheet.append(row)
 
 
-def _create_items_workbook(path: Path, rows: list[list[object]], *, include_source: bool = False) -> None:
+def _create_items_workbook(
+    path: Path, rows: list[list[object]], *, include_source: bool = False
+) -> None:
     workbook = Workbook()
     headers = ["id", "name", "age", "status", "code", "value"]
     _write_sheet(workbook, "items", headers, rows)
@@ -89,7 +93,9 @@ def test_upsert_do_nothing_basic(tmp_path: Path) -> None:
         )
         assert cursor.rowcount == 0
 
-    assert _fetch_rows(file_path, "SELECT id, name FROM items ORDER BY id") == [(1, "Old")]
+    assert _fetch_rows(file_path, "SELECT id, name FROM items ORDER BY id") == [
+        (1, "Old")
+    ]
 
 
 def test_upsert_do_nothing_no_conflict(tmp_path: Path) -> None:
@@ -113,7 +119,10 @@ def test_upsert_do_nothing_no_conflict(tmp_path: Path) -> None:
 
 def test_upsert_do_nothing_multi_row_mixed(tmp_path: Path) -> None:
     file_path = tmp_path / "upsert_nothing_mixed.xlsx"
-    _create_items_workbook(file_path, [[1, "Old1", 30, "active", "A", 10], [3, "Old3", 35, "active", "C", 12]])
+    _create_items_workbook(
+        file_path,
+        [[1, "Old1", 30, "active", "A", 10], [3, "Old3", 35, "active", "C", 12]],
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -164,7 +173,9 @@ def test_upsert_do_update_excluded_reference(tmp_path: Path) -> None:
         )
         assert cursor.rowcount == 1
 
-    assert _fetch_rows(file_path, "SELECT id, name FROM items ORDER BY id") == [(1, "Incoming")]
+    assert _fetch_rows(file_path, "SELECT id, name FROM items ORDER BY id") == [
+        (1, "Incoming")
+    ]
 
 
 def test_upsert_do_update_literal_values(tmp_path: Path) -> None:
@@ -180,12 +191,17 @@ def test_upsert_do_update_literal_values(tmp_path: Path) -> None:
         )
         assert cursor.rowcount == 1
 
-    assert _fetch_rows(file_path, "SELECT id, status FROM items ORDER BY id") == [(1, "updated")]
+    assert _fetch_rows(file_path, "SELECT id, status FROM items ORDER BY id") == [
+        (1, "updated")
+    ]
 
 
 def test_upsert_do_update_multi_column_target(tmp_path: Path) -> None:
     file_path = tmp_path / "upsert_update_multi_target.xlsx"
-    _create_items_workbook(file_path, [[1, "Old", 30, "active", "A", 10], [1, "Second", 31, "active", "B", 11]])
+    _create_items_workbook(
+        file_path,
+        [[1, "Old", 30, "active", "A", 10], [1, "Second", 31, "active", "B", 11]],
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -204,7 +220,10 @@ def test_upsert_do_update_multi_column_target(tmp_path: Path) -> None:
 
 def test_upsert_do_update_multi_row_mixed(tmp_path: Path) -> None:
     file_path = tmp_path / "upsert_update_mixed.xlsx"
-    _create_items_workbook(file_path, [[1, "Old1", 30, "active", "A", 10], [3, "Old3", 33, "active", "C", 30]])
+    _create_items_workbook(
+        file_path,
+        [[1, "Old1", 30, "active", "A", 10], [3, "Old3", 33, "active", "C", 30]],
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -226,7 +245,9 @@ def test_upsert_do_update_multi_row_mixed(tmp_path: Path) -> None:
 
 def test_upsert_do_update_all_rows_conflict(tmp_path: Path) -> None:
     file_path = tmp_path / "upsert_update_all_conflict.xlsx"
-    _create_items_workbook(file_path, [[1, "A", 30, "active", "A", 10], [2, "B", 20, "active", "B", 20]])
+    _create_items_workbook(
+        file_path, [[1, "A", 30, "active", "A", 10], [2, "B", 20, "active", "B", 20]]
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -246,7 +267,9 @@ def test_upsert_do_update_all_rows_conflict(tmp_path: Path) -> None:
 
 def test_upsert_do_nothing_all_rows_conflict(tmp_path: Path) -> None:
     file_path = tmp_path / "upsert_nothing_all_conflict.xlsx"
-    _create_items_workbook(file_path, [[1, "A", 30, "active", "A", 10], [2, "B", 20, "active", "B", 20]])
+    _create_items_workbook(
+        file_path, [[1, "A", 30, "active", "A", 10], [2, "B", 20, "active", "B", 20]]
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -270,7 +293,9 @@ def test_upsert_executor_invalid_conflict_column(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="ON CONFLICT column 'missing' not found in headers"):
+        with pytest.raises(
+            ProgrammingError, match="ON CONFLICT column 'missing' not found in headers"
+        ):
             cursor.execute(
                 "INSERT INTO items (id, name, age, status, code, value) "
                 "VALUES (1, 'X', 30, 'active', 'A', 1) "
@@ -298,7 +323,9 @@ def test_upsert_parameterized_values_and_set(tmp_path: Path) -> None:
 
 def test_insert_select_with_on_conflict(tmp_path: Path) -> None:
     file_path = tmp_path / "upsert_insert_select.xlsx"
-    _create_items_workbook(file_path, [[1, "Old", 30, "active", "A", 10]], include_source=True)
+    _create_items_workbook(
+        file_path, [[1, "Old", 30, "active", "A", 10]], include_source=True
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -327,7 +354,9 @@ def test_upsert_on_empty_table(tmp_path: Path) -> None:
         )
         assert cursor.rowcount == 1
 
-    assert _fetch_rows(file_path, "SELECT id, name FROM items ORDER BY id") == [(1, "First")]
+    assert _fetch_rows(file_path, "SELECT id, name FROM items ORDER BY id") == [
+        (1, "First")
+    ]
 
 
 def test_upsert_do_update_multiple_set_assignments(tmp_path: Path) -> None:
@@ -344,9 +373,9 @@ def test_upsert_do_update_multiple_set_assignments(tmp_path: Path) -> None:
         )
         assert cursor.rowcount == 1
 
-    assert _fetch_rows(file_path, "SELECT id, name, status, code FROM items ORDER BY id") == [
-        (1, "Incoming", "updated", "B")
-    ]
+    assert _fetch_rows(
+        file_path, "SELECT id, name, status, code FROM items ORDER BY id"
+    ) == [(1, "Incoming", "updated", "B")]
 
 
 def test_upsert_do_update_arithmetic_expression(tmp_path: Path) -> None:
@@ -371,10 +400,13 @@ def test_upsert_do_update_arithmetic_expression(tmp_path: Path) -> None:
 def test_do_nothing_with_null_target_value(tmp_path: Path) -> None:
     """NULL target values should never match: SQL NULL != NULL semantics."""
     file_path = tmp_path / "test.xlsx"
-    _create_items_workbook(file_path, [
-        [None, "Alice", 30, "active", "A", 1],
-        [2, "Bob", 25, "active", "B", 2],
-    ])
+    _create_items_workbook(
+        file_path,
+        [
+            [None, "Alice", 30, "active", "A", 1],
+            [2, "Bob", 25, "active", "B", 2],
+        ],
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -393,9 +425,12 @@ def test_do_nothing_with_null_target_value(tmp_path: Path) -> None:
 def test_do_update_with_null_target_value(tmp_path: Path) -> None:
     """DO UPDATE with NULL targets: both NULL rows should be inserted, not conflict."""
     file_path = tmp_path / "test.xlsx"
-    _create_items_workbook(file_path, [
-        [None, "Existing", 30, "active", "A", 1],
-    ])
+    _create_items_workbook(
+        file_path,
+        [
+            [None, "Existing", 30, "active", "A", 1],
+        ],
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -414,7 +449,9 @@ def test_do_update_with_null_target_value(tmp_path: Path) -> None:
 # ── Oracle Review: Parameter Binding Order Tests ──
 
 
-def test_insert_select_on_conflict_with_placeholders_in_select_and_set(tmp_path: Path) -> None:
+def test_insert_select_on_conflict_with_placeholders_in_select_and_set(
+    tmp_path: Path,
+) -> None:
     """Parameter order: SELECT placeholders first, then SET placeholders."""
     file_path = tmp_path / "test.xlsx"
     _create_items_workbook(
@@ -434,7 +471,9 @@ def test_insert_select_on_conflict_with_placeholders_in_select_and_set(tmp_path:
         # id=1 conflicts (exists), id=2 new — SELECT params are first 3, SET params are last 2
         assert cursor.rowcount == 2
 
-    rows = _fetch_rows(file_path, "SELECT id, name, status, code FROM items ORDER BY id")
+    rows = _fetch_rows(
+        file_path, "SELECT id, name, status, code FROM items ORDER BY id"
+    )
     assert rows == [
         (1, "Alice", "updated", "Y"),  # conflicted, DO UPDATE applied
         (2, "NewFromSource", "pending", "X"),  # inserted with SELECT params
@@ -447,9 +486,12 @@ def test_insert_select_on_conflict_with_placeholders_in_select_and_set(tmp_path:
 def test_do_update_with_sanitize_formulas(tmp_path: Path) -> None:
     """Formula values via excluded.col should be sanitized when sanitize_formulas=True."""
     file_path = tmp_path / "test.xlsx"
-    _create_items_workbook(file_path, [
-        [1, "Alice", 30, "active", "A", 10],
-    ])
+    _create_items_workbook(
+        file_path,
+        [
+            [1, "Alice", 30, "active", "A", 10],
+        ],
+    )
 
     with ExcelConnection(
         str(file_path), engine="openpyxl", autocommit=True, sanitize_formulas=True
@@ -464,7 +506,7 @@ def test_do_update_with_sanitize_formulas(tmp_path: Path) -> None:
 
     rows = _fetch_rows(file_path, "SELECT id, name FROM items")
     # Formula should be sanitized (prefixed with single quote)
-    assert rows == [(1, "'=HYPERLINK(\"http://evil.com\")")]
+    assert rows == [(1, '\'=HYPERLINK("http://evil.com")')]
 
 
 # ── Oracle Review Round 2: Composite NULL + Bare Identifier Tests ──
@@ -473,9 +515,12 @@ def test_do_update_with_sanitize_formulas(tmp_path: Path) -> None:
 def test_do_nothing_with_null_in_composite_target(tmp_path: Path) -> None:
     """Composite ON CONFLICT (id, code) where one target col is NULL => no conflict."""
     file_path = tmp_path / "test.xlsx"
-    _create_items_workbook(file_path, [
-        [1, "Alice", 30, "active", None, 10],
-    ])
+    _create_items_workbook(
+        file_path,
+        [
+            [1, "Alice", 30, "active", None, 10],
+        ],
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -494,10 +539,13 @@ def test_do_nothing_with_null_in_composite_target(tmp_path: Path) -> None:
 def test_do_update_with_null_in_composite_target(tmp_path: Path) -> None:
     """Composite ON CONFLICT (id, code) where existing row has NULL code => insert, not update."""
     file_path = tmp_path / "test.xlsx"
-    _create_items_workbook(file_path, [
-        [1, "Alice", 30, "active", None, 10],
-        [2, "Bob", 25, "active", "B", 20],
-    ])
+    _create_items_workbook(
+        file_path,
+        [
+            [1, "Alice", 30, "active", None, 10],
+            [2, "Bob", 25, "active", "B", 20],
+        ],
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
@@ -513,18 +561,21 @@ def test_do_update_with_null_in_composite_target(tmp_path: Path) -> None:
 
     rows = _fetch_rows(file_path, "SELECT id, name, code FROM items ORDER BY id, name")
     assert rows == [
-        (1, "Alice", None),       # original — not updated (NULL != NULL)
-        (1, "NewAlice", None),    # inserted (no conflict)
-        (2, "NewBob", "B"),      # updated (conflict on id=2, code='B')
+        (1, "Alice", None),  # original — not updated (NULL != NULL)
+        (1, "NewAlice", None),  # inserted (no conflict)
+        (2, "NewBob", "B"),  # updated (conflict on id=2, code='B')
     ]
 
 
 def test_do_update_bare_identifier_stores_literal(tmp_path: Path) -> None:
     """SET col = name stores the string 'name' as literal, NOT a column reference."""
     file_path = tmp_path / "test.xlsx"
-    _create_items_workbook(file_path, [
-        [1, "Alice", 30, "active", "A", 10],
-    ])
+    _create_items_workbook(
+        file_path,
+        [
+            [1, "Alice", 30, "active", "A", 10],
+        ],
+    )
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()

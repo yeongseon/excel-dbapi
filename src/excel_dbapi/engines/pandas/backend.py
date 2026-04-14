@@ -71,9 +71,7 @@ class PandasBackend(WorkbookBackend):
 
             header_key = trimmed.casefold()
             if header_key in normalized_headers:
-                raise DataError(
-                    f"Duplicate header: '{trimmed}' (sheet '{sheet_name}')"
-                )
+                raise DataError(f"Duplicate header: '{trimmed}' (sheet '{sheet_name}')")
             normalized_headers.add(header_key)
 
         for base_key, suffixed_key in normalized_pairs:

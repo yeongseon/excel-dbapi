@@ -243,7 +243,9 @@ class GraphBackend(WorkbookBackend):
                 f"{self._locator.item_path}/workbook"
                 f"/worksheets/{_encode_path_segment(ws_id)}/range(address='{tail_address}')/clear"
             )
-            self._session_aware_request("POST", clear_path, json={"applyTo": "Contents"})
+            self._session_aware_request(
+                "POST", clear_path, json={"applyTo": "Contents"}
+            )
 
         if old_col_count > num_cols and new_row_count > 0:
             right_start_col = _col_letter(num_cols)
@@ -275,7 +277,9 @@ class GraphBackend(WorkbookBackend):
             return False
 
         changed_rows: list[int] = []
-        for idx, (old_row, new_row) in enumerate(zip(old_values[1:], matrix[1:]), start=2):
+        for idx, (old_row, new_row) in enumerate(
+            zip(old_values[1:], matrix[1:]), start=2
+        ):
             old_rect = self._rect_row(old_row, num_cols)
             if old_rect != new_row:
                 changed_rows.append(idx)
@@ -292,7 +296,9 @@ class GraphBackend(WorkbookBackend):
         row_groups = self._group_consecutive(changed_rows)
         last_col = _col_letter(num_cols - 1)
         for start_row, end_row in row_groups:
-            values = [matrix[row_number - 1] for row_number in range(start_row, end_row + 1)]
+            values = [
+                matrix[row_number - 1] for row_number in range(start_row, end_row + 1)
+            ]
             address = f"A{start_row}:{last_col}{end_row}"
             patch_path = (
                 f"{self._locator.item_path}/workbook"
@@ -450,9 +456,7 @@ class GraphBackend(WorkbookBackend):
         if ws_id is None:
             raise ValueError(f"Sheet '{name}' not found in Excel")
 
-        delete_path = (
-            f"{self._locator.item_path}/workbook/worksheets/{_encode_path_segment(ws_id)}"
-        )
+        delete_path = f"{self._locator.item_path}/workbook/worksheets/{_encode_path_segment(ws_id)}"
         self._session_aware_request("DELETE", delete_path)
 
         # Invalidate cache

@@ -2,11 +2,9 @@
 
 from pathlib import Path
 
-import pytest
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
-from excel_dbapi.exceptions import ProgrammingError
 
 
 def _create_test_workbook(path: Path) -> None:

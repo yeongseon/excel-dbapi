@@ -75,6 +75,12 @@ This table is the **single authoritative matrix** for SQL feature support.
 
 ## 3. Statement Syntax Overview
 
+### Backend consistency note
+
+- For non-transactional backends (Graph), metadata synchronization after DDL is
+  best-effort. If sheet mutation succeeds but metadata sync fails, the data change
+  remains applied and a warning is emitted.
+
 ### 3.1 SELECT
 
 ```sql

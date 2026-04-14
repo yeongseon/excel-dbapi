@@ -122,7 +122,9 @@ def test_parse_subquery_rejects_star():
 
 
 def test_parse_subquery_accepted_in_update():
-    result = parse_sql("UPDATE users SET name = 'x' WHERE id IN (SELECT id FROM admins)")
+    result = parse_sql(
+        "UPDATE users SET name = 'x' WHERE id IN (SELECT id FROM admins)"
+    )
     assert result["action"] == "UPDATE"
     assert result["where"] is not None
     cond = result["where"]["conditions"][0]
@@ -348,6 +350,7 @@ def test_aggregate_count_distinct():
     assert col["arg"] == "name"
     assert col["distinct"] is True
 
+
 def test_aggregate_rejects_expression():
     with pytest.raises(ValueError, match="Unsupported function: SUM"):
         parse_sql("SELECT SUM(age + 1) FROM users")
@@ -452,9 +455,7 @@ def test_parse_join_without_inner_keyword():
 
 
 def test_parse_join_with_where():
-    parsed = parse_sql(
-        "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id = 1"
-    )
+    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id = 1")
     assert parsed["joins"] is not None
     assert parsed["where"] is not None
 
@@ -538,7 +539,9 @@ def test_parse_join_rejects_non_equality_on():
 
 
 def test_parse_join_rejects_subquery_with_join():
-    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)")
+    parsed = parse_sql(
+        "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)"
+    )
     assert parsed["joins"] is not None
     where_cond = parsed["where"]["conditions"][0]
     assert where_cond["operator"] == "IN"
@@ -546,7 +549,9 @@ def test_parse_join_rejects_subquery_with_join():
 
 
 def test_parse_join_accepts_group_by():
-    parsed = parse_sql("SELECT a.id, COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id")
+    parsed = parse_sql(
+        "SELECT a.id, COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id"
+    )
     assert parsed["group_by"] == ["a.id"]
 
 
@@ -612,9 +617,7 @@ def test_parse_join_rejects_alias_vs_table_name_collision():
     e.g. FROM users u JOIN orders users  -- right alias 'users' == left table 'users'
     """
     with pytest.raises(ValueError, match="Ambiguous table reference 'users'"):
-        parse_sql(
-            "SELECT users.id FROM users u JOIN orders users ON u.id = users.id"
-        )
+        parse_sql("SELECT users.id FROM users u JOIN orders users ON u.id = users.id")
 
 
 def test_parse_join_rejects_left_alias_vs_right_table_collision():
@@ -635,7 +638,6 @@ def test_parse_join_rejects_subquery_containing_join():
             "SELECT id FROM t1 WHERE id IN "
             "(SELECT a.id FROM t2 a JOIN t3 b ON a.id = b.id)"
         )
-
 
 
 # ── Multi-row INSERT & INSERT...SELECT tests ──

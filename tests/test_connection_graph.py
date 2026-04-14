@@ -340,7 +340,9 @@ class TestGraphConnectionDelete:
         delete_reqs = [
             r for r in state["requests"] if r[0] == "POST" and r[1].endswith("/delete")
         ]
-        patch_reqs = [r for r in state["requests"] if r[0] == "PATCH" and "/range(" in r[1]]
+        patch_reqs = [
+            r for r in state["requests"] if r[0] == "PATCH" and "/range(" in r[1]
+        ]
         assert delete_reqs or patch_reqs
         conn.close()
 

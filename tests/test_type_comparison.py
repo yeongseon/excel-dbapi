@@ -20,7 +20,9 @@ def _create_typed_workbook(path: Path) -> None:
     wb.save(path)
 
 
-def _query(file_path: Path, query: str, params: tuple[object, ...] | None = None) -> list[tuple[object, ...]]:
+def _query(
+    file_path: Path, query: str, params: tuple[object, ...] | None = None
+) -> list[tuple[object, ...]]:
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
         cursor.execute(query, params)

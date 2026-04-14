@@ -35,7 +35,7 @@ class WorkbookBackend(ABC):
         self.max_memory_mb: float | None = self._normalize_max_memory_mb(
             options.get("max_memory_mb")
         )
-        _is_local_path = not ("://" in file_path)
+        _is_local_path = "://" not in file_path
         self._file_locking_enabled = bool(options.get("file_locking", _is_local_path))
         self._lock_fd: int | None = None
         self._lock_path = f"{self.file_path}.lock"
@@ -54,7 +54,11 @@ class WorkbookBackend(ABC):
     def _normalize_max_memory_mb(value: Any) -> float | None:
         if value is None:
             return None
-        if isinstance(value, bool) or not isinstance(value, (int, float)) or float(value) <= 0:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or float(value) <= 0
+        ):
             raise ValueError("max_memory_mb must be a positive number")
         return float(value)
 
@@ -94,7 +98,9 @@ class WorkbookBackend(ABC):
 
     def _clear_stale_lock(self) -> bool:
         try:
-            with open(self._lock_path, "r", encoding="ascii", errors="replace") as handle:
+            with open(
+                self._lock_path, "r", encoding="ascii", errors="replace"
+            ) as handle:
                 raw_pid = handle.read().strip()
         except (OSError, UnicodeDecodeError):
             return False
@@ -249,9 +255,7 @@ def _normalize_headers(raw: list[Any]) -> list[str]:
     headers: list[str] = []
     for idx, value in enumerate(raw):
         if value is None or (isinstance(value, str) and value.strip() == ""):
-            raise DataError(
-                f"Empty or None header at column index {idx}"
-            )
+            raise DataError(f"Empty or None header at column index {idx}")
         headers.append(str(value).strip())
 
     seen: set[str] = set()

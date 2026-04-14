@@ -221,9 +221,7 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "where": None,
             "group_by": ["name"],
             "having": {
-                "conditions": [
-                    {"column": "SUM(score)", "operator": ">", "value": 100}
-                ],
+                "conditions": [{"column": "SUM(score)", "operator": ">", "value": 100}],
                 "conjunctions": [],
             },
             "order_by": None,

@@ -202,7 +202,9 @@ def test_executor_aggregate_sum_avg_min_max(tmp_path: Path):
     _create_select_workbook(file_path)
 
     engine = OpenpyxlBackend(str(file_path))
-    parsed = parse_sql("SELECT SUM(score), AVG(score), MIN(score), MAX(score) FROM Sheet1")
+    parsed = parse_sql(
+        "SELECT SUM(score), AVG(score), MIN(score), MAX(score) FROM Sheet1"
+    )
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [(50.0, 50.0 / 3.0, 10.0, 30.0)]
@@ -216,10 +218,12 @@ def test_executor_aggregate_min_max_text_values(tmp_path: Path):
     parsed = parse_sql("SELECT MIN(name), MAX(name) FROM Sheet1")
     results = SharedExecutor(engine).execute(parsed)
 
-    assert results.rows == [(
-        "A",
-        "C",
-    )]
+    assert results.rows == [
+        (
+            "A",
+            "C",
+        )
+    ]
 
 
 def test_executor_aggregate_min_max_date_values(tmp_path: Path):
@@ -248,7 +252,9 @@ def test_executor_group_by_count(tmp_path: Path):
     _create_select_workbook(file_path)
 
     engine = OpenpyxlBackend(str(file_path))
-    parsed = parse_sql("SELECT name, COUNT(*) FROM Sheet1 GROUP BY name ORDER BY name ASC")
+    parsed = parse_sql(
+        "SELECT name, COUNT(*) FROM Sheet1 GROUP BY name ORDER BY name ASC"
+    )
     results = SharedExecutor(engine).execute(parsed)
 
     assert results.rows == [("A", 2), ("B", 2), ("C", 1)]
@@ -371,7 +377,9 @@ def test_having_rejects_aggregate_with_expression_arg(tmp_path: Path):
     engine = OpenpyxlBackend(str(file_path))
     parsed = parse_sql("SELECT COUNT(*) FROM users GROUP BY name HAVING SUM(age+1) > 1")
 
-    with pytest.raises(ValueError, match="must be a GROUP BY column or aggregate function"):
+    with pytest.raises(
+        ValueError, match="must be a GROUP BY column or aggregate function"
+    ):
         SharedExecutor(engine).execute(parsed)
 
 
@@ -381,7 +389,9 @@ def test_order_by_rejects_aggregate_with_expression_arg(tmp_path: Path):
 
     engine = OpenpyxlBackend(str(file_path))
     with pytest.raises(ValueError, match="Unsupported aggregate expression"):
-        parsed = parse_sql("SELECT name, COUNT(*) FROM users GROUP BY name ORDER BY SUM(age+1)")
+        parsed = parse_sql(
+            "SELECT name, COUNT(*) FROM users GROUP BY name ORDER BY SUM(age+1)"
+        )
         SharedExecutor(engine).execute(parsed)
 
 

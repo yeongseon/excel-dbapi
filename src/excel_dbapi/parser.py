@@ -435,7 +435,9 @@ def _parse_case_expression_tokens(
 
     while index < len(tokens) and _is_case_keyword(tokens[index], "WHEN"):
         index += 1
-        when_tokens, index, then_stop = _collect_case_tokens_until(tokens, index, {"THEN"})
+        when_tokens, index, then_stop = _collect_case_tokens_until(
+            tokens, index, {"THEN"}
+        )
         if then_stop != "THEN" or not when_tokens:
             raise ValueError("Invalid CASE expression: expected WHEN ... THEN ...")
 
@@ -484,7 +486,9 @@ def _parse_case_expression_tokens(
 
         if next_stop == "ELSE":
             index += 1
-            else_tokens, index, end_stop = _collect_case_tokens_until(tokens, index, {"END"})
+            else_tokens, index, end_stop = _collect_case_tokens_until(
+                tokens, index, {"END"}
+            )
             if end_stop != "END":
                 raise ValueError("Invalid CASE expression: missing END")
             if not else_tokens:
@@ -562,7 +566,9 @@ def _parse_column_expression(
     if expression == "*":
         if allow_wildcard:
             return expression
-        raise ValueError("Unsupported column expression: wildcard is not supported here")
+        raise ValueError(
+            "Unsupported column expression: wildcard is not supported here"
+        )
 
     literal_value: Any | None = None
     parsed_numeric = _parse_numeric_literal(expression)
@@ -617,7 +623,9 @@ def _parse_column_expression(
             ):
                 subquery_start = position
                 subquery_end = _find_matching_parenthesis(tokens, subquery_start)
-                subquery_text = " ".join(tokens[subquery_start + 1 : subquery_end]).strip()
+                subquery_text = " ".join(
+                    tokens[subquery_start + 1 : subquery_end]
+                ).strip()
                 position = subquery_end + 1
                 return _parse_scalar_subquery_node(
                     subquery_text,
@@ -784,15 +792,15 @@ _SCALAR_FUNCTION_NAMES = frozenset(
     }
 )
 _IDENTIFIER_PATTERN = r"[A-Za-z_][A-Za-z0-9_]*"
-_QUALIFIED_IDENTIFIER_PATTERN = (
-    rf"{_IDENTIFIER_PATTERN}\.{_IDENTIFIER_PATTERN}"
-)
+_QUALIFIED_IDENTIFIER_PATTERN = rf"{_IDENTIFIER_PATTERN}\.{_IDENTIFIER_PATTERN}"
 
 
 def _aggregate_expression_to_label(aggregate: dict[str, Any]) -> str:
     func = str(aggregate.get("func", "")).upper()
     arg = str(aggregate.get("arg", "")).strip()
-    aggregate_sql = f"{func}(DISTINCT {arg})" if aggregate.get("distinct") else f"{func}({arg})"
+    aggregate_sql = (
+        f"{func}(DISTINCT {arg})" if aggregate.get("distinct") else f"{func}({arg})"
+    )
     filter_clause = aggregate.get("filter")
     if isinstance(filter_clause, dict):
         filter_sql = _where_to_sql_for_order_by(filter_clause)
@@ -895,7 +903,11 @@ def _find_top_level_window_clause_index(
             index += 1
             continue
         if depth == 0 and (
-            (upper == "ORDER" and index + 1 < len(tokens) and tokens[index + 1].upper() == "BY")
+            (
+                upper == "ORDER"
+                and index + 1 < len(tokens)
+                and tokens[index + 1].upper() == "BY"
+            )
             or upper == "ROWS"
         ):
             return index
@@ -923,12 +935,18 @@ def _parse_window_spec_tokens(
 
     if index < len(spec_tokens) and spec_tokens[index].upper() == "PARTITION":
         if index + 1 >= len(spec_tokens) or spec_tokens[index + 1].upper() != "BY":
-            raise ValueError("Invalid window specification: expected BY after PARTITION")
+            raise ValueError(
+                "Invalid window specification: expected BY after PARTITION"
+            )
         partition_start = index + 2
-        partition_end = _find_top_level_window_clause_index(spec_tokens, partition_start)
+        partition_end = _find_top_level_window_clause_index(
+            spec_tokens, partition_start
+        )
         partition_text = " ".join(spec_tokens[partition_start:partition_end]).strip()
         if not partition_text:
-            raise ValueError("Invalid window specification: PARTITION BY requires expression")
+            raise ValueError(
+                "Invalid window specification: PARTITION BY requires expression"
+            )
         partition_by = [
             _parse_column_expression(
                 part,
@@ -941,7 +959,9 @@ def _parse_window_spec_tokens(
             if part.strip()
         ]
         if not partition_by:
-            raise ValueError("Invalid window specification: PARTITION BY requires expression")
+            raise ValueError(
+                "Invalid window specification: PARTITION BY requires expression"
+            )
         index = partition_end
 
     if index < len(spec_tokens) and spec_tokens[index].upper() == "ORDER":
@@ -951,7 +971,9 @@ def _parse_window_spec_tokens(
         order_end = _find_top_level_window_clause_index(spec_tokens, order_start)
         order_text = " ".join(spec_tokens[order_start:order_end]).strip()
         if not order_text:
-            raise ValueError("Invalid window specification: ORDER BY requires expression")
+            raise ValueError(
+                "Invalid window specification: ORDER BY requires expression"
+            )
         order_by = list(
             _parse_order_by_clause_text(
                 order_text,
@@ -1037,7 +1059,10 @@ def _parse_window_or_aggregate_expression_tokens(
             function_end = _find_matching_parenthesis(tokens, 1)
             if function_end != 2:
                 raise ValueError(f"{function_name} does not accept arguments")
-            if function_end + 1 >= len(tokens) or tokens[function_end + 1].upper() != "OVER":
+            if (
+                function_end + 1 >= len(tokens)
+                or tokens[function_end + 1].upper() != "OVER"
+            ):
                 return None
 
             partition_by, order_by, next_index = _parse_window_spec_tokens(
@@ -1095,9 +1120,9 @@ def _normalize_aggregate_expressions(text: str) -> str:
 
 
 def _is_quoted_token(token: str) -> bool:
-    return (
-        len(token) >= 2
-        and ((token.startswith("'") and token.endswith("'")) or (token.startswith('"') and token.endswith('"')))
+    return len(token) >= 2 and (
+        (token.startswith("'") and token.endswith("'"))
+        or (token.startswith('"') and token.endswith('"'))
     )
 
 
@@ -1188,10 +1213,7 @@ def _parse_columns(
         alias_name: str | None = None
         parsed_expression: Any | None = None
 
-        if (
-            len(collapsed_tokens) >= 3
-            and collapsed_tokens[-2].upper() == "AS"
-        ):
+        if len(collapsed_tokens) >= 3 and collapsed_tokens[-2].upper() == "AS":
             candidate_alias = collapsed_tokens[-1]
             if not _is_valid_alias_name(candidate_alias):
                 raise ValueError(f"Invalid column alias: {candidate_alias}")
@@ -1315,7 +1337,9 @@ def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
         partition_by = expression.get("partition_by")
         if isinstance(partition_by, list):
             for partition_expression in partition_by:
-                refs.update(_collect_qualified_references_from_expression(partition_expression))
+                refs.update(
+                    _collect_qualified_references_from_expression(partition_expression)
+                )
 
         order_by = expression.get("order_by")
         if isinstance(order_by, list):
@@ -1324,7 +1348,9 @@ def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
                     continue
                 order_expression = item.get("__expression__")
                 if order_expression is not None:
-                    refs.update(_collect_qualified_references_from_expression(order_expression))
+                    refs.update(
+                        _collect_qualified_references_from_expression(order_expression)
+                    )
                     continue
                 order_column = item.get("column")
                 if isinstance(order_column, str) and re.fullmatch(
@@ -1348,7 +1374,9 @@ def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
         return refs
 
     if expression_type == "binary_op":
-        refs.update(_collect_qualified_references_from_expression(expression.get("left")))
+        refs.update(
+            _collect_qualified_references_from_expression(expression.get("left"))
+        )
         refs.update(
             _collect_qualified_references_from_expression(expression.get("right"))
         )
@@ -1362,11 +1390,15 @@ def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
         return refs
 
     if expression_type == "cast":
-        refs.update(_collect_qualified_references_from_expression(expression.get("value")))
+        refs.update(
+            _collect_qualified_references_from_expression(expression.get("value"))
+        )
         return refs
 
     if expression_type == "case":
-        refs.update(_collect_qualified_references_from_expression(expression.get("value")))
+        refs.update(
+            _collect_qualified_references_from_expression(expression.get("value"))
+        )
         whens = expression.get("whens")
         mode = str(expression.get("mode", ""))
         if isinstance(whens, list):
@@ -1388,7 +1420,9 @@ def _collect_qualified_references_from_expression(expression: Any) -> set[str]:
                         when_branch.get("result")
                     )
                 )
-        refs.update(_collect_qualified_references_from_expression(expression.get("else")))
+        refs.update(
+            _collect_qualified_references_from_expression(expression.get("else"))
+        )
         return refs
 
     return refs
@@ -1533,7 +1567,11 @@ def _parse_scalar_subquery_node(
         _allow_subqueries=True,
     )
     subquery_columns = parsed_subquery.get("columns")
-    if subquery_columns == ["*"] or not isinstance(subquery_columns, list) or len(subquery_columns) != 1:
+    if (
+        subquery_columns == ["*"]
+        or not isinstance(subquery_columns, list)
+        or len(subquery_columns) != 1
+    ):
         raise ValueError("Scalar subquery must select exactly one column")
 
     correlated, outer_refs = _detect_subquery_correlation(
@@ -1587,7 +1625,9 @@ def _expression_values_to_bind(expression: Any) -> List[Any]:
             partition_by = expression.get("partition_by")
             if isinstance(partition_by, list):
                 for partition_expression in partition_by:
-                    window_values.extend(_expression_values_to_bind(partition_expression))
+                    window_values.extend(
+                        _expression_values_to_bind(partition_expression)
+                    )
 
             order_by = expression.get("order_by")
             if isinstance(order_by, list):
@@ -1596,7 +1636,9 @@ def _expression_values_to_bind(expression: Any) -> List[Any]:
                         continue
                     order_expression = item.get("__expression__")
                     if order_expression is not None:
-                        window_values.extend(_expression_values_to_bind(order_expression))
+                        window_values.extend(
+                            _expression_values_to_bind(order_expression)
+                        )
 
             filter_clause = expression.get("filter")
             if isinstance(filter_clause, dict):
@@ -1617,7 +1659,9 @@ def _expression_values_to_bind(expression: Any) -> List[Any]:
                         if isinstance(condition, dict):
                             case_values.extend(_where_values_to_bind(condition))
                     else:
-                        case_values.extend(_expression_values_to_bind(when.get("match")))
+                        case_values.extend(
+                            _expression_values_to_bind(when.get("match"))
+                        )
                     case_values.extend(_expression_values_to_bind(when.get("result")))
             case_values.extend(_expression_values_to_bind(expression.get("else")))
             return case_values
@@ -1634,7 +1678,9 @@ def _bind_expression_values(
 
     expression_type = expression.get("type")
     if expression_type == "alias":
-        return _bind_expression_values(expression.get("expression"), bound_values, offset)
+        return _bind_expression_values(
+            expression.get("expression"), bound_values, offset
+        )
 
     if expression_type == "literal":
         expression["value"] = bound_values[offset]
@@ -1721,7 +1767,9 @@ def _bind_expression_values(
         consumed = 0
         mode = str(expression.get("mode", ""))
         if mode == "simple":
-            consumed += _bind_expression_values(expression.get("value"), bound_values, offset + consumed)
+            consumed += _bind_expression_values(
+                expression.get("value"), bound_values, offset + consumed
+            )
 
         whens = expression.get("whens")
         if isinstance(whens, list):
@@ -1823,7 +1871,9 @@ def _apply_bound_values_to_condition(
     consumed = 0
     column_operand = condition.get("column")
     if isinstance(column_operand, dict):
-        consumed += _bind_expression_values(column_operand, bound_values, offset + consumed)
+        consumed += _bind_expression_values(
+            column_operand, bound_values, offset + consumed
+        )
 
     operator = str(condition["operator"]).upper()
     if operator in {"IS", "IS NOT"}:
@@ -1928,12 +1978,8 @@ def _parse_where_expression(
     if len(tokens) < 3:
         # Could be: NOT col = val (3+ tokens), (col = val) (5+ tokens)
         # Check for NOT with at least 2 following tokens
-        if not (
-            len(tokens) >= 1
-            and tokens[0].upper() == "NOT"
-        ) and not (
-            len(tokens) >= 1
-            and tokens[0] == "("
+        if not (len(tokens) >= 1 and tokens[0].upper() == "NOT") and not (
+            len(tokens) >= 1 and tokens[0] == "("
         ):
             raise ValueError("Invalid WHERE clause format")
 
@@ -2092,12 +2138,16 @@ def _parse_factor(
         if not allow_subqueries:
             raise ValueError("Subqueries are not supported in this context")
         if index + 1 >= len(tokens) or tokens[index + 1] != "(":
-            raise ValueError("Invalid WHERE clause format: EXISTS requires '(SELECT ... )'")
+            raise ValueError(
+                "Invalid WHERE clause format: EXISTS requires '(SELECT ... )'"
+            )
 
         subquery_end = _find_matching_parenthesis(tokens, index + 1)
         subquery_tokens = tokens[index + 2 : subquery_end]
         if not subquery_tokens or subquery_tokens[0].upper() != "SELECT":
-            raise ValueError("Invalid WHERE clause format: EXISTS requires SELECT subquery")
+            raise ValueError(
+                "Invalid WHERE clause format: EXISTS requires SELECT subquery"
+            )
 
         subquery_sql = " ".join(subquery_tokens).strip()
         if "?" in _tokenize(subquery_sql):
@@ -2277,7 +2327,10 @@ def _parse_condition_expression_tokens(
             return _normalize_aggregate_expressions(expression_text)
         raise ValueError("Invalid WHERE clause format") from exc
 
-    if isinstance(parsed_expression, dict) and parsed_expression.get("type") == "aggregate":
+    if (
+        isinstance(parsed_expression, dict)
+        and parsed_expression.get("type") == "aggregate"
+    ):
         return _aggregate_expression_to_label(parsed_expression)
 
     if (
@@ -2385,23 +2438,28 @@ def _parse_atomic_condition(
 
     # IS NULL / IS NOT NULL
     if operator_token == "IS":
-        if operator_index + 1 < len(tokens) and tokens[operator_index + 1].upper() == "NOT":
-            if operator_index + 2 < len(tokens) and tokens[operator_index + 2].upper() == "NULL":
+        if (
+            operator_index + 1 < len(tokens)
+            and tokens[operator_index + 1].upper() == "NOT"
+        ):
+            if (
+                operator_index + 2 < len(tokens)
+                and tokens[operator_index + 2].upper() == "NULL"
+            ):
                 return (
                     {"column": column, "operator": "IS NOT", "value": None},
                     operator_index + 3,
                 )
-            raise ValueError(
-                "Invalid WHERE clause format: expected NULL after IS NOT"
-            )
-        if operator_index + 1 < len(tokens) and tokens[operator_index + 1].upper() == "NULL":
+            raise ValueError("Invalid WHERE clause format: expected NULL after IS NOT")
+        if (
+            operator_index + 1 < len(tokens)
+            and tokens[operator_index + 1].upper() == "NULL"
+        ):
             return (
                 {"column": column, "operator": "IS", "value": None},
                 operator_index + 2,
             )
-        raise ValueError(
-            "Invalid WHERE clause format: expected NULL or NOT after IS"
-        )
+        raise ValueError("Invalid WHERE clause format: expected NULL or NOT after IS")
 
     if operator_token == "NOT":
         if operator_index + 1 < len(tokens):
@@ -2509,9 +2567,7 @@ def _parse_between_condition(
         stop_keywords={"AND", "OR"},
     )
     if and_index >= len(tokens) or tokens[and_index].upper() != "AND":
-        raise ValueError(
-            "Invalid WHERE clause format: expected AND in BETWEEN clause"
-        )
+        raise ValueError("Invalid WHERE clause format: expected AND in BETWEEN clause")
 
     high_value, high_end = _parse_condition_value(
         tokens,
@@ -2560,7 +2616,9 @@ def _parse_like_condition(
             outer_sources=outer_sources,
         )
         if not isinstance(escape_value, str) or len(escape_value) != 1:
-            raise ValueError("Invalid WHERE clause format: ESCAPE requires a single character")
+            raise ValueError(
+                "Invalid WHERE clause format: ESCAPE requires a single character"
+            )
         condition["escape"] = escape_value
         value_index = escape_index
 
@@ -2594,9 +2652,7 @@ def _parse_in_condition(
                 break
         in_end += 1
     if in_end >= len(tokens):
-        raise ValueError(
-            "Invalid WHERE clause format: expected ')' in IN clause"
-        )
+        raise ValueError("Invalid WHERE clause format: expected ')' in IN clause")
 
     in_values_text = " ".join(tokens[in_start : in_end + 1]).strip()
     if not in_values_text.startswith("(") or not in_values_text.endswith(")"):
@@ -2604,9 +2660,7 @@ def _parse_in_condition(
 
     raw_values = in_values_text[1:-1].strip()
     if not raw_values:
-        raise ValueError(
-            "Invalid WHERE clause format: IN clause cannot be empty"
-        )
+        raise ValueError("Invalid WHERE clause format: IN clause cannot be empty")
 
     op = "NOT IN" if negated else "IN"
 
@@ -2656,9 +2710,7 @@ def _parse_in_condition(
 
         subquery_columns = subquery_parsed["columns"]
         if subquery_columns == ["*"] or len(subquery_columns) != 1:
-            raise ValueError(
-                "Subquery in WHERE ... IN must select exactly one column"
-            )
+            raise ValueError("Subquery in WHERE ... IN must select exactly one column")
 
         return (
             {
@@ -2675,13 +2727,9 @@ def _parse_in_condition(
             in_end + 1,
         )
     else:
-        parsed_values = tuple(
-            _parse_value(token) for token in _split_csv(raw_values)
-        )
+        parsed_values = tuple(_parse_value(token) for token in _split_csv(raw_values))
         if len(parsed_values) == 0:
-            raise ValueError(
-                "Invalid WHERE clause format: IN clause cannot be empty"
-            )
+            raise ValueError("Invalid WHERE clause format: IN clause cannot be empty")
 
         return (
             {
@@ -2732,8 +2780,7 @@ def _is_reserved_select_token(token: str) -> bool:
 def _parse_qualified_column_reference(token: str) -> Dict[str, str]:
     if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, token):
         raise ValueError(
-            f"Invalid column reference in JOIN clause: {token}. "
-            "Expected source.column"
+            f"Invalid column reference in JOIN clause: {token}. Expected source.column"
         )
     source, name = token.split(".", 1)
     return {"type": "column", "source": source, "name": name}
@@ -2826,7 +2873,9 @@ def _validate_join_column_reference(
 ) -> None:
     if isinstance(column, str):
         if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, column):
-            raise ValueError(f"{context} requires qualified column names in JOIN queries")
+            raise ValueError(
+                f"{context} requires qualified column names in JOIN queries"
+            )
         source, name = column.split(".", 1)
         if source not in allowed_sources or not name:
             raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
@@ -2835,13 +2884,17 @@ def _validate_join_column_reference(
     if isinstance(column, dict):
         column_type = column.get("type")
         if column_type == "alias":
-            _validate_join_column_reference(column.get("expression"), allowed_sources, context)
+            _validate_join_column_reference(
+                column.get("expression"), allowed_sources, context
+            )
             return
         if column_type == "column":
             source = str(column.get("source", ""))
             name = str(column.get("name", ""))
             if source not in allowed_sources or not name:
-                raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
+                raise ValueError(
+                    f"Invalid source reference in {context}: {source}.{name}"
+                )
             return
         if column_type == "literal":
             return
@@ -2854,7 +2907,9 @@ def _validate_join_column_reference(
                     )
                 source, name = arg.split(".", 1)
                 if source not in allowed_sources or not name:
-                    raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
+                    raise ValueError(
+                        f"Invalid source reference in {context}: {source}.{name}"
+                    )
             filter_clause = column.get("filter")
             if isinstance(filter_clause, dict):
                 _validate_join_where_node(filter_clause, allowed_sources)
@@ -2870,7 +2925,9 @@ def _validate_join_column_reference(
             partition_by = column.get("partition_by")
             if isinstance(partition_by, list):
                 for partition_expression in partition_by:
-                    _validate_join_column_reference(partition_expression, allowed_sources, context)
+                    _validate_join_column_reference(
+                        partition_expression, allowed_sources, context
+                    )
 
             order_by = column.get("order_by")
             if isinstance(order_by, list):
@@ -2879,23 +2936,33 @@ def _validate_join_column_reference(
                         continue
                     order_expression = item.get("__expression__")
                     if order_expression is not None:
-                        _validate_join_column_reference(order_expression, allowed_sources, context)
+                        _validate_join_column_reference(
+                            order_expression, allowed_sources, context
+                        )
                         continue
 
                     order_column = item.get("column")
                     if isinstance(order_column, str):
-                        _validate_join_column_reference(order_column, allowed_sources, context)
+                        _validate_join_column_reference(
+                            order_column, allowed_sources, context
+                        )
 
             filter_clause = column.get("filter")
             if isinstance(filter_clause, dict):
                 _validate_join_where_node(filter_clause, allowed_sources)
             return
         if column_type == "unary_op":
-            _validate_join_column_reference(column.get("operand"), allowed_sources, context)
+            _validate_join_column_reference(
+                column.get("operand"), allowed_sources, context
+            )
             return
         if column_type == "binary_op":
-            _validate_join_column_reference(column.get("left"), allowed_sources, context)
-            _validate_join_column_reference(column.get("right"), allowed_sources, context)
+            _validate_join_column_reference(
+                column.get("left"), allowed_sources, context
+            )
+            _validate_join_column_reference(
+                column.get("right"), allowed_sources, context
+            )
             return
         if column_type == "function":
             args = column.get("args")
@@ -2904,12 +2971,16 @@ def _validate_join_column_reference(
                     _validate_join_column_reference(argument, allowed_sources, context)
             return
         if column_type == "cast":
-            _validate_join_column_reference(column.get("value"), allowed_sources, context)
+            _validate_join_column_reference(
+                column.get("value"), allowed_sources, context
+            )
             return
         if column_type == "case":
             mode = str(column.get("mode", ""))
             if mode == "simple":
-                _validate_join_column_reference(column.get("value"), allowed_sources, context)
+                _validate_join_column_reference(
+                    column.get("value"), allowed_sources, context
+                )
 
             whens = column.get("whens")
             if isinstance(whens, list):
@@ -2921,12 +2992,18 @@ def _validate_join_column_reference(
                         if isinstance(condition, dict):
                             _validate_join_where_node(condition, allowed_sources)
                     else:
-                        _validate_join_column_reference(when.get("match"), allowed_sources, context)
-                    _validate_join_column_reference(when.get("result"), allowed_sources, context)
+                        _validate_join_column_reference(
+                            when.get("match"), allowed_sources, context
+                        )
+                    _validate_join_column_reference(
+                        when.get("result"), allowed_sources, context
+                    )
 
             else_expression = column.get("else")
             if else_expression is not None:
-                _validate_join_column_reference(else_expression, allowed_sources, context)
+                _validate_join_column_reference(
+                    else_expression, allowed_sources, context
+                )
             return
 
     raise ValueError(f"{context} requires qualified column names in JOIN queries")
@@ -2963,17 +3040,14 @@ def _is_subquery_condition_node(node: Dict[str, Any]) -> bool:
         return True
     return False
 
-def _validate_join_where_columns(
-    where: Dict[str, Any], join_sources: set[str]
-) -> None:
+
+def _validate_join_where_columns(where: Dict[str, Any], join_sources: set[str]) -> None:
     """Recursively validate all column references in a WHERE tree for JOIN queries."""
     for condition in where.get("conditions", []):
         _validate_join_where_node(condition, join_sources)
 
 
-def _validate_join_where_node(
-    node: Dict[str, Any], join_sources: set[str]
-) -> None:
+def _validate_join_where_node(node: Dict[str, Any], join_sources: set[str]) -> None:
     """Validate a single WHERE AST node for JOIN column references."""
     if node.get("type") == "exists":
         outer_refs = node.get("outer_refs")
@@ -3054,7 +3128,9 @@ def _where_to_sql_for_order_by(where: dict[str, Any]) -> str:
         if not conditions:
             return ""
         first = conditions[0]
-        parts = [_where_to_sql_for_order_by(first) if isinstance(first, dict) else str(first)]
+        parts = [
+            _where_to_sql_for_order_by(first) if isinstance(first, dict) else str(first)
+        ]
         conjunctions = where.get("conjunctions", [])
         if isinstance(conjunctions, list):
             for idx, conjunction in enumerate(conjunctions):
@@ -3162,7 +3238,9 @@ def _expression_to_sql_for_order_by(expression: Any) -> str:
                         continue
                     order_expression = order_item.get("__expression__")
                     if order_expression is not None:
-                        order_column_sql = _expression_to_sql_for_order_by(order_expression)
+                        order_column_sql = _expression_to_sql_for_order_by(
+                            order_expression
+                        )
                     else:
                         order_column_sql = str(order_item.get("column", ""))
                         if order_column_sql.startswith("__expr__:"):
@@ -3211,9 +3289,13 @@ def _expression_to_sql_for_order_by(expression: Any) -> str:
                             condition_sql = _where_to_sql_for_order_by(condition)
                         parts.append(f"WHEN {condition_sql} THEN")
                     else:
-                        match_sql = _expression_to_sql_for_order_by(when_branch.get("match"))
+                        match_sql = _expression_to_sql_for_order_by(
+                            when_branch.get("match")
+                        )
                         parts.append(f"WHEN {match_sql} THEN")
-                    parts.append(_expression_to_sql_for_order_by(when_branch.get("result")))
+                    parts.append(
+                        _expression_to_sql_for_order_by(when_branch.get("result"))
+                    )
             if expression.get("else") is not None:
                 parts.append("ELSE")
                 parts.append(_expression_to_sql_for_order_by(expression["else"]))
@@ -3255,7 +3337,9 @@ def _parse_order_by_item_tokens(
         raise ValueError("Invalid ORDER BY direction")
     if any(token.upper() == "NULLS" for token in expression_tokens):
         nulls_index = next(
-            index for index, token in enumerate(expression_tokens) if token.upper() == "NULLS"
+            index
+            for index, token in enumerate(expression_tokens)
+            if token.upper() == "NULLS"
         )
         raise ValueError(
             f"Unsupported SQL syntax: {' '.join(expression_tokens[nulls_index:])}"
@@ -3270,7 +3354,9 @@ def _parse_order_by_item_tokens(
             if len(trailing_tokens) == 1:
                 raise ValueError("Invalid ORDER BY direction")
             if trailing_tokens[0].upper() in {"ASC", "DESC"}:
-                raise ValueError(f"Unsupported SQL syntax: {' '.join(trailing_tokens[1:])}")
+                raise ValueError(
+                    f"Unsupported SQL syntax: {' '.join(trailing_tokens[1:])}"
+                )
             raise ValueError("Invalid ORDER BY clause format")
         result: dict[str, Any] = {
             "column": f"__expr__:{_expression_to_sql_for_order_by(parsed_case)}",
@@ -3287,7 +3373,10 @@ def _parse_order_by_item_tokens(
         allow_subqueries=allow_subqueries,
         outer_sources=outer_sources,
     )
-    if isinstance(parsed_aggregate, dict) and parsed_aggregate.get("type") == "aggregate":
+    if (
+        isinstance(parsed_aggregate, dict)
+        and parsed_aggregate.get("type") == "aggregate"
+    ):
         return {
             "column": _aggregate_expression_to_label(parsed_aggregate),
             "direction": direction,
@@ -3404,7 +3493,10 @@ def _parse_select(
             join_type = "INNER"
             token_index += 1
         elif join_token == "INNER":
-            if token_index + 1 >= len(tokens) or tokens[token_index + 1].upper() != "JOIN":
+            if (
+                token_index + 1 >= len(tokens)
+                or tokens[token_index + 1].upper() != "JOIN"
+            ):
                 raise ValueError("Unsupported SQL syntax: INNER")
             join_type = "INNER"
             token_index += 2
@@ -3433,7 +3525,10 @@ def _parse_select(
             join_type = "FULL"
             token_index += 1
         elif join_token == "CROSS":
-            if token_index + 1 >= len(tokens) or tokens[token_index + 1].upper() != "JOIN":
+            if (
+                token_index + 1 >= len(tokens)
+                or tokens[token_index + 1].upper() != "JOIN"
+            ):
                 raise ValueError("Unsupported SQL syntax: CROSS")
             join_type = "CROSS"
             token_index += 2
@@ -3527,7 +3622,7 @@ def _parse_select(
             continue
         if _is_quoted_token(token):
             continue
-        upper = token.upper()
+        token.upper()
     where = None
     group_by = None
     having = None
@@ -3580,10 +3675,18 @@ def _parse_select(
         where_start = where_index + 1
         where_end_candidates = [
             idx
-            for idx in [group_index, having_index, order_index, limit_index, offset_index]
+            for idx in [
+                group_index,
+                having_index,
+                order_index,
+                limit_index,
+                offset_index,
+            ]
             if idx >= 0 and idx > where_index
         ]
-        where_end = min(where_end_candidates) if where_end_candidates else len(clause_tokens)
+        where_end = (
+            min(where_end_candidates) if where_end_candidates else len(clause_tokens)
+        )
         where_part = " ".join(clause_tokens[where_start:where_end]).strip()
         where = _parse_where_expression(
             where_part,
@@ -3596,9 +3699,13 @@ def _parse_select(
     if group_index >= 0:
         group_start = group_index + 2
         group_end_candidates = [
-            idx for idx in [having_index, order_index, limit_index, offset_index] if idx >= 0 and idx > group_index
+            idx
+            for idx in [having_index, order_index, limit_index, offset_index]
+            if idx >= 0 and idx > group_index
         ]
-        group_end = min(group_end_candidates) if group_end_candidates else len(clause_tokens)
+        group_end = (
+            min(group_end_candidates) if group_end_candidates else len(clause_tokens)
+        )
         group_part = " ".join(clause_tokens[group_start:group_end]).strip()
         group_columns = [col.strip() for col in _split_csv(group_part) if col.strip()]
         if not group_columns:
@@ -3631,9 +3738,13 @@ def _parse_select(
     if having_index >= 0:
         having_start = having_index + 1
         having_end_candidates = [
-            idx for idx in [order_index, limit_index, offset_index] if idx >= 0 and idx > having_index
+            idx
+            for idx in [order_index, limit_index, offset_index]
+            if idx >= 0 and idx > having_index
         ]
-        having_end = min(having_end_candidates) if having_end_candidates else len(clause_tokens)
+        having_end = (
+            min(having_end_candidates) if having_end_candidates else len(clause_tokens)
+        )
         having_part = " ".join(clause_tokens[having_start:having_end]).strip()
         if not having_part:
             raise ValueError("Invalid HAVING clause format")
@@ -3649,11 +3760,11 @@ def _parse_select(
     if order_index >= 0:
         order_start = order_index + 2
         order_end_candidates = [
-            idx
-            for idx in [limit_index, offset_index]
-            if idx >= 0 and idx > order_index
+            idx for idx in [limit_index, offset_index] if idx >= 0 and idx > order_index
         ]
-        order_end = min(order_end_candidates) if order_end_candidates else len(clause_tokens)
+        order_end = (
+            min(order_end_candidates) if order_end_candidates else len(clause_tokens)
+        )
         order_part = " ".join(clause_tokens[order_start:order_end]).strip()
         order_by = _parse_order_by_clause_text(
             order_part,
@@ -3699,10 +3810,18 @@ def _parse_select(
         where_start = where_index + 1
         where_end_candidates = [
             idx
-            for idx in [group_index, having_index, order_index, limit_index, offset_index]
+            for idx in [
+                group_index,
+                having_index,
+                order_index,
+                limit_index,
+                offset_index,
+            ]
             if idx >= 0 and idx > where_index
         ]
-        where_end = min(where_end_candidates) if where_end_candidates else len(clause_tokens)
+        where_end = (
+            min(where_end_candidates) if where_end_candidates else len(clause_tokens)
+        )
         consumed_indices.update(range(where_start, where_end))
 
     if group_index >= 0:
@@ -3712,15 +3831,21 @@ def _parse_select(
             for idx in [having_index, order_index, limit_index, offset_index]
             if idx >= 0 and idx > group_index
         ]
-        group_end = min(group_end_candidates) if group_end_candidates else len(clause_tokens)
+        group_end = (
+            min(group_end_candidates) if group_end_candidates else len(clause_tokens)
+        )
         consumed_indices.update(range(group_start, group_end))
 
     if having_index >= 0:
         having_start = having_index + 1
         having_end_candidates = [
-            idx for idx in [order_index, limit_index, offset_index] if idx >= 0 and idx > having_index
+            idx
+            for idx in [order_index, limit_index, offset_index]
+            if idx >= 0 and idx > having_index
         ]
-        having_end = min(having_end_candidates) if having_end_candidates else len(clause_tokens)
+        having_end = (
+            min(having_end_candidates) if having_end_candidates else len(clause_tokens)
+        )
         consumed_indices.update(range(having_start, having_end))
 
     if order_index >= 0:
@@ -3728,12 +3853,18 @@ def _parse_select(
         order_end_candidates = [
             idx for idx in [limit_index, offset_index] if idx >= 0 and idx > order_index
         ]
-        order_end = min(order_end_candidates) if order_end_candidates else len(clause_tokens)
+        order_end = (
+            min(order_end_candidates) if order_end_candidates else len(clause_tokens)
+        )
         consumed_indices.update(range(order_start, order_end))
 
     if limit_index >= 0:
         limit_start = limit_index + 1
-        limit_end = offset_index if offset_index >= 0 and offset_index > limit_index else len(clause_tokens)
+        limit_end = (
+            offset_index
+            if offset_index >= 0 and offset_index > limit_index
+            else len(clause_tokens)
+        )
         consumed_indices.update(range(limit_start, limit_end))
 
     if offset_index >= 0:
@@ -3771,8 +3902,14 @@ def _parse_select(
     )
     if params is not None or (
         has_column_placeholders
-        or (where and any(_is_placeholder(value) for value in _where_values_to_bind(where)))
-        or (having and any(_is_placeholder(value) for value in _where_values_to_bind(having)))
+        or (
+            where
+            and any(_is_placeholder(value) for value in _where_values_to_bind(where))
+        )
+        or (
+            having
+            and any(_is_placeholder(value) for value in _where_values_to_bind(having))
+        )
         or has_order_by_placeholders
         or _is_placeholder(limit)
         or _is_placeholder(offset)
@@ -3840,7 +3977,9 @@ def _parse_select(
                         "GROUP BY in JOIN queries requires qualified column names"
                     )
 
-                if not re.fullmatch(_QUALIFIED_IDENTIFIER_PATTERN, qualified_group_column):
+                if not re.fullmatch(
+                    _QUALIFIED_IDENTIFIER_PATTERN, qualified_group_column
+                ):
                     raise ValueError(
                         "GROUP BY in JOIN queries requires qualified column names"
                     )
@@ -3859,9 +3998,7 @@ def _parse_select(
             if isinstance(column, dict) and column.get("type") == "alias"
         }
 
-        has_wildcard = any(
-            isinstance(col, str) and col == "*" for col in columns
-        )
+        has_wildcard = any(isinstance(col, str) and col == "*" for col in columns)
         if has_wildcard and len(columns) > 1:
             raise ValueError(
                 "SELECT * cannot be mixed with other columns in JOIN queries"
@@ -3875,7 +4012,10 @@ def _parse_select(
                 if isinstance(column, dict) and column.get("type") == "alias":
                     expression = column.get("expression")
 
-                if isinstance(expression, dict) and expression.get("type") == "aggregate":
+                if (
+                    isinstance(expression, dict)
+                    and expression.get("type") == "aggregate"
+                ):
                     arg = str(expression.get("arg", "")).strip()
                     if arg != "*" and not re.fullmatch(
                         _QUALIFIED_IDENTIFIER_PATTERN, arg
@@ -3900,7 +4040,9 @@ def _parse_select(
                 if order_column.startswith("__expr__:"):
                     order_expression = item.get("__expression__")
                     if order_expression is not None:
-                        _validate_join_column_reference(order_expression, join_sources, "ORDER BY")
+                        _validate_join_column_reference(
+                            order_expression, join_sources, "ORDER BY"
+                        )
                     continue
                 aggregate_expression = _parse_column_expression(
                     order_column,
@@ -3926,7 +4068,9 @@ def _parse_select(
                         _validate_join_where_node(filter_clause, join_sources)
                     continue
                 parsed_order_column = _parse_qualified_column_reference(order_column)
-                _validate_join_column_reference(parsed_order_column, join_sources, "ORDER BY")
+                _validate_join_column_reference(
+                    parsed_order_column, join_sources, "ORDER BY"
+                )
 
     return {
         "action": "SELECT",
@@ -4095,8 +4239,7 @@ def _parse_upsert_assignment_value(value_text: str) -> Any:
     if not is_expression:
         expression_tokens = _tokenize_expression(stripped)
         is_expression = any(
-            token in {"+", "-", "*", "/", "||", "(", ")"}
-            for token in expression_tokens
+            token in {"+", "-", "*", "/", "||", "(", ")"} for token in expression_tokens
         )
 
     if is_expression:
@@ -4234,7 +4377,11 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
         raise ValueError(f"Invalid INSERT format: {query}")
 
     split_index = 0
-    while split_index < len(remainder) and not remainder[split_index].isspace() and remainder[split_index] != "(":
+    while (
+        split_index < len(remainder)
+        and not remainder[split_index].isspace()
+        and remainder[split_index] != "("
+    ):
         split_index += 1
     table = remainder[:split_index].strip()
     if not table:
@@ -4259,11 +4406,11 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
             raise ValueError(f"Invalid INSERT format: {query}")
         cols_part = remainder[1:close_index]
         columns = _parse_columns(cols_part)
-        invalid_columns = [col for col in columns if not isinstance(col, str) or col == "*"]
+        invalid_columns = [
+            col for col in columns if not isinstance(col, str) or col == "*"
+        ]
         if invalid_columns:
-            raise ValueError(
-                "INSERT column list supports only bare column names"
-            )
+            raise ValueError("INSERT column list supports only bare column names")
         remainder = remainder[close_index + 1 :].strip()
 
     if not remainder:
@@ -4362,7 +4509,9 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
         if params is None:
             values = [
-                _bind_params([_parse_value(token) for token in _split_csv(raw_row)], None)
+                _bind_params(
+                    [_parse_value(token) for token in _split_csv(raw_row)], None
+                )
                 for raw_row in raw_rows
             ]
         else:
@@ -4382,10 +4531,16 @@ def _parse_insert(query: str, params: Optional[tuple[Any, ...]]) -> Dict[str, An
 
     on_conflict = None
     if on_conflict_clause is not None:
-        on_conflict = _parse_on_conflict_clause(on_conflict_clause, query, remaining_params)
+        on_conflict = _parse_on_conflict_clause(
+            on_conflict_clause, query, remaining_params
+        )
         remaining_params = () if params is not None else None
 
-    if params is not None and remaining_params is not None and len(remaining_params) > 0:
+    if (
+        params is not None
+        and remaining_params is not None
+        and len(remaining_params) > 0
+    ):
         raise ValueError("Too many parameters for placeholders")
 
     result: Dict[str, Any] = {
@@ -4411,16 +4566,35 @@ def _parse_create(query: str) -> Dict[str, Any]:
     cols_part = cols_part.rsplit(")", 1)[0]
     raw_columns = _split_csv(cols_part)
     columns = []
+    column_definitions = []
     for col in raw_columns:
         if not col:
             continue
-        columns.append(col.strip().split()[0])
+        stripped_col = col.strip()
+        parts = stripped_col.split()
+        if len(parts) > 2:
+            raise ValueError(
+                "Malformed column definition: "
+                f"{stripped_col!r}. Missing comma between column definitions?"
+            )
+        column_name = parts[0]
+        type_name = "TEXT"
+        if len(parts) == 2:
+            parsed_type = parts[1].upper()
+            if parsed_type == "INT":
+                parsed_type = "INTEGER"
+            elif parsed_type == "FLOAT":
+                parsed_type = "REAL"
+            type_name = parsed_type
+        columns.append(column_name)
+        column_definitions.append({"name": column_name, "type_name": type_name})
     if not columns:
         raise ValueError(f"Invalid CREATE TABLE format: {query}")
     return {
         "action": "CREATE",
         "table": table,
         "columns": columns,
+        "column_definitions": column_definitions,
     }
 
 
@@ -4511,7 +4685,12 @@ def _strip_outer_parens(tokens: List[str]) -> List[str]:
 
 def _extract_trailing_clauses(
     tokens: List[str],
-) -> tuple[List[str], list[dict[str, Any]] | None, Optional[Union[int, str]], Optional[Union[int, str]]]:
+) -> tuple[
+    List[str],
+    list[dict[str, Any]] | None,
+    Optional[Union[int, str]],
+    Optional[Union[int, str]],
+]:
     """Split trailing ORDER BY / LIMIT / OFFSET from a compound's last branch.
 
     Returns ``(branch_tokens, order_by, limit, offset)``.
@@ -4569,10 +4748,17 @@ def _extract_trailing_clauses(
     idx = 0
     while idx < len(trail_tokens):
         tu = trail_uppers[idx]
-        if tu == "ORDER" and idx + 1 < len(trail_uppers) and trail_uppers[idx + 1] == "BY":
+        if (
+            tu == "ORDER"
+            and idx + 1 < len(trail_uppers)
+            and trail_uppers[idx + 1] == "BY"
+        ):
             idx += 2  # skip ORDER BY
             order_tokens_list: list[str] = []
-            while idx < len(trail_tokens) and trail_uppers[idx] not in {"LIMIT", "OFFSET"}:
+            while idx < len(trail_tokens) and trail_uppers[idx] not in {
+                "LIMIT",
+                "OFFSET",
+            }:
                 order_tokens_list.append(trail_tokens[idx])
                 idx += 1
             order_by = _parse_order_by_clause_tokens(order_tokens_list)
@@ -4597,7 +4783,9 @@ def _extract_trailing_clauses(
     return branch_tokens, order_by, limit, offset
 
 
-def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[Dict[str, Any]]:
+def _parse_compound(
+    query: str, params: Optional[tuple[Any, ...]]
+) -> Optional[Dict[str, Any]]:
     tokens = _tokenize(query.strip())
     if not tokens:
         return None
@@ -4640,7 +4828,11 @@ def _parse_compound(query: str, params: Optional[tuple[Any, ...]]) -> Optional[D
             current_tokens = []
             found_compound = True
 
-            if upper == "UNION" and index + 1 < len(tokens) and tokens[index + 1].upper() == "ALL":
+            if (
+                upper == "UNION"
+                and index + 1 < len(tokens)
+                and tokens[index + 1].upper() == "ALL"
+            ):
                 operators.append("UNION ALL")
                 index += 2
             else:

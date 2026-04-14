@@ -57,14 +57,20 @@ def _build_backend(
             return httpx.Response(204)
         if path.endswith("/workbook") and method == "GET":
             return httpx.Response(200, json={"@odata.etag": state["etag"]})
-        if (path.endswith("/worksheets") or "/worksheets?" in str(request.url)) and method == "GET":
-            return httpx.Response(200, json={"value": [{"id": "ws-1", "name": "Users"}]})
+        if (
+            path.endswith("/worksheets") or "/worksheets?" in str(request.url)
+        ) and method == "GET":
+            return httpx.Response(
+                200, json={"value": [{"id": "ws-1", "name": "Users"}]}
+            )
         if "usedRange" in path and method == "GET":
             return httpx.Response(200, json={"values": state["values"]})
 
         if "/range(" in path and method == "PATCH":
             if conflict_on_if_match and request.headers.get("if-match"):
-                return httpx.Response(412, json={"error": {"code": "preconditionFailed"}})
+                return httpx.Response(
+                    412, json={"error": {"code": "preconditionFailed"}}
+                )
 
             start_row, end_row, start_col, end_col = _parse_range_address(path)
             payload = json.loads(request.content.decode("utf-8"))
@@ -85,7 +91,9 @@ def _build_backend(
                 needed = end_col - start_col + 1
                 if len(normalized) < needed:
                     normalized.extend([None] * (needed - len(normalized)))
-                state["values"][row_index][start_col : end_col + 1] = normalized[:needed]
+                state["values"][row_index][start_col : end_col + 1] = normalized[
+                    :needed
+                ]
 
             current = int(state["etag"].strip('"v'))
             state["etag"] = f'"v{current + 1}"'

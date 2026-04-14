@@ -13,6 +13,10 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "CREATE",
             "table": "Users",
             "columns": ["id", "name"],
+            "column_definitions": [
+                {"name": "id", "type_name": "INTEGER"},
+                {"name": "name", "type_name": "TEXT"},
+            ],
             "params": None,
         },
     ),
@@ -22,6 +26,7 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
             "action": "CREATE",
             "table": "Logs",
             "columns": ["message"],
+            "column_definitions": [{"name": "message", "type_name": "TEXT"}],
             "params": None,
         },
     ),

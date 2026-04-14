@@ -33,15 +33,21 @@ def _build_conflict_handler(
         if path.endswith("/workbook") and method == "GET":
             return httpx.Response(200, json={"@odata.etag": initial_etag})
 
-        if (path.endswith("/worksheets") or "/worksheets?" in str(request.url)) and method == "GET":
-            return httpx.Response(200, json={"value": [{"id": "ws-1", "name": "Users"}]})
+        if (
+            path.endswith("/worksheets") or "/worksheets?" in str(request.url)
+        ) and method == "GET":
+            return httpx.Response(
+                200, json={"value": [{"id": "ws-1", "name": "Users"}]}
+            )
 
         if "usedRange" in path and method == "GET":
             return httpx.Response(200, json={"values": [["id"], [1], [2]]})
 
         if "/range(" in path and method == "PATCH":
             if fail_on_patch:
-                return httpx.Response(412, json={"error": {"code": "preconditionFailed"}})
+                return httpx.Response(
+                    412, json={"error": {"code": "preconditionFailed"}}
+                )
             return httpx.Response(200, json={}, headers={"ETag": updated_etag})
 
         return httpx.Response(404, json={"error": {"code": "notFound"}})
@@ -49,7 +55,9 @@ def _build_conflict_handler(
     return handler, state
 
 
-def _make_backend(*, conflict_strategy: str = "fail", fail_on_patch: bool = False) -> tuple[GraphBackend, dict[str, Any]]:
+def _make_backend(
+    *, conflict_strategy: str = "fail", fail_on_patch: bool = False
+) -> tuple[GraphBackend, dict[str, Any]]:
     handler, state = _build_conflict_handler(fail_on_patch=fail_on_patch)
     backend = GraphBackend(
         DSN,

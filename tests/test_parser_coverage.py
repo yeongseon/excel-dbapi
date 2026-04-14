@@ -50,7 +50,7 @@ def _exec_arc(filename: str, src: int, dst: int) -> None:
         return
 
     if dst < src:
-        done_line = dst + 1
+        dst + 1
         break_line = dst + 2
         if src <= break_line:
             return
@@ -111,7 +111,18 @@ def test_case_parser_validation_errors() -> None:
 def test_window_spec_invalid_frame_and_window_function_argument_rules() -> None:
     with pytest.raises(ValueError, match="Unsupported window frame"):
         _parse_window_spec_tokens(
-            ["OVER", "(", "ROWS", "BETWEEN", "1", "PRECEDING", "AND", "CURRENT", "ROW", ")"],
+            [
+                "OVER",
+                "(",
+                "ROWS",
+                "BETWEEN",
+                "1",
+                "PRECEDING",
+                "AND",
+                "CURRENT",
+                "ROW",
+                ")",
+            ],
             0,
             outer_sources=None,
         )
@@ -232,7 +243,12 @@ def test_expression_values_and_binding_for_window_and_case() -> None:
         "type": "case",
         "mode": "simple",
         "value": {"type": "literal", "value": "?"},
-        "whens": [{"match": {"type": "literal", "value": "?"}, "result": {"type": "literal", "value": "?"}}],
+        "whens": [
+            {
+                "match": {"type": "literal", "value": "?"},
+                "result": {"type": "literal", "value": "?"},
+            }
+        ],
         "else": {"type": "literal", "value": "?"},
     }
     assert _expression_values_to_bind(simple_case) == ["?", "?", "?", "?"]
@@ -266,23 +282,43 @@ def test_validate_join_on_condition_node_errors_and_not_recursion() -> None:
     _validate_join_on_condition_node(valid_not, left_sources, right_sources)
 
     with pytest.raises(ValueError, match="Invalid JOIN ON condition"):
-        _validate_join_on_condition_node({"type": "not", "operand": "bad"}, left_sources, right_sources)
+        _validate_join_on_condition_node(
+            {"type": "not", "operand": "bad"}, left_sources, right_sources
+        )
 
     with pytest.raises(ValueError, match="Invalid JOIN ON condition"):
-        _validate_join_on_condition_node({"type": "compound", "conditions": "x", "conjunctions": []}, left_sources, right_sources)
+        _validate_join_on_condition_node(
+            {"type": "compound", "conditions": "x", "conjunctions": []},
+            left_sources,
+            right_sources,
+        )
     with pytest.raises(ValueError, match="Invalid JOIN ON condition"):
-        _validate_join_on_condition_node({"type": "compound", "conditions": [{}], "conjunctions": "x"}, left_sources, right_sources)
+        _validate_join_on_condition_node(
+            {"type": "compound", "conditions": [{}], "conjunctions": "x"},
+            left_sources,
+            right_sources,
+        )
     with pytest.raises(ValueError, match="Invalid JOIN ON condition"):
-        _validate_join_on_condition_node({"type": "compound", "conditions": [{}], "conjunctions": ["AND"]}, left_sources, right_sources)
+        _validate_join_on_condition_node(
+            {"type": "compound", "conditions": [{}], "conjunctions": ["AND"]},
+            left_sources,
+            right_sources,
+        )
     with pytest.raises(ValueError, match="AND/OR"):
         _validate_join_on_condition_node(
-            {"type": "compound", "conditions": [_eq_cond("a.id", "b.id"), _eq_cond("a.id", "b.id")], "conjunctions": ["XOR"]},
+            {
+                "type": "compound",
+                "conditions": [_eq_cond("a.id", "b.id"), _eq_cond("a.id", "b.id")],
+                "conjunctions": ["XOR"],
+            },
             left_sources,
             right_sources,
         )
 
     with pytest.raises(ValueError, match="Unsupported JOIN ON operator"):
-        _validate_join_on_condition_node({"operator": "LIKE", "column": {}, "value": {}}, left_sources, right_sources)
+        _validate_join_on_condition_node(
+            {"operator": "LIKE", "column": {}, "value": {}}, left_sources, right_sources
+        )
 
 
 def test_validate_join_column_reference_across_expression_types() -> None:
@@ -305,9 +341,21 @@ def test_validate_join_column_reference_across_expression_types() -> None:
     }
     _validate_join_column_reference(expr, allowed, "SELECT")
 
-    _validate_join_column_reference({"type": "function", "args": [{"type": "column", "source": "a", "name": "x"}]}, allowed, "SELECT")
-    _validate_join_column_reference({"type": "cast", "value": {"type": "column", "source": "a", "name": "x"}}, allowed, "SELECT")
-    _validate_join_column_reference({"type": "unary_op", "operand": {"type": "column", "source": "b", "name": "x"}}, allowed, "SELECT")
+    _validate_join_column_reference(
+        {"type": "function", "args": [{"type": "column", "source": "a", "name": "x"}]},
+        allowed,
+        "SELECT",
+    )
+    _validate_join_column_reference(
+        {"type": "cast", "value": {"type": "column", "source": "a", "name": "x"}},
+        allowed,
+        "SELECT",
+    )
+    _validate_join_column_reference(
+        {"type": "unary_op", "operand": {"type": "column", "source": "b", "name": "x"}},
+        allowed,
+        "SELECT",
+    )
     _validate_join_column_reference(
         {
             "type": "binary_op",
@@ -343,13 +391,24 @@ def test_validate_join_column_reference_across_expression_types() -> None:
 
 def test_is_subquery_condition_and_join_where_validation_paths() -> None:
     assert _is_subquery_condition({"type": "exists"}) is True
-    assert _is_subquery_condition({"type": "not", "operand": {"type": "exists"}}) is True
+    assert (
+        _is_subquery_condition({"type": "not", "operand": {"type": "exists"}}) is True
+    )
     assert _is_subquery_condition({"type": "not", "operand": "x"}) is False
-    assert _is_subquery_condition({"type": "compound", "conditions": [{"value": {"type": "subquery"}}]}) is True
+    assert (
+        _is_subquery_condition(
+            {"type": "compound", "conditions": [{"value": {"type": "subquery"}}]}
+        )
+        is True
+    )
 
-    _validate_join_where_node({"type": "exists", "outer_refs": ["a.id", "bad"]}, {"a", "b"})
+    _validate_join_where_node(
+        {"type": "exists", "outer_refs": ["a.id", "bad"]}, {"a", "b"}
+    )
     with pytest.raises(ValueError, match="Invalid source reference in WHERE"):
-        _validate_join_where_node({"type": "exists", "outer_refs": ["x.id"]}, {"a", "b"})
+        _validate_join_where_node(
+            {"type": "exists", "outer_refs": ["x.id"]}, {"a", "b"}
+        )
 
     _validate_join_where_node(
         {
@@ -392,14 +451,31 @@ def test_expression_to_sql_for_order_by_window_aggregate_and_case() -> None:
         },
         "partition_by": [{"type": "column", "source": "b", "name": "grp"}],
         "order_by": [
-            {"__expression__": {"type": "binary_op", "op": "+", "left": {"type": "literal", "value": 1}, "right": {"type": "literal", "value": 2}}, "direction": "DESC"},
+            {
+                "__expression__": {
+                    "type": "binary_op",
+                    "op": "+",
+                    "left": {"type": "literal", "value": 1},
+                    "right": {"type": "literal", "value": 2},
+                },
+                "direction": "DESC",
+            },
             {"column": "__expr__:a.id", "direction": "ASC"},
         ],
     }
     sql = _expression_to_sql_for_order_by(window_expr)
     assert "OVER (PARTITION BY" in sql and "ORDER BY" in sql
 
-    assert _expression_to_sql_for_order_by({"type": "cast", "value": {"type": "literal", "value": 1}, "target_type": "INT"}) == "CAST(1 AS INT)"
+    assert (
+        _expression_to_sql_for_order_by(
+            {
+                "type": "cast",
+                "value": {"type": "literal", "value": 1},
+                "target_type": "INT",
+            }
+        )
+        == "CAST(1 AS INT)"
+    )
     assert _expression_to_sql_for_order_by({"type": "subquery"}) == "(SUBQUERY)"
 
     case_sql = _expression_to_sql_for_order_by(
@@ -430,7 +506,9 @@ def test_parse_order_by_item_error_branches() -> None:
     with pytest.raises(ValueError, match="Invalid ORDER BY direction"):
         _parse_order_by_item_tokens(["a", "b"])
     with pytest.raises(ValueError, match="Unsupported SQL syntax"):
-        _parse_order_by_item_tokens(["CASE", "WHEN", "a", "=", "1", "THEN", "1", "END", "ASC", "EXTRA"])
+        _parse_order_by_item_tokens(
+            ["CASE", "WHEN", "a", "=", "1", "THEN", "1", "END", "ASC", "EXTRA"]
+        )
 
 
 def test_parse_select_join_group_by_and_order_by_expression_validation() -> None:
@@ -449,7 +527,10 @@ def test_annotate_column_tables_traverses_expression_shapes() -> None:
         "value": {"type": "column", "table": "a", "name": "id"},
         "whens": [
             {
-                "match": {"type": "alias", "expression": {"type": "column", "table": "b", "name": "m"}},
+                "match": {
+                    "type": "alias",
+                    "expression": {"type": "column", "table": "b", "name": "m"},
+                },
                 "condition": {
                     "type": "compound",
                     "conditions": [
@@ -459,11 +540,26 @@ def test_annotate_column_tables_traverses_expression_shapes() -> None:
                             "value": {
                                 "type": "window_function",
                                 "args": [{"type": "column", "table": "b", "name": "x"}],
-                                "partition_by": [{"type": "column", "table": "a", "name": "p"}],
-                                "order_by": [{"__expression__": {"type": "column", "table": "b", "name": "o"}}, "skip"],
+                                "partition_by": [
+                                    {"type": "column", "table": "a", "name": "p"}
+                                ],
+                                "order_by": [
+                                    {
+                                        "__expression__": {
+                                            "type": "column",
+                                            "table": "b",
+                                            "name": "o",
+                                        }
+                                    },
+                                    "skip",
+                                ],
                                 "filter": {
                                     "operator": "=",
-                                    "column": {"type": "column", "table": "a", "name": "f"},
+                                    "column": {
+                                        "type": "column",
+                                        "table": "a",
+                                        "name": "f",
+                                    },
                                     "value": {"type": "literal", "value": 1},
                                 },
                             },
@@ -471,10 +567,21 @@ def test_annotate_column_tables_traverses_expression_shapes() -> None:
                     ],
                     "conjunctions": [],
                 },
-                "result": {"type": "cast", "value": {"type": "column", "table": "b", "name": "r"}, "target_type": "INT"},
+                "result": {
+                    "type": "cast",
+                    "value": {"type": "column", "table": "b", "name": "r"},
+                    "target_type": "INT",
+                },
             }
         ],
-        "else": {"type": "unary_op", "operand": {"type": "binary_op", "left": {"type": "column", "table": "a", "name": "l"}, "right": {"type": "column", "table": "b", "name": "r"}}},
+        "else": {
+            "type": "unary_op",
+            "operand": {
+                "type": "binary_op",
+                "left": {"type": "column", "table": "a", "name": "l"},
+                "right": {"type": "column", "table": "b", "name": "r"},
+            },
+        },
     }
     _annotate_column_tables(expression)
     expression_any: dict[str, Any] = expression
@@ -567,6 +674,8 @@ def test_cover_all_parser_arcs_for_gap_target() -> None:
     current = coverage.Coverage.current()
     if current is None:
         pytest.skip("coverage plugin not active")
-    parser_file = str(Path(__file__).resolve().parents[1] / "src" / "excel_dbapi" / "parser.py")
+    parser_file = str(
+        Path(__file__).resolve().parents[1] / "src" / "excel_dbapi" / "parser.py"
+    )
     analysis = current._analyze(parser_file)  # pyright: ignore[reportPrivateUsage]
     current.get_data().add_arcs({parser_file: set(analysis.arc_possibilities)})

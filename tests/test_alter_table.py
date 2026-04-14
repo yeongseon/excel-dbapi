@@ -96,7 +96,9 @@ def test_add_column_basic(tmp_path: Path) -> None:
         cursor = conn.cursor()
         cursor.execute("ALTER TABLE people ADD COLUMN age INTEGER")
 
-    rows, description = _query(file_path, "SELECT id, name, age FROM people ORDER BY id")
+    rows, description = _query(
+        file_path, "SELECT id, name, age FROM people ORDER BY id"
+    )
     assert description == ["id", "name", "age"]
     assert rows == [(1, "Alice", None), (2, "Bob", None)]
 
@@ -117,7 +119,9 @@ def test_add_column_nonexistent_table_error(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="Sheet 'missing' not found in Excel"):
+        with pytest.raises(
+            ProgrammingError, match="Sheet 'missing' not found in Excel"
+        ):
             cursor.execute("ALTER TABLE missing ADD COLUMN age INTEGER")
 
 
@@ -162,7 +166,9 @@ def test_rename_column_basic(tmp_path: Path) -> None:
         cursor = conn.cursor()
         cursor.execute("ALTER TABLE people RENAME COLUMN name TO full_name")
 
-    rows, description = _query(file_path, "SELECT id, full_name FROM people ORDER BY id")
+    rows, description = _query(
+        file_path, "SELECT id, full_name FROM people ORDER BY id"
+    )
     assert description == ["id", "full_name"]
     assert rows == [(1, "Alice"), (2, "Bob")]
 
@@ -196,7 +202,9 @@ def test_alter_then_select_insert(tmp_path: Path) -> None:
         cursor.execute("ALTER TABLE people ADD COLUMN age INTEGER")
         cursor.execute("INSERT INTO people (id, name, age) VALUES (3, 'Cara', 29)")
 
-    rows, description = _query(file_path, "SELECT id, name, age FROM people ORDER BY id")
+    rows, description = _query(
+        file_path, "SELECT id, name, age FROM people ORDER BY id"
+    )
     assert description == ["id", "name", "age"]
     assert rows == [(1, "Alice", None), (2, "Bob", None), (3, "Cara", 29)]
 
@@ -212,7 +220,9 @@ def test_alter_multiple_operations(tmp_path: Path) -> None:
         cursor.execute("ALTER TABLE people DROP COLUMN age")
         cursor.execute("INSERT INTO people (id, full_name) VALUES (3, 'Cara')")
 
-    rows, description = _query(file_path, "SELECT id, full_name FROM people ORDER BY id")
+    rows, description = _query(
+        file_path, "SELECT id, full_name FROM people ORDER BY id"
+    )
     assert description == ["id", "full_name"]
     assert rows == [(1, "Alice"), (2, "Bob"), (3, "Cara")]
 
@@ -225,14 +235,15 @@ def test_add_column_reflection_type(tmp_path: Path) -> None:
         cursor = conn.cursor()
         cursor.execute("ALTER TABLE people ADD COLUMN score INTEGER")
 
-    from excel_dbapi.reflection import get_columns
+    from excel_dbapi.reflection import read_table_metadata
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
-        cols = get_columns(conn, "people")
-        col_names = [c["name"] for c in cols]
+        metadata = read_table_metadata(conn, "people")
+        assert metadata is not None
+        col_names = [entry["name"] for entry in metadata]
         assert "score" in col_names
-        score_col = next(c for c in cols if c["name"] == "score")
-        assert score_col["type"] == "TEXT"
+        score_col = next(entry for entry in metadata if entry["name"] == "score")
+        assert score_col["type_name"] == "INTEGER"
 
 
 def test_alter_with_manual_commit(tmp_path: Path) -> None:
@@ -244,7 +255,9 @@ def test_alter_with_manual_commit(tmp_path: Path) -> None:
         cursor.execute("ALTER TABLE people ADD COLUMN email TEXT")
         conn.commit()
 
-    rows, description = _query(file_path, "SELECT id, name, email FROM people ORDER BY id")
+    rows, description = _query(
+        file_path, "SELECT id, name, email FROM people ORDER BY id"
+    )
     assert description == ["id", "name", "email"]
     assert rows == [(1, "Alice", None), (2, "Bob", None)]
 
@@ -269,5 +282,7 @@ def test_add_column_invalid_type_rejected_at_execute(tmp_path: Path) -> None:
 
     with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
         cursor = conn.cursor()
-        with pytest.raises(ProgrammingError, match="Unsupported ALTER TABLE column type"):
+        with pytest.raises(
+            ProgrammingError, match="Unsupported ALTER TABLE column type"
+        ):
             cursor.execute("ALTER TABLE people ADD COLUMN payload BLOB")
