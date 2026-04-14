@@ -121,7 +121,7 @@ with ExcelConnection("sample.xlsx") as conn:
 |--------|-------------|------------|
 | openpyxl (default) | Fast sheet access | openpyxl |
 | pandas | DataFrame-based operations | pandas, openpyxl |
-| graph | Microsoft Graph API (remote Excel) | msgraph-sdk |
+| graph | Microsoft Graph API (remote Excel) | httpx |
 
 ```python
 conn = ExcelConnection("sample.xlsx", engine="openpyxl")  # default

@@ -3,7 +3,7 @@ from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Concatenate, Optional, ParamSpec, Type, TypeVar, cast
+from typing import Any, Concatenate, Optional, ParamSpec, Protocol, Type, TypeVar, cast, runtime_checkable
 import warnings
 
 from .cursor import ExcelCursor
@@ -13,10 +13,18 @@ from .executor import SharedExecutor
 from .engines.result import ExecutionResult
 from .exceptions import InterfaceError, NotSupportedError, OperationalError
 
+
+@runtime_checkable
+class _TokenProvider(Protocol):
+    """Object that supplies a bearer token string."""
+
+    def get_token(self, *args: Any) -> Any: ...
+
+
 #: Credential accepted by cloud backends.  Concrete forms:
 #: ``str`` (static token), ``TokenProvider`` protocol,
 #: azure-identity credential (``get_token(scope)``), or zero-arg callable.
-Credential = str | Callable[[], str] | None
+Credential = str | Callable[[], str] | _TokenProvider | None
 
 _MUTATING_ACTIONS = frozenset({"INSERT", "CREATE", "DROP", "UPDATE", "DELETE", "ALTER"})
 

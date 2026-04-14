@@ -103,7 +103,7 @@ def _classify_value_type(value: Any) -> str:
 def write_table_metadata(
     connection: ExcelConnection, table_name: str, columns: list[dict[str, Any]]
 ) -> None:
-    """Write column metadata to the hidden metadata sheet."""
+    """Write column metadata to the internal metadata sheet."""
     engine = connection.engine
     sheets = engine.list_sheets()
 

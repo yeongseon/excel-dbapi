@@ -37,6 +37,10 @@ This table is the **single authoritative matrix** for SQL feature support.
 | `WHERE` | `ILIKE` / `NOT ILIKE` | ✅ | Case-insensitive pattern matching |
 | `WHERE` | `IS NULL` / `IS NOT NULL` | ✅ | |
 | `WHERE` | Subquery in `IN` / `NOT IN` | ✅ | Single-column `SELECT`; correlated/parameterized subqueries are rejected |
+| `WHERE` | `EXISTS (SELECT ...)` | ✅ | Non-correlated subquery existence check |
+| Expressions | `CAST(expr AS type)` | ✅ | Type coercion in SELECT and WHERE |
+| Expressions | Scalar functions | ✅ | `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTR`, `COALESCE`, `ABS`, `ROUND`, `REPLACE` |
+| Aggregation | `FILTER (WHERE ...)` | ✅ | Per-aggregate filtering clause |
 | `JOIN` | `INNER`, `LEFT`, `RIGHT` | ✅ | Chained joins supported |
 | `JOIN` | `FULL OUTER` / `FULL` | ✅ | |
 | `JOIN` | `CROSS JOIN` | ✅ | No `ON` clause allowed |

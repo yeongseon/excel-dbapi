@@ -46,15 +46,15 @@ class WorkbookBackend(ABC):
     def _normalize_max_rows(value: Any) -> int | None:
         if value is None:
             return None
-        if not isinstance(value, int) or value <= 0:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError("max_rows must be a positive integer")
-        return value
+        return int(value)
 
     @staticmethod
     def _normalize_max_memory_mb(value: Any) -> float | None:
         if value is None:
             return None
-        if not isinstance(value, (int, float)) or float(value) <= 0:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or float(value) <= 0:
             raise ValueError("max_memory_mb must be a positive number")
         return float(value)
 

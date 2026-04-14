@@ -622,7 +622,16 @@ class SharedExecutor:
         if action == "CREATE":
             if resolved_table is not None:
                 raise ValueError(f"Sheet '{table}' already exists")
-            self.backend.create_sheet(table, parsed["columns"])
+            columns = parsed["columns"]
+            seen: set[str] = set()
+            for col in columns:
+                lower = col.lower()
+                if lower in seen:
+                    raise ValueError(
+                        f"Duplicate column name '{col}' in CREATE TABLE"
+                    )
+                seen.add(lower)
+            self.backend.create_sheet(table, columns)
             return ExecutionResult(
                 action=action,
                 rows=[],
@@ -651,7 +660,9 @@ class SharedExecutor:
 
             if operation == "ADD_COLUMN":
                 col = parsed["column"]
-                if col in data.headers:
+                if col in data.headers or col.lower() in {
+                    h.lower() for h in data.headers
+                }:
                     raise ValueError(f"Column '{col}' already exists in '{table}'")
                 data.headers.append(col)
                 for row in data.rows:
@@ -676,7 +687,9 @@ class SharedExecutor:
                 new_col = parsed["new_column"]
                 if old_col not in data.headers:
                     raise ValueError(f"Column '{old_col}' not found in '{table}'")
-                if new_col in data.headers:
+                if new_col in data.headers or new_col.lower() in {
+                    h.lower() for h in data.headers if h != old_col
+                }:
                     raise ValueError(f"Column '{new_col}' already exists in '{table}'")
                 idx = data.headers.index(old_col)
                 data.headers[idx] = new_col
