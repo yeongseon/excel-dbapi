@@ -1,4 +1,3 @@
-import importlib
 import os
 from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
@@ -23,12 +22,11 @@ from .executor import SharedExecutor
 from .engines.result import ExecutionResult
 from .exceptions import (
     BackendOperationError,
-    DatabaseError,
     Error,
     InterfaceError,
     NotSupportedError,
     OperationalError,
-    ProgrammingError,
+    map_exception,
 )
 
 try:
@@ -205,8 +203,8 @@ class ExcelConnection:
 
     @check_closed
     def cursor(self) -> Any:
-        cursor_module = importlib.import_module("excel_dbapi.cursor")
-        ExcelCursor = cursor_module.ExcelCursor
+        from .cursor import ExcelCursor
+
         return ExcelCursor(self)
 
     @check_closed
@@ -214,11 +212,9 @@ class ExcelConnection:
         try:
             self.engine.save()
             self._snapshot = self.engine.snapshot()
+        except Error:
+            raise
         except Exception as exc:
-            from excel_dbapi.exceptions import Error as _DBAPIError
-
-            if isinstance(exc, _DBAPIError):
-                raise
             raise OperationalError(str(exc)) from exc
 
     @check_closed
@@ -234,11 +230,9 @@ class ExcelConnection:
                     "Rollback is disabled when autocommit is enabled"
                 )
             self.engine.restore(self._snapshot)
+        except Error:
+            raise
         except Exception as exc:
-            from excel_dbapi.exceptions import Error as _DBAPIError
-
-            if isinstance(exc, _DBAPIError):
-                raise
             raise OperationalError(str(exc)) from exc
 
     @check_closed
@@ -251,18 +245,10 @@ class ExcelConnection:
             result = self._executor.execute_with_params(query, normalized_params)
             self._finalize_autocommit(result.action)
             return result
-        except ValueError as exc:
-            raise ProgrammingError(str(exc)) from exc
-        except NotImplementedError as exc:
-            raise NotSupportedError(str(exc)) from exc
-        except (KeyError, TypeError, IndexError) as exc:
-            raise ProgrammingError(str(exc)) from exc
-        except OSError as exc:
-            raise OperationalError(str(exc)) from exc
-        except DatabaseError:
+        except Error:
             raise
         except Exception as exc:
-            raise DatabaseError(str(exc)) from exc
+            raise map_exception(exc) from exc
 
     @check_closed
     def executemany(
@@ -288,7 +274,7 @@ class ExcelConnection:
                 result = self._executor.execute_with_params(
                     query, tuple(params)
                 )
-            except DatabaseError as exc:
+            except Error as exc:
                 if supports_transactions:
                     self.engine.restore(snapshot)
                     raise
@@ -296,49 +282,13 @@ class ExcelConnection:
                     f"{exc}. Backend '{backend_name}' does not support transactional "
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
-            except ValueError as exc:
-                mapped = ProgrammingError(str(exc))
+            except Exception as exc:
+                mapped = map_exception(exc)
                 if supports_transactions:
                     self.engine.restore(snapshot)
                     raise mapped from exc
-                raise ProgrammingError(
+                raise type(mapped)(
                     f"{mapped}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            except NotImplementedError as exc:
-                mapped_ns = NotSupportedError(str(exc))
-                if supports_transactions:
-                    self.engine.restore(snapshot)
-                    raise mapped_ns from exc
-                raise NotSupportedError(
-                    f"{mapped_ns}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            except (KeyError, TypeError, IndexError) as exc:
-                mapped_pe = ProgrammingError(str(exc))
-                if supports_transactions:
-                    self.engine.restore(snapshot)
-                    raise mapped_pe from exc
-                raise ProgrammingError(
-                    f"{mapped_pe}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            except OSError as exc:
-                mapped_op = OperationalError(str(exc))
-                if supports_transactions:
-                    self.engine.restore(snapshot)
-                    raise mapped_op from exc
-                raise OperationalError(
-                    f"{mapped_op}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            except Exception as exc:
-                mapped_db = DatabaseError(str(exc))
-                if supports_transactions:
-                    self.engine.restore(snapshot)
-                    raise mapped_db from exc
-                raise DatabaseError(
-                    f"{mapped_db}. Backend '{backend_name}' does not support transactional "
                     "executemany rollback; partial writes may have occurred."
                 ) from exc
             total_rowcount += result.rowcount
@@ -375,11 +325,9 @@ class ExcelConnection:
         try:
             self.engine.close()
             self.closed = True
+        except Error:
+            raise
         except Exception as exc:
-            from excel_dbapi.exceptions import Error as _DBAPIError
-
-            if isinstance(exc, _DBAPIError):
-                raise
             raise OperationalError(str(exc)) from exc
 
     @property

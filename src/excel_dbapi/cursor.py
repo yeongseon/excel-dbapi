@@ -18,11 +18,10 @@ from .engines.result import Description, ExecutionResult
 if TYPE_CHECKING:
     from .connection import ExcelConnection
 from .exceptions import (
-    DatabaseError,
+    Error,
     InterfaceError,
-    NotSupportedError,
-    OperationalError,
     ProgrammingError,
+    map_exception,
 )
 
 
@@ -44,16 +43,6 @@ def check_closed(
         return func(self, *args, **kwargs)
 
     return cast(Callable[Concatenate["ExcelCursor", P], R], wrapper)
-
-def _map_exception(exc: Exception) -> DatabaseError:
-    """Map unexpected non-DB-API exceptions to DB-API exception types."""
-    if isinstance(exc, (KeyError, TypeError, IndexError)):
-        return ProgrammingError(str(exc))
-    if isinstance(exc, NotImplementedError):
-        return NotSupportedError(str(exc))
-    if isinstance(exc, OSError):
-        return OperationalError(str(exc))
-    return DatabaseError(str(exc))
 
 
 class ExcelCursor:
@@ -91,10 +80,10 @@ class ExcelCursor:
         self._reset_state()
         try:
             result: ExecutionResult = self.connection.execute(query, params)
-        except DatabaseError:
+        except Error:
             raise
         except Exception as exc:
-            raise _map_exception(exc) from exc
+            raise map_exception(exc) from exc
         self._results = result.rows
         self._index = 0
         self.description = result.description
@@ -112,10 +101,10 @@ class ExcelCursor:
         self._reset_state()
         try:
             result: ExecutionResult = self.connection.executemany(query, seq_of_params)
-        except DatabaseError:
+        except Error:
             raise
         except Exception as exc:
-            raise _map_exception(exc) from exc
+            raise map_exception(exc) from exc
         self._results = []
         self._index = 0
         self.description = None

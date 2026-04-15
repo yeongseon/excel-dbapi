@@ -69,4 +69,23 @@ __all__ = [
     "SqlSemanticError",
     "BackendOperationError",
     "CapabilityError",
+    "map_exception",
 ]
+
+
+def map_exception(exc: Exception) -> "DatabaseError":
+    """Map a non-DB-API exception to the most appropriate DB-API type.
+
+    Used at the DB-API boundary to translate internal Python exceptions
+    into PEP 249 exception types while preserving the original cause.
+    """
+    if isinstance(exc, Error):
+        # Already a DB-API exception — should not be mapped.
+        return exc  # type: ignore[return-value]
+    if isinstance(exc, (ValueError, KeyError, TypeError, IndexError)):
+        return ProgrammingError(str(exc))
+    if isinstance(exc, NotImplementedError):
+        return NotSupportedError(str(exc))
+    if isinstance(exc, OSError):
+        return OperationalError(str(exc))
+    return DatabaseError(str(exc))
