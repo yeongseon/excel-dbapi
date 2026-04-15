@@ -1,10 +1,11 @@
+from datetime import date, datetime
 from pathlib import Path
 
-import pytest
-from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
+import pytest
 
 from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.exceptions import DatabaseError, ProgrammingError
 from excel_dbapi.parser import parse_sql
 
 
@@ -314,3 +315,83 @@ def test_case_order_by_case_with_group_by(tmp_path: Path) -> None:
     )
     assert rows[0] == ("West", 250)
     assert rows[1] == ("East", 250)
+
+
+
+def _create_round11_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(["id", "name"])
+    sheet.append([1, "Alice"])
+    sheet.append([2, "Bob"])
+
+    table = workbook.create_sheet("t")
+    table.append(["id", "a", "b", "c"])
+    table.append([1, 10, 0, None])
+    table.append([2, "alice", 0, None])
+
+    workbook.save(path)
+
+def test_cast_supports_datetime_and_boolean_with_edge_cases(tmp_path: Path) -> None:
+    file_path = tmp_path / "round11_cast_types.xlsx"
+    _create_round11_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT "
+            "CAST('42' AS INTEGER), "
+            "CAST('3.25' AS REAL), "
+            "CAST('2024-01-15' AS DATE), "
+            "CAST('2024-01-15T10:11:12Z' AS DATETIME), "
+            "CAST('yes' AS BOOLEAN), "
+            "CAST(0 AS BOOLEAN), "
+            "CAST(NULL AS DATETIME), "
+            "CAST(NULL AS BOOLEAN) "
+            "FROM t WHERE id = 1"
+        )
+        row = cursor.fetchone()
+        assert row == (
+            42,
+            3.25,
+            date(2024, 1, 15),
+            datetime(2024, 1, 15, 10, 11, 12),
+            True,
+            False,
+            None,
+            None,
+        )
+
+        with pytest.raises(ProgrammingError, match="Cannot cast value .* to BOOLEAN"):
+            cursor.execute("SELECT CAST('maybe' AS BOOLEAN) FROM t")
+
+        with pytest.raises(
+            ProgrammingError, match="Cannot cast empty string to DATETIME"
+        ):
+            cursor.execute("SELECT CAST('' AS DATETIME) FROM t")
+
+
+
+def _create_round14_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "t"
+    sheet.append(["id", "name"])
+    sheet.append([1, "a"])
+    sheet.append([2, "b"])
+    sheet.append([3, "c"])
+    workbook.save(path)
+
+def test_case_when_with_window_condition_collects_row_number(tmp_path: Path) -> None:
+    file_path = tmp_path / "round14_case_window_condition.xlsx"
+    _create_round14_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT CASE WHEN ROW_NUMBER() OVER (ORDER BY id) = 1 THEN 'first' ELSE 'other' END AS label FROM t ORDER BY id"
+        )
+        assert cursor.fetchall() == [("first",), ("other",), ("other",)]

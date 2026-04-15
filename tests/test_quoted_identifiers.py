@@ -5,15 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from openpyxl import Workbook
+import pytest
 
+from excel_dbapi.connection import ExcelConnection
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
+from excel_dbapi.engines.result import ExecutionResult
 from excel_dbapi.executor import SharedExecutor
 from excel_dbapi.parser import parse_sql
-
-
-# ---------------------------------------------------------------------------
-# Workbook helpers
-# ---------------------------------------------------------------------------
 
 
 def _create_test_workbook(path: Path) -> None:
@@ -52,7 +50,7 @@ def _create_dml_workbook(path: Path) -> None:
     wb.save(path)
 
 
-def _execute(path: Path, sql: str) -> object:
+def _execute(path: Path, sql: str) -> ExecutionResult:
     engine = OpenpyxlBackend(str(path))
     parsed = parse_sql(sql)
     return SharedExecutor(engine).execute(parsed)
@@ -499,3 +497,91 @@ def test_exec_unicode_between(tmp_path: Path) -> None:
         "SELECT 이름 FROM Sheet1 WHERE 나이 BETWEEN 25 AND 30 ORDER BY id",
     )
     assert result.rows == [("홍길동",), ("김철수",)]
+
+
+
+def _create_r10_workbook(
+    path: Path,
+    *,
+    headers: list[object],
+    rows: list[list[object]],
+    sheet_name: str,
+) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = sheet_name
+    sheet.append(headers)
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+def test_ascii_identifiers_work_end_to_end(tmp_path: Path) -> None:
+    file_path = tmp_path / "ascii-identifiers.xlsx"
+    _create_r10_workbook(
+        file_path,
+        headers=["user_id", "full_name"],
+        rows=[[1, "Alice"], [2, "Bob"]],
+        sheet_name="users",
+    )
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, full_name FROM users ORDER BY user_id")
+        assert cursor.fetchall() == [(1, "Alice"), (2, "Bob")]
+
+@pytest.mark.xfail(
+    reason=(
+        "Quoted identifiers are not yet supported for table/column resolution; "
+        "double quotes are currently parsed as string literals"
+    ),
+    strict=False,
+)
+def test_spaced_identifiers_quoted_are_currently_not_supported(tmp_path: Path) -> None:
+    file_path = tmp_path / "spaced-identifiers.xlsx"
+    _create_r10_workbook(
+        file_path,
+        headers=["id", "full name"],
+        rows=[[1, "Alice"]],
+        sheet_name="People Sheet",
+    )
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT "full name" FROM "People Sheet"')
+        assert cursor.fetchall() == [("Alice",)]
+
+
+
+def _create_round13_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "t"
+    sheet.append(["a", "b", "val", "grp"])
+    sheet.append([1, 1, 6, "x"])
+    sheet.append([2, 3, 5, "x"])
+    sheet.append([1, 1, 7, "y"])
+    sheet.append([5, 5, 1, "y"])
+    workbook.save(path)
+
+def test_parser_accepts_quoted_table_identifier_for_create_table() -> None:
+    parsed = parse_sql('CREATE TABLE "Sales 2024" (id INTEGER, amount REAL)')
+    assert parsed["table"] == "Sales 2024"
+
+def test_select_from_quoted_table_name_with_space(tmp_path: Path) -> None:
+    file_path = tmp_path / "round13_quoted_table_select.xlsx"
+
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sales 2024"
+    sheet.append(["id", "amount"])
+    sheet.append([1, 100])
+    workbook.save(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM "Sales 2024"')
+        assert cursor.fetchall() == [(1,)]

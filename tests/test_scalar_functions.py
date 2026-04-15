@@ -1,8 +1,8 @@
 from datetime import date, datetime
 from pathlib import Path
 
-import pytest
 from openpyxl import Workbook
+import pytest
 
 from excel_dbapi.connection import ExcelConnection
 from excel_dbapi.exceptions import ProgrammingError
@@ -260,3 +260,33 @@ def test_scalar_functions_in_group_by_context(tmp_path: Path) -> None:
     )
     assert description == ["normalized_name", "COUNT(*)"]
     assert rows == [("ALICE", 1), ("BOB", 1)]
+
+
+
+def _create_round11_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(["id", "name"])
+    sheet.append([1, "Alice"])
+    sheet.append([2, "Bob"])
+
+    table = workbook.create_sheet("t")
+    table.append(["id", "a", "b", "c"])
+    table.append([1, 10, 0, None])
+    table.append([2, "alice", 0, None])
+
+    workbook.save(path)
+
+def test_abs_round_replace_scalar_functions_are_supported(tmp_path: Path) -> None:
+    file_path = tmp_path / "round11_scalar_functions.xlsx"
+    _create_round11_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT ABS(-3), ABS('-2.5'), ROUND(3.14159, 2), ROUND(2.6), "
+            "REPLACE('banana', 'na', 'NA') FROM t WHERE id = 1"
+        )
+        assert cursor.fetchone() == (3, 2.5, 3.14, 3, "baNANA")

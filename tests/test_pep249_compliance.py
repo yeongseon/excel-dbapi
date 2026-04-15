@@ -1,25 +1,31 @@
 """Tests for PEP 249 compliance details."""
 
+from pathlib import Path
+from typing import Any
 import datetime
 
+from openpyxl import Workbook
+import importlib
 import pytest
+
+from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.engines.base import TableData, WorkbookBackend
+from excel_dbapi.exceptions import InterfaceError
+import excel_dbapi
 
 
 class TestModuleLevelExports:
     """PEP 249 §1 requires module-level constants and exception exports."""
 
     def test_apilevel(self) -> None:
-        import excel_dbapi
 
         assert excel_dbapi.apilevel == "2.0"
 
     def test_threadsafety(self) -> None:
-        import excel_dbapi
 
         assert excel_dbapi.threadsafety == 1
 
     def test_paramstyle(self) -> None:
-        import excel_dbapi
 
         assert excel_dbapi.paramstyle == "qmark"
 
@@ -39,7 +45,6 @@ class TestModuleLevelExports:
         ],
     )
     def test_exception_exported(self, name: str) -> None:
-        import excel_dbapi
 
         cls = getattr(excel_dbapi, name)
         assert cls is not None
@@ -48,7 +53,6 @@ class TestModuleLevelExports:
 
     def test_exception_hierarchy(self) -> None:
         """PEP 249 exception inheritance must be correct."""
-        import excel_dbapi
 
         assert issubclass(excel_dbapi.Warning, Exception)
         assert issubclass(excel_dbapi.Error, Exception)
@@ -62,12 +66,10 @@ class TestModuleLevelExports:
         assert issubclass(excel_dbapi.NotSupportedError, excel_dbapi.DatabaseError)
 
     def test_connect_function(self) -> None:
-        import excel_dbapi
 
         assert callable(excel_dbapi.connect)
 
     def test_all_contains_exceptions(self) -> None:
-        import excel_dbapi
 
         for name in [
             "Error",
@@ -89,7 +91,6 @@ class TestCursorPEP249Stubs:
 
     @pytest.fixture
     def cursor(self, tmp_path):
-        from openpyxl import Workbook
 
         path = str(tmp_path / "test.xlsx")
         wb = Workbook()
@@ -99,7 +100,6 @@ class TestCursorPEP249Stubs:
         ws.append(["id", "name"])
         wb.save(path)
 
-        from excel_dbapi.connection import ExcelConnection
 
         conn = ExcelConnection(path)
         cur = conn.cursor()
@@ -119,14 +119,12 @@ class TestCursorPEP249Stubs:
         assert result is None
 
     def test_setinputsizes_raises_on_closed_cursor(self, cursor) -> None:
-        from excel_dbapi.exceptions import InterfaceError
 
         cursor.close()
         with pytest.raises(InterfaceError):
             cursor.setinputsizes([])
 
     def test_setoutputsize_raises_on_closed_cursor(self, cursor) -> None:
-        from excel_dbapi.exceptions import InterfaceError
 
         cursor.close()
         with pytest.raises(InterfaceError):
@@ -135,9 +133,7 @@ class TestCursorPEP249Stubs:
 
 class TestWorkbookBackendContract:
     def test_raises_not_implemented(self) -> None:
-        from typing import Any
 
-        from excel_dbapi.engines.base import TableData, WorkbookBackend
 
         class Stub(WorkbookBackend):
             @property
@@ -187,7 +183,6 @@ class TestConnectSanitizeFormulasParam:
 
     @pytest.fixture
     def xlsx_path(self, tmp_path):
-        from openpyxl import Workbook
 
         path = str(tmp_path / "test.xlsx")
         wb = Workbook()
@@ -199,28 +194,24 @@ class TestConnectSanitizeFormulasParam:
         return path
 
     def test_connect_default_sanitize(self, xlsx_path: str) -> None:
-        import excel_dbapi
 
         conn = excel_dbapi.connect(xlsx_path)
         assert conn.engine.sanitize_formulas is True
         conn.close()
 
     def test_connect_disable_sanitize(self, xlsx_path: str) -> None:
-        import excel_dbapi
 
         conn = excel_dbapi.connect(xlsx_path, sanitize_formulas=False)
         assert conn.engine.sanitize_formulas is False
         conn.close()
 
     def test_connection_default_sanitize(self, xlsx_path: str) -> None:
-        from excel_dbapi.connection import ExcelConnection
 
         conn = ExcelConnection(xlsx_path)
         assert conn.engine.sanitize_formulas is True
         conn.close()
 
     def test_connection_disable_sanitize(self, xlsx_path: str) -> None:
-        from excel_dbapi.connection import ExcelConnection
 
         conn = ExcelConnection(xlsx_path, sanitize_formulas=False)
         assert conn.engine.sanitize_formulas is False
@@ -229,7 +220,6 @@ class TestConnectSanitizeFormulasParam:
 
 class TestPep249ConstructorsAndTypeObjects:
     def test_datetime_constructors(self) -> None:
-        import excel_dbapi
 
         assert excel_dbapi.Date(2026, 4, 14) == datetime.date(2026, 4, 14)
         assert excel_dbapi.Time(9, 8, 7) == datetime.time(9, 8, 7)
@@ -238,7 +228,6 @@ class TestPep249ConstructorsAndTypeObjects:
         )
 
     def test_tick_constructors(self) -> None:
-        import excel_dbapi
 
         ticks = 1_700_000_000.0
         assert excel_dbapi.DateFromTicks(ticks) == datetime.date.fromtimestamp(ticks)
@@ -251,13 +240,11 @@ class TestPep249ConstructorsAndTypeObjects:
         )
 
     def test_binary_constructor(self) -> None:
-        import excel_dbapi
 
         assert excel_dbapi.Binary("abc") == b"abc"
         assert excel_dbapi.Binary(b"xyz") == b"xyz"
 
     def test_type_objects_exported_and_comparable(self) -> None:
-        import excel_dbapi
 
         for name in [
             "Date",
@@ -280,3 +267,59 @@ class TestPep249ConstructorsAndTypeObjects:
         assert excel_dbapi.NUMBER.__eq__(int)
         assert excel_dbapi.DATETIME.__eq__(datetime.datetime)
         assert excel_dbapi.ROWID.__eq__(int)
+
+
+
+def _make_xlsx(
+    path: Path,
+    sheet: str = "users",
+    headers: list[str] | None = None,
+    rows: list[list[Any]] | None = None,
+) -> str:
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = sheet
+    for h in headers or ["id", "name"]:
+        pass
+    ws.append(headers or ["id", "name"])
+    for row in rows or []:
+        ws.append(row)
+    fpath = str(path)
+    wb.save(fpath)
+    wb.close()
+    return fpath
+
+class TestPackageVersion:
+    """Fix 3: __version__ matches pyproject.toml."""
+
+    def test_version_is_not_hardcoded_030(self) -> None:
+        """__version__ should NOT be the old hardcoded '0.3.0'."""
+
+        assert excel_dbapi.__version__ != "0.3.0"
+
+    def test_version_matches_pyproject(self) -> None:
+        """__version__ matches the version in pyproject.toml."""
+
+        try:
+            toml_module = importlib.import_module("tomllib")
+        except ModuleNotFoundError:
+            toml_module = importlib.import_module("tomli")
+
+        pyproject = Path(__file__).parent.parent / "pyproject.toml"
+        with open(pyproject, "rb") as f:
+            data = toml_module.load(f)
+        expected = data["project"]["version"]
+
+
+        # In editable installs the version comes from importlib.metadata
+        # which reads pyproject.toml, so they should match.
+        assert excel_dbapi.__version__ == expected
+
+    def test_version_fallback_format(self) -> None:
+        """Version is a valid semver-like string (not empty)."""
+
+        parts = excel_dbapi.__version__.split(".")
+        assert len(parts) >= 2, (
+            f"Version {excel_dbapi.__version__!r} is not semver-like"
+        )

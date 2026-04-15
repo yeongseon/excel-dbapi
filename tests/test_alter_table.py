@@ -1,12 +1,13 @@
 from pathlib import Path
+from unittest.mock import PropertyMock, patch
 
-import pytest
-from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
+import pytest
 
 from excel_dbapi.connection import ExcelConnection
-from excel_dbapi.exceptions import ProgrammingError
+from excel_dbapi.exceptions import DatabaseError, NotSupportedError, ProgrammingError
 from excel_dbapi.parser import parse_sql
+from excel_dbapi.reflection import METADATA_SHEET, read_table_metadata, write_table_metadata
 
 
 def _create_people_workbook(path: Path) -> None:
@@ -236,7 +237,6 @@ def test_add_column_reflection_type(tmp_path: Path) -> None:
         cursor = conn.cursor()
         cursor.execute("ALTER TABLE people ADD COLUMN score INTEGER")
 
-    from excel_dbapi.reflection import read_table_metadata
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         metadata = read_table_metadata(conn, "people")
@@ -267,9 +267,7 @@ def test_alter_readonly_blocked(tmp_path: Path) -> None:
     file_path = tmp_path / "alter_readonly.xlsx"
     _create_people_workbook(file_path)
 
-    from unittest.mock import PropertyMock, patch
 
-    from excel_dbapi.exceptions import NotSupportedError
 
     with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
@@ -287,3 +285,172 @@ def test_add_column_invalid_type_rejected_at_execute(tmp_path: Path) -> None:
             ProgrammingError, match="Unsupported ALTER TABLE column type"
         ):
             cursor.execute("ALTER TABLE people ADD COLUMN payload BLOB")
+
+
+
+def _create_r7_workbook(
+    path: Path, headers: list[object], rows: list[list[object]]
+) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(headers)
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+def test_ddl_updates_reflection_metadata(tmp_path: Path) -> None:
+    file_path = tmp_path / "ddl-metadata.xlsx"
+    _create_r7_workbook(file_path, ["seed"], [[1]])
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("CREATE TABLE people (id INTEGER, name TEXT)")
+        metadata = read_table_metadata(conn, "people")
+        assert metadata is not None
+        assert [entry["name"] for entry in metadata] == ["id", "name"]
+        assert [entry["type_name"] for entry in metadata] == ["INTEGER", "TEXT"]
+
+        cursor.execute("ALTER TABLE people ADD COLUMN email TEXT")
+        metadata = read_table_metadata(conn, "people")
+        assert metadata is not None
+        assert [entry["name"] for entry in metadata] == ["id", "name", "email"]
+        assert [entry["type_name"] for entry in metadata] == [
+            "INTEGER",
+            "TEXT",
+            "TEXT",
+        ]
+
+        cursor.execute("ALTER TABLE people RENAME COLUMN name TO full_name")
+        metadata = read_table_metadata(conn, "people")
+        assert metadata is not None
+        assert [entry["name"] for entry in metadata] == ["id", "full_name", "email"]
+        assert [entry["type_name"] for entry in metadata] == [
+            "INTEGER",
+            "TEXT",
+            "TEXT",
+        ]
+
+        cursor.execute("ALTER TABLE people DROP COLUMN email")
+        metadata = read_table_metadata(conn, "people")
+        assert metadata is not None
+        assert [entry["name"] for entry in metadata] == ["id", "full_name"]
+
+        cursor.execute("DROP TABLE people")
+        assert read_table_metadata(conn, "people") is None
+
+def test_drop_table_guard_ignores_metadata_sheet(tmp_path: Path) -> None:
+    file_path = tmp_path / "drop-last-user-sheet.xlsx"
+    _create_r7_workbook(file_path, ["id"], [[1]])
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        write_table_metadata(
+            conn,
+            "Sheet1",
+            [
+                {
+                    "name": "id",
+                    "type_name": "INTEGER",
+                    "nullable": False,
+                    "primary_key": True,
+                }
+            ],
+        )
+        assert METADATA_SHEET in conn.engine.list_sheets()
+
+        cursor = conn.cursor()
+        with pytest.raises(
+            ProgrammingError, match="Cannot drop the only remaining sheet"
+        ):
+            cursor.execute("DROP TABLE Sheet1")
+
+
+
+def _create_r9_workbook(
+    path: Path,
+    *,
+    headers: list[object] | None = None,
+    rows: list[list[object]] | None = None,
+    sheet_name: str = "Sheet1",
+) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = sheet_name
+    if headers is not None:
+        sheet.append(headers)
+    for row in rows or []:
+        sheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+def test_execute_create_table_rejects_malformed_definitions(tmp_path: Path) -> None:
+    file_path = tmp_path / "create-malformed.xlsx"
+    _create_r9_workbook(file_path, headers=["seed"], rows=[[1]])
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="Table name is required"):
+            cursor.execute("CREATE TABLE (id INTEGER)")
+        with pytest.raises(
+            ProgrammingError,
+            match="Malformed column definitions: empty column definition found",
+        ):
+            cursor.execute("CREATE TABLE t (id INTEGER,, name TEXT)")
+
+def test_execute_create_table_rejects_trailing_comma(tmp_path: Path) -> None:
+    file_path = tmp_path / "create-trailing-comma.xlsx"
+    _create_r9_workbook(file_path, headers=["seed"], rows=[[1]])
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        with pytest.raises(ProgrammingError, match="empty column definition"):
+            cursor.execute("CREATE TABLE people (id INTEGER, name TEXT,)")
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "CREATE TABLE __excel_meta__ (id INTEGER)",
+        "DROP TABLE __excel_meta__",
+        "ALTER TABLE __excel_meta__ ADD COLUMN x TEXT",
+    ],
+)
+def test_reserved_metadata_sheet_rejects_ddl(tmp_path: Path, sql: str) -> None:
+    file_path = tmp_path / "reserved-ddl.xlsx"
+    _create_r9_workbook(file_path, headers=["id"], rows=[[1]])
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        with pytest.raises(
+            ProgrammingError,
+            match="Cannot perform DDL on reserved metadata table '__excel_meta__'",
+        ):
+            cursor.execute(sql)
+
+def test_alter_drop_column_is_case_insensitive(tmp_path: Path) -> None:
+    file_path = tmp_path / "alter-drop-case-insensitive.xlsx"
+    _create_r9_workbook(
+        file_path, headers=["id", "Name"], rows=[[1, "Alice"]], sheet_name="people"
+    )
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE people DROP COLUMN name")
+        cursor.execute("SELECT * FROM people")
+        assert [str(col[0]) for col in (cursor.description or [])] == ["id"]
+        assert cursor.fetchall() == [(1,)]
+
+def test_alter_rename_column_is_case_insensitive(tmp_path: Path) -> None:
+    file_path = tmp_path / "alter-rename-case-insensitive.xlsx"
+    _create_r9_workbook(
+        file_path, headers=["id", "Name"], rows=[[1, "Alice"]], sheet_name="people"
+    )
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("ALTER TABLE people RENAME COLUMN name TO full_name")
+        cursor.execute("SELECT id, full_name FROM people")
+        assert cursor.fetchall() == [(1, "Alice")]

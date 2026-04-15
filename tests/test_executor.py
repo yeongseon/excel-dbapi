@@ -1,13 +1,19 @@
-import datetime
 from pathlib import Path
+from typing import Any, cast
+import datetime
 
-import pytest
-from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
+import pandas as pd
+import pytest
 
+from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.engines.base import TableData
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
+from excel_dbapi.engines.pandas.backend import PandasBackend
+from excel_dbapi.exceptions import DatabaseError
 from excel_dbapi.executor import SharedExecutor
 from excel_dbapi.parser import parse_sql
+import excel_dbapi.reflection as reflection
 
 
 def test_executor_select():
@@ -758,3 +764,416 @@ def test_executor_join_with_as_alias(tmp_path: Path):
     )
     results = SharedExecutor(engine).execute(parsed)
     assert results.rows == [(1, "Alice", "admin")]
+
+
+
+class _NonTransactionalBackend:
+    supports_transactions = False
+    readonly = False
+
+    def __init__(self) -> None:
+        self._sheets = {
+            "people": TableData(headers=["id", "name"], rows=[[1, "Alice"]])
+        }
+
+    def list_sheets(self) -> list[str]:
+        return list(self._sheets)
+
+    def read_sheet(self, name: str) -> TableData:
+        return self._sheets[name]
+
+    def write_sheet(self, name: str, data: TableData) -> None:
+        self._sheets[name] = data
+
+def test_non_transactional_metadata_read_failure_skips_lossy_rewrite(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    backend = _NonTransactionalBackend()
+    executor = SharedExecutor(cast(Any, backend), connection=object())
+    write_calls = 0
+
+    def _boom_read(*_: object, **__: object) -> list[dict[str, object]]:
+        raise RuntimeError("metadata read failed")
+
+    def _track_write(*_: object, **__: object) -> None:
+        nonlocal write_calls
+        write_calls += 1
+
+    monkeypatch.setattr(reflection, "read_table_metadata", _boom_read)
+    monkeypatch.setattr(reflection, "write_table_metadata", _track_write)
+
+    with pytest.warns(UserWarning, match="skipping metadata update to avoid data loss"):
+        executor.execute(parse_sql("ALTER TABLE people DROP COLUMN name"))
+
+    assert write_calls == 0
+
+
+
+def _create_round11_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(["id", "name"])
+    sheet.append([1, "Alice"])
+    sheet.append([2, "Bob"])
+
+    table = workbook.create_sheet("t")
+    table.append(["id", "a", "b", "c"])
+    table.append([1, 10, 0, None])
+    table.append([2, "alice", 0, None])
+
+    workbook.save(path)
+
+def test_update_set_supports_column_arithmetic_cast_and_function(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "round11_update_expressions.xlsx"
+    _create_round11_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("UPDATE t SET b = a WHERE id = 1")
+        cursor.execute("UPDATE t SET b = a + 1 WHERE id = 1")
+        cursor.execute("UPDATE t SET b = CAST(a AS TEXT) WHERE id = 1")
+        cursor.execute("UPDATE t SET c = UPPER(a) WHERE id = 2")
+
+        cursor.execute("SELECT b, c FROM t WHERE id = 1")
+        assert cursor.fetchone() == ("10", None)
+        cursor.execute("SELECT b, c FROM t WHERE id = 2")
+        assert cursor.fetchone() == (0, "ALICE")
+
+
+
+def _create_round12_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "t"
+    sheet.append(["id", "txt", "col"])
+    sheet.append([1, "alpha", 1])
+    sheet.append([2, "beta", 2])
+    sheet.append([3, "gamma", 3])
+    workbook.save(path)
+
+def test_update_where_detection_ignores_where_inside_string_literal(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "round12_update_where_string.xlsx"
+    _create_round12_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE t SET txt = 'value WHERE other' WHERE id = 1")
+        cursor.execute("SELECT txt FROM t WHERE id = 1")
+        assert cursor.fetchone() == ("value WHERE other",)
+
+
+
+def _create_round13_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "t"
+    sheet.append(["a", "b", "val", "grp"])
+    sheet.append([1, 1, 6, "x"])
+    sheet.append([2, 3, 5, "x"])
+    sheet.append([1, 1, 7, "y"])
+    sheet.append([5, 5, 1, "y"])
+    workbook.save(path)
+
+def test_where_column_to_column_comparison_works_on_rhs_identifier(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "round13_where_column_rhs.xlsx"
+    _create_round13_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT a, b FROM t WHERE a = b ORDER BY a")
+        assert cursor.fetchall() == [(1, 1), (1, 1), (5, 5)]
+
+def test_where_reversed_operands_resolve_rhs_identifier_as_column(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "round13_where_reversed_operands.xlsx"
+    _create_round13_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT a FROM t WHERE 1 = a ORDER BY b")
+        assert cursor.fetchall() == [(1,), (1,)]
+
+def test_where_quoted_literal_still_treated_as_literal(tmp_path: Path) -> None:
+    file_path = tmp_path / "round13_where_quoted_literal.xlsx"
+    _create_round13_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT a FROM t WHERE a = 'b'")
+        assert cursor.fetchall() == []
+
+def test_having_aggregate_collected_from_rhs(tmp_path: Path) -> None:
+    file_path = tmp_path / "round13_having_rhs_aggregate.xlsx"
+    _create_round13_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT grp, SUM(val) FROM t GROUP BY grp HAVING 10 < SUM(val) ORDER BY grp"
+        )
+        assert cursor.fetchall() == [("x", 11.0)]
+
+def test_having_aggregate_collection_handles_and_tree(tmp_path: Path) -> None:
+    file_path = tmp_path / "round13_having_and_tree.xlsx"
+    _create_round13_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT grp FROM t GROUP BY grp HAVING SUM(a) > 0 AND COUNT(*) > 1 ORDER BY grp"
+        )
+        assert cursor.fetchall() == [("x",), ("y",)]
+
+def test_having_aggregate_collection_handles_not_wrapper(tmp_path: Path) -> None:
+    file_path = tmp_path / "round13_having_not_wrapper.xlsx"
+    _create_round13_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT grp FROM t GROUP BY grp HAVING NOT (SUM(val) > 10) ORDER BY grp"
+        )
+        assert cursor.fetchall() == [("y",)]
+
+
+
+def _create_r16_workbook(
+    path: Path, sheet: str, headers: list[object], rows: list[list[object]]
+) -> None:
+    workbook = Workbook()
+    worksheet = workbook.active
+    assert worksheet is not None
+    worksheet.title = sheet
+    worksheet.append(headers)
+    for row in rows:
+        worksheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+def test_executor_resolves_unicode_sheet_names_with_casefold(tmp_path: Path) -> None:
+    file_path = tmp_path / "unicode-sheet-casefold.xlsx"
+    _create_r16_workbook(file_path, "Straße", ["id"], [[1]])
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM STRASSE")
+        assert cursor.fetchall() == [(1,)]
+
+
+
+def _create_people_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(["id", "Name", "phrase"])
+    sheet.append([1, "Alice", "Stra\u00dfe"])
+    sheet.append([2, "Bob", "Road"])
+    workbook.save(path)
+    workbook.close()
+
+def test_select_update_insert_column_resolution_is_case_insensitive(
+    tmp_path: Path,
+) -> None:
+    file_path = tmp_path / "column-casefold.xlsx"
+    _create_people_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT name FROM Sheet1 ORDER BY id")
+        assert cursor.fetchall() == [("Alice",), ("Bob",)]
+
+        cursor.execute("UPDATE Sheet1 SET name = 'Carol' WHERE Name = 'Alice'")
+        assert cursor.rowcount == 1
+        cursor.execute("SELECT Name FROM Sheet1 WHERE id = 1")
+        assert cursor.fetchall() == [("Carol",)]
+
+        cursor.execute("INSERT INTO Sheet1 (id, name, phrase) VALUES (3, 'Dana', 'x')")
+        cursor.execute("SELECT Name FROM Sheet1 WHERE id = 3")
+        assert cursor.fetchall() == [("Dana",)]
+
+
+
+@pytest.fixture
+def tmp_xlsx(tmp_path):
+    """Create a minimal xlsx file with a Sheet1 containing headers and one row."""
+    path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name", "score"])
+    ws.append([1, "Alice", 90])
+    ws.append([2, "Bob", 80])
+    ws.append([3, None, 70])  # Row with NULL name
+    wb.save(str(path))
+    wb.close()
+    return str(path)
+
+@pytest.fixture
+def tmp_xlsx_path(tmp_path):
+    """Return a path (but don't create the file) — for testing create=True / missing file."""
+    return str(tmp_path / "missing.xlsx")
+
+class TestAndOrPrecedence:
+    def test_and_binds_tighter_than_or_openpyxl(self, tmp_xlsx):
+        """WHERE a = 1 OR b = 'Bob' AND score = 80 should be a = 1 OR (b = 'Bob' AND score = 80)."""
+        conn = ExcelConnection(tmp_xlsx, engine="openpyxl")
+        cur = conn.cursor()
+        # id=1 (Alice,90), id=2 (Bob,80), id=3 (None,70)
+        # With correct precedence: id=1 OR (name='Bob' AND score=80)
+        # Should match id=1 (Alice) and id=2 (Bob)
+        # With wrong precedence (left-to-right): (id=1 OR name='Bob') AND score=80
+        # Would only match id=2 (Bob)
+        cur.execute("SELECT * FROM Sheet1 WHERE id = 1 OR name = 'Bob' AND score = 80")
+        rows = cur.fetchall()
+        assert len(rows) == 2, (
+            f"Expected 2 rows (AND before OR), got {len(rows)}: {rows}"
+        )
+        conn.close()
+
+    def test_and_binds_tighter_than_or_pandas(self, tmp_xlsx):
+        """Same test for pandas engine."""
+        conn = ExcelConnection(tmp_xlsx, engine="pandas")
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM Sheet1 WHERE id = 1 OR name = 'Bob' AND score = 80")
+        rows = cur.fetchall()
+        assert len(rows) == 2, (
+            f"Expected 2 rows (AND before OR), got {len(rows)}: {rows}"
+        )
+        conn.close()
+
+    def test_all_and_still_works(self, tmp_xlsx):
+        """All AND conditions should still work correctly."""
+        conn = ExcelConnection(tmp_xlsx, engine="openpyxl")
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM Sheet1 WHERE id = 2 AND name = 'Bob' AND score = 80")
+        rows = cur.fetchall()
+        assert len(rows) == 1
+        conn.close()
+
+    def test_all_or_still_works(self, tmp_xlsx):
+        """All OR conditions should still work correctly."""
+        conn = ExcelConnection(tmp_xlsx, engine="openpyxl")
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM Sheet1 WHERE id = 1 OR id = 2 OR id = 3")
+        rows = cur.fetchall()
+        assert len(rows) == 3
+        conn.close()
+
+class TestNullHandling:
+    def test_is_null_openpyxl(self, tmp_xlsx):
+        """IS NULL should match rows where column is None."""
+        conn = ExcelConnection(tmp_xlsx, engine="openpyxl")
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM Sheet1 WHERE name IS NULL")
+        rows = cur.fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == 3  # id=3 has None name
+        conn.close()
+
+    def test_is_not_null_openpyxl(self, tmp_xlsx):
+        """IS NOT NULL should match rows where column is not None."""
+        conn = ExcelConnection(tmp_xlsx, engine="openpyxl")
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM Sheet1 WHERE name IS NOT NULL")
+        rows = cur.fetchall()
+        assert len(rows) == 2
+        conn.close()
+
+    def test_is_null_pandas(self, tmp_xlsx):
+        """IS NULL should work with pandas engine too."""
+        conn = ExcelConnection(tmp_xlsx, engine="pandas")
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM Sheet1 WHERE name IS NULL")
+        rows = cur.fetchall()
+        # pandas reads None from xlsx as NaN, which is also null
+        assert len(rows) == 1
+        conn.close()
+
+    def test_is_not_null_pandas(self, tmp_xlsx):
+        conn = ExcelConnection(tmp_xlsx, engine="pandas")
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM Sheet1 WHERE name IS NOT NULL")
+        rows = cur.fetchall()
+        assert len(rows) == 2
+        conn.close()
+
+    def test_equality_with_null_returns_false(self, tmp_xlsx):
+        """col = NULL should not match anything (SQL semantics)."""
+        conn = ExcelConnection(tmp_xlsx, engine="openpyxl")
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM Sheet1 WHERE name = NULL")
+        rows = cur.fetchall()
+        assert len(rows) == 0, "Equality comparison with NULL should return no rows"
+        conn.close()
+
+    def test_parse_is_null(self):
+
+        parsed = parse_sql("SELECT * FROM Sheet1 WHERE name IS NULL")
+        cond = parsed["where"]["conditions"][0]
+        assert cond["column"] == "name"
+        assert cond["operator"] == "IS"
+        assert cond["value"] is None
+
+    def test_parse_is_not_null(self):
+
+        parsed = parse_sql("SELECT * FROM Sheet1 WHERE name IS NOT NULL")
+        cond = parsed["where"]["conditions"][0]
+        assert cond["column"] == "name"
+        assert cond["operator"] == "IS NOT"
+        assert cond["value"] is None
+
+
+
+def test_pandas_backend_error_paths_and_execute_wrappers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    file_path = tmp_path / "pandas.xlsx"
+    pd.DataFrame([{"id": 1, "name": "Alice"}]).to_excel(
+        file_path, index=False, sheet_name="Sheet1"
+    )
+    backend = PandasBackend(str(file_path), create=False)
+
+    with pytest.raises(DatabaseError, match="not found"):
+        backend.read_sheet("Missing")
+    with pytest.raises(DatabaseError, match="not found"):
+        backend.write_sheet("Missing", TableData(headers=["a"], rows=[]))
+    with pytest.raises(DatabaseError, match="not found"):
+        backend.append_row("Missing", [1])
+    with pytest.raises(DatabaseError, match="already exists"):
+        backend.create_sheet("Sheet1", ["a"])
+    with pytest.raises(DatabaseError, match="not found"):
+        backend.drop_sheet("Missing")
+
+    result1 = backend.execute("SELECT * FROM Sheet1")
+    result2 = backend.execute_with_params("SELECT * FROM Sheet1 WHERE id = ?", (1,))
+    assert result1.rowcount >= 1
+    assert result2.rowcount == 1
+
+    created_temp: dict[str, str] = {}
+
+    def fail_replace(src: str, dst: str) -> None:
+        del dst
+        created_temp["path"] = src
+        raise OSError("forced replace failure")
+
+    monkeypatch.setattr("excel_dbapi.engines.pandas.backend.os.replace", fail_replace)
+    with pytest.raises(OSError, match="forced replace failure"):
+        backend.save()
+    temp_path = Path(created_temp["path"])
+    assert not temp_path.exists()

@@ -1,11 +1,10 @@
 from pathlib import Path
 
-import pytest
-from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
+import pytest
 
 from excel_dbapi.connection import ExcelConnection
-from excel_dbapi.exceptions import ProgrammingError
+from excel_dbapi.exceptions import DatabaseError, ProgrammingError
 from excel_dbapi.parser import parse_sql
 
 
@@ -590,3 +589,35 @@ def test_do_update_bare_identifier_stores_literal(tmp_path: Path) -> None:
     rows = _fetch_rows(file_path, "SELECT id, status FROM items")
     # 'hello' is a bare identifier — treated as string literal per SQL_SPEC.md
     assert rows == [(1, "hello")]
+
+
+
+def _create_round11_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(["id", "name"])
+    sheet.append([1, "Alice"])
+    sheet.append([2, "Bob"])
+
+    table = workbook.create_sheet("t")
+    table.append(["id", "a", "b", "c"])
+    table.append([1, 10, 0, None])
+    table.append([2, "alice", 0, None])
+
+    workbook.save(path)
+
+def test_upsert_update_set_supports_expression_nodes(tmp_path: Path) -> None:
+    file_path = tmp_path / "round11_upsert_expressions.xlsx"
+    _create_round11_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO t (id, a, b, c) VALUES (1, 9, 0, 'incoming') "
+            "ON CONFLICT (id) DO UPDATE SET b = a + 1, c = CAST(excluded.a AS TEXT)"
+        )
+
+        cursor.execute("SELECT a, b, c FROM t WHERE id = 1")
+        assert cursor.fetchone() == (10, 11, "9")

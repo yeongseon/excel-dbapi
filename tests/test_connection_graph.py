@@ -1,14 +1,20 @@
 """Integration tests: ExcelConnection + Graph backend via mock transport."""
-
+from pathlib import Path
+from typing import Any, cast
 import json
-from typing import Any
+import sys
+import types
 
+from openpyxl import Workbook
 import httpx
 import pytest
 
 from excel_dbapi import connect
 from excel_dbapi.connection import ExcelConnection
-from excel_dbapi.exceptions import NotSupportedError
+from excel_dbapi.engines.graph.auth import _has_get_token_with_args, normalize_token_provider
+from excel_dbapi.engines.graph.client import GraphClient
+from excel_dbapi.engines.graph.session import WorkbookSession
+from excel_dbapi.exceptions import Error, NotSupportedError, OperationalError
 
 
 DSN = "msgraph://drives/drv-test/items/itm-test"
@@ -425,3 +431,110 @@ class TestGraphExecutemanySemantics:
                 [(4, "Dan", "HR"), (5, "Eve")],
             )
         conn.close()
+
+
+
+def _create_r16_workbook(
+    path: Path, sheet: str, headers: list[object], rows: list[list[object]]
+) -> None:
+    workbook = Workbook()
+    worksheet = workbook.active
+    assert worksheet is not None
+    worksheet.title = sheet
+    worksheet.append(headers)
+    for row in rows:
+        worksheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+def test_graph_invalid_credential_is_wrapped_as_operational_error() -> None:
+    with pytest.raises(OperationalError, match="Cannot normalise"):
+        connect(
+            "msgraph://drives/d/items/i",
+            engine="graph",
+            credential=cast(Any, 42),
+        )
+
+def test_graph_token_provider_failure_is_translated_during_execute() -> None:
+    class ExplodingTokenProvider:
+        def get_token(self, *args: Any) -> Any:
+            del args
+            raise RuntimeError("token boom")
+
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={}))
+    with ExcelConnection(
+        "msgraph://drives/drv-test/items/itm-test",
+        engine="graph",
+        credential=ExplodingTokenProvider(),
+        transport=transport,
+    ) as conn:
+        cursor = conn.cursor()
+        with pytest.raises(
+            Error, match="Failed to acquire authentication token: token boom"
+        ):
+            cursor.execute("SELECT * FROM Employees")
+
+
+
+def test_graph_client_transport_error_and_session_property() -> None:
+    class BrokenTransport(httpx.BaseTransport):
+        def handle_request(self, request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError("boom", request=request)
+
+    client = GraphClient(normalize_token_provider("tok"), transport=BrokenTransport())
+    assert client.session_id is None
+    client.session_id = "sid"
+    assert client.session_id == "sid"
+    with pytest.raises(OperationalError, match="Graph API request failed"):
+        client.get("/x")
+    client.close()
+
+def test_graph_session_reopen_and_close_swallow_errors() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.session_id: str | None = "sid-1"
+            self.calls = 0
+
+        def post(self, path: str, json: dict[str, Any]) -> Any:
+            self.calls += 1
+            if path.endswith("closeSession"):
+                raise RuntimeError("close fail")
+            return types.SimpleNamespace(json=lambda: {"id": "sid-2"})
+
+    class FakeLocator:
+        item_path = "/drives/d/items/i"
+
+    client = FakeClient()
+    session = WorkbookSession(
+        cast(Any, client), cast(Any, FakeLocator()), persist_changes=False
+    )
+    session._open = True
+    session.reopen()
+    assert session.is_open is True
+    session.close()
+    assert session.is_open is False
+
+def test_graph_auth_additional_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    class BadSignatureObj:
+        def get_token(self) -> str:
+            return "x"
+
+    def explode_signature(obj: Any) -> Any:
+        raise TypeError("no signature")
+
+    monkeypatch.setattr("inspect.signature", explode_signature)
+    assert _has_get_token_with_args(BadSignatureObj()) is False
+
+    module_azure = types.ModuleType("azure")
+    module_identity = types.ModuleType("azure.identity")
+
+    class DefaultAzureCredential:
+        def get_token(self, scope: str) -> Any:
+            return types.SimpleNamespace(token=f"azure:{scope}")
+
+    setattr(module_identity, "DefaultAzureCredential", DefaultAzureCredential)
+    setattr(module_azure, "identity", module_identity)
+    monkeypatch.setitem(sys.modules, "azure", module_azure)
+    monkeypatch.setitem(sys.modules, "azure.identity", module_identity)
+    provider = normalize_token_provider(None)
+    assert provider.get_token().startswith("azure:")

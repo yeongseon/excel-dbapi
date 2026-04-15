@@ -8,12 +8,7 @@ from pathlib import Path
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
-from excel_dbapi.parser import _parse_where_expression
-
-
-# ---------------------------------------------------------------------------
-# Fixture helpers
-# ---------------------------------------------------------------------------
+from excel_dbapi.parser import _is_subquery_condition, _parse_where_expression
 
 
 def _create_basic_workbook(path: Path) -> None:
@@ -709,7 +704,6 @@ class TestNestedSubqueryResolution:
 
     def test_is_subquery_condition_nested(self, tmp_path: Path) -> None:
         """_is_subquery_condition must detect subqueries inside NOT/compound."""
-        from excel_dbapi.parser import _is_subquery_condition
 
         # Flat subquery (already worked before)
         where_flat: dict[str, object] = {
@@ -812,7 +806,6 @@ class TestPrecedenceGroupedNodes:
 
     def test_is_subquery_condition_precedence_group(self) -> None:
         """_is_subquery_condition must detect subqueries in precedence groups (no 'type')."""
-        from excel_dbapi.parser import _is_subquery_condition
 
         # Precedence-grouped: a OR (b_with_subquery AND c)
         where: dict[str, object] = {
@@ -1144,3 +1137,46 @@ class TestLikeNullSemantics:
             cur = conn.cursor()
             cur.execute("SELECT id FROM data WHERE name LIKE ?", [None])
             assert cur.fetchall() == []
+
+
+
+def _create_round12_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "t"
+    sheet.append(["id", "txt", "col"])
+    sheet.append([1, "alpha", 1])
+    sheet.append([2, "beta", 2])
+    sheet.append([3, "gamma", 3])
+    workbook.save(path)
+
+def test_not_in_with_null_candidates_returns_unknown_in_where(tmp_path: Path) -> None:
+    file_path = tmp_path / "round12_not_in_null.xlsx"
+    _create_round12_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM t WHERE col NOT IN (2, NULL) ORDER BY id")
+        assert cursor.fetchall() == []
+
+def test_not_in_unknown_propagates_through_not_and_or(tmp_path: Path) -> None:
+    file_path = tmp_path / "round12_not_in_compound_logic.xlsx"
+    _create_round12_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT id FROM t WHERE NOT (col NOT IN (2, NULL)) ORDER BY id")
+        assert cursor.fetchall() == [(2,)]
+
+        cursor.execute(
+            "SELECT id FROM t "
+            "WHERE NOT ((col NOT IN (2, NULL)) AND col != 3) ORDER BY id"
+        )
+        assert cursor.fetchall() == [(2,), (3,)]
+
+        cursor.execute(
+            "SELECT id FROM t WHERE NOT ((col NOT IN (2, NULL)) OR col = 3) ORDER BY id"
+        )
+        assert cursor.fetchall() == [(2,)]

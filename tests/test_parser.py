@@ -1,6 +1,8 @@
+from openpyxl import Workbook
 import pytest
+
 from excel_dbapi.exceptions import DatabaseError
-from excel_dbapi.parser import parse_sql
+from excel_dbapi.parser import _parse_value, parse_sql
 
 
 def test_parse_valid_sql():
@@ -683,3 +685,61 @@ def test_parse_insert_select_with_columns():
     assert parsed["columns"] == ["id", "name"]
     assert parsed["values"]["type"] == "subquery"
     assert parsed["values"]["query"]["table"] == "Source"
+
+
+
+def test_create_and_alter_share_type_normalization_and_validation() -> None:
+    create_parsed = parse_sql("CREATE TABLE people (id INT, score FLOAT)")
+    assert create_parsed["column_definitions"] == [
+        {"name": "id", "type_name": "INTEGER"},
+        {"name": "score", "type_name": "REAL"},
+    ]
+
+    alter_parsed = parse_sql("ALTER TABLE people ADD COLUMN age INT")
+    assert alter_parsed["type_name"] == "INTEGER"
+
+    with pytest.raises(DatabaseError, match="Unsupported CREATE TABLE column type"):
+        parse_sql("CREATE TABLE bad (payload BLOB)")
+    with pytest.raises(DatabaseError, match="Unsupported ALTER TABLE column type"):
+        parse_sql("ALTER TABLE bad ADD COLUMN payload BLOB")
+
+
+
+@pytest.fixture
+def tmp_xlsx(tmp_path):
+    """Create a minimal xlsx file with a Sheet1 containing headers and one row."""
+    path = tmp_path / "test.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Sheet1"
+    ws.append(["id", "name", "score"])
+    ws.append([1, "Alice", 90])
+    ws.append([2, "Bob", 80])
+    ws.append([3, None, 70])  # Row with NULL name
+    wb.save(str(path))
+    wb.close()
+    return str(path)
+
+@pytest.fixture
+def tmp_xlsx_path(tmp_path):
+    """Return a path (but don't create the file) — for testing create=True / missing file."""
+    return str(tmp_path / "missing.xlsx")
+
+class TestEscapedQuotes:
+    def test_single_quote_escape(self):
+
+        # SQL standard: '' inside single-quoted string = literal '
+        assert _parse_value("'it''s'") == "it's"
+
+    def test_double_quote_escape(self):
+
+        assert _parse_value('"say ""hello"""') == 'say "hello"'
+
+    def test_simple_string_unchanged(self):
+
+        assert _parse_value("'hello'") == "hello"
+
+    def test_empty_string(self):
+
+        assert _parse_value("''") == ""

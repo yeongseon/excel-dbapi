@@ -1,16 +1,21 @@
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import Any
+import inspect
 
+from openpyxl import Workbook
+from tests import test_join_extended, test_parser, test_parser_errors
 import coverage
 import pytest
-from excel_dbapi.exceptions import DatabaseError
 
+from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
+from excel_dbapi.exceptions import DatabaseError
 from excel_dbapi.parser import (
+    _OrderByClause,
     _annotate_column_tables,
     _bind_expression_values,
+    _bind_params,
     _collect_case_tokens_until,
     _collect_qualified_references_from_expression,
     _collect_qualified_references_from_query,
@@ -21,17 +26,24 @@ from excel_dbapi.parser import (
     _find_top_level_keyword_index,
     _is_subquery_condition,
     _parse_case_expression,
+    _parse_case_expression_tokens,
+    _parse_column_expression,
+    _parse_compound,
     _parse_on_conflict_clause,
+    _parse_order_by_clause_tokens,
     _parse_order_by_item_tokens,
     _parse_window_spec_tokens,
     _query_references_name,
     _split_csv,
+    _tokenize,
     _tokenize_expression,
     _validate_join_column_reference,
     _validate_join_on_condition_node,
     _validate_join_where_node,
+    _where_to_sql_for_order_by,
     parse_sql,
 )
+
 
 
 def _exec_line(filename: str, line: int) -> None:
@@ -648,9 +660,8 @@ def test_query_references_name_for_compound_and_non_select() -> None:
 
 
 def test_run_existing_zero_arg_parser_tests() -> None:
-    from tests import test_coverage_boost, test_coverage_boost_targeted, test_parser
 
-    modules = (test_parser, test_coverage_boost, test_coverage_boost_targeted)
+    modules = (test_parser, test_parser_errors, test_join_extended)
     skipped = {
         "test_parser_column_expression_internal_error_paths",
         "test_parser_case_expression_token_errors",
@@ -680,3 +691,255 @@ def test_cover_all_parser_arcs_for_gap_target() -> None:
     )
     analysis = current._analyze(parser_file)  # pyright: ignore[reportPrivateUsage]
     current.get_data().add_arcs({parser_file: set(analysis.arc_possibilities)})
+
+
+
+def _make_join_workbook(path: Path) -> OpenpyxlBackend:
+    workbook = Workbook()
+    left = workbook.active
+    assert left is not None
+    left.title = "t1"
+    left.append(["id", "name", "value"])
+    left.append([1, "A", 10])
+    left.append([2, "B", 20])
+
+    right = workbook.create_sheet("t2")
+    right.append(["id", "label", "score"])
+    right.append([1, "x", 5])
+    right.append([2, "y", 7])
+
+    workbook.save(path)
+    return OpenpyxlBackend(str(path))
+
+def test_parser_order_by_clause_string_index_guards_multiple_items() -> None:
+    clause = _OrderByClause(
+        [
+            {"column": "a", "direction": "ASC"},
+            {"column": "b", "direction": "DESC"},
+        ]
+    )
+    with pytest.raises(TypeError, match="list indices must be integers"):
+        _ = clause["column"]
+
+def test_parser_order_by_clause_string_index_single_item() -> None:
+    clause = _OrderByClause([{"column": "a", "direction": "ASC"}])
+    assert clause["column"] == "a"
+
+def test_parser_invalid_join_keyword_variants() -> None:
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax: RIGHT"):
+        parse_sql("SELECT t1.id FROM t1 RIGHT t2 ON t1.id = t2.id")
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax: FULL"):
+        parse_sql("SELECT t1.id FROM t1 FULL t2 ON t1.id = t2.id")
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax: CROSS"):
+        parse_sql("SELECT t1.id FROM t1 CROSS t2")
+
+def test_parser_invalid_alter_table_variants() -> None:
+    with pytest.raises(DatabaseError, match="Invalid ALTER TABLE format"):
+        parse_sql("ALTER TABLE t1")
+    with pytest.raises(DatabaseError, match="Invalid ALTER TABLE format"):
+        parse_sql("ALTER TABLE t1 DROP x")
+    with pytest.raises(DatabaseError, match="Invalid ALTER TABLE format"):
+        parse_sql("ALTER TABLE t1 RENAME COLUMN a b")
+
+def test_parser_compound_offset_limit_placeholders_missing_params() -> None:
+    with pytest.raises(DatabaseError, match="Not enough parameters for LIMIT placeholder"):
+        parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 LIMIT ?", ())
+    with pytest.raises(DatabaseError, match="Not enough parameters for OFFSET placeholder"):
+        parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 OFFSET ?", ())
+
+def test_parse_compound_rejects_non_select_branch() -> None:
+    with pytest.raises(DatabaseError, match="Compound queries support only SELECT subqueries"):
+        _parse_compound("SELECT id FROM t1 UNION (UPDATE t2 SET id = 1)", None)
+
+def test_parser_column_expression_internal_error_paths() -> None:
+    with pytest.raises(DatabaseError, match="Invalid column expression"):
+        _parse_column_expression("   ")
+    with pytest.raises(DatabaseError, match="aggregate functions are not supported"):
+        _parse_column_expression("COUNT(id)", allow_aggregates=False)
+    with pytest.raises(DatabaseError, match="Unsupported function: COUNT"):
+        _parse_column_expression("COUNT()")
+    with pytest.raises(DatabaseError, match="wildcard is not supported"):
+        _parse_column_expression("*", allow_wildcard=False)
+    with pytest.raises(DatabaseError, match="Unsupported column expression"):
+        _parse_column_expression("(a + 1")
+    with pytest.raises(DatabaseError, match="cannot be used inside arithmetic expressions"):
+        _parse_column_expression("COUNT(id) + 1")
+
+def test_parser_case_expression_token_errors() -> None:
+    with pytest.raises(DatabaseError, match="Invalid CASE expression"):
+        _parse_case_expression_tokens(_tokenize("x"), 0)
+    with pytest.raises(DatabaseError, match="missing WHEN"):
+        _parse_case_expression_tokens(_tokenize("CASE ELSE 1 END"), 0)
+    with pytest.raises(DatabaseError, match="THEN requires a result"):
+        _parse_case_expression_tokens(_tokenize("CASE WHEN a = 1 THEN END"), 0)
+    with pytest.raises(DatabaseError, match="ELSE requires a result"):
+        _parse_case_expression_tokens(_tokenize("CASE WHEN a = 1 THEN 1 ELSE END"), 0)
+    with pytest.raises(DatabaseError, match="missing END"):
+        _parse_case_expression_tokens(_tokenize("CASE WHEN a = 1 THEN 1"), 0)
+
+def test_parser_order_by_internal_sql_rendering_branches() -> None:
+    where_compound = {
+        "type": "compound",
+        "conditions": [
+            "a.id = 1",
+            {
+                "column": "a.id",
+                "operator": "NOT IN",
+                "value": [{"type": "literal", "value": "x"}],
+            },
+        ],
+        "conjunctions": ["OR"],
+    }
+    where_not = {
+        "type": "not",
+        "operand": {"column": "a.id", "operator": "BETWEEN", "value": [1, 2]},
+    }
+    where_not_bad = {"type": "not", "operand": "oops"}
+    assert _where_to_sql_for_order_by(where_compound).startswith("(")
+    assert _where_to_sql_for_order_by(where_not).startswith("NOT")
+    assert _where_to_sql_for_order_by(where_not_bad) == "NOT"
+    assert "BETWEEN" in _where_to_sql_for_order_by(
+        {"column": "a.id", "operator": "BETWEEN", "value": [1]}
+    )
+    assert "IN" in _where_to_sql_for_order_by(
+        {"column": "a.id", "operator": "IN", "value": 3}
+    )
+
+    expr = {
+        "type": "case",
+        "mode": "searched",
+        "whens": [
+            "skip",
+            {
+                "condition": {"column": "a.id", "operator": "=", "value": 1},
+                "result": {"type": "literal", "value": "one"},
+            },
+        ],
+        "else": {"type": "literal", "value": "other"},
+    }
+    assert "CASE" in _expression_to_sql_for_order_by(expr)
+
+def test_parser_order_by_item_and_clause_validation_paths() -> None:
+    with pytest.raises(DatabaseError, match="Invalid ORDER BY direction"):
+        _parse_order_by_item_tokens(_tokenize("CASE WHEN a = 1 THEN 1 END SIDEWAYS"))
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax"):
+        _parse_order_by_item_tokens(_tokenize("CASE WHEN a = 1 THEN 1 END ASC EXTRA"))
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax"):
+        _parse_order_by_item_tokens(["a", "ASC", "EXTRA"])
+    with pytest.raises(DatabaseError, match="Invalid ORDER BY clause format"):
+        _parse_order_by_clause_tokens([])
+    parsed = _parse_order_by_clause_tokens(_tokenize("a DESC, b ASC"))
+    assert parsed[0]["column"] == "a"
+    assert parsed[1]["column"] == "b"
+
+def test_parser_select_clause_format_errors() -> None:
+    with pytest.raises(DatabaseError, match="Invalid SQL query format"):
+        parse_sql("SELECT FROM t1")
+    with pytest.raises(DatabaseError, match="Expected alias after AS"):
+        parse_sql("SELECT id FROM t1 AS")
+
+def test_parser_tokenize_expression_and_case_collection_edges() -> None:
+    tokens = _tokenize_expression("'it''s' + \"a\"\"b\" + (x)")
+    assert "'it''s'" in tokens
+    assert '"a""b"' in tokens
+
+    collected, index, stop = _collect_case_tokens_until(
+        _tokenize("CASE WHEN (a = 1) THEN 'x' END"),
+        1,
+        {"THEN"},
+    )
+    assert stop == "THEN"
+    assert index > 1
+    assert collected
+
+def test_parser_expression_binding_case_paths() -> None:
+    expression = {
+        "type": "alias",
+        "alias": "expr",
+        "expression": {
+            "type": "case",
+            "mode": "simple",
+            "value": {"type": "literal", "value": "?"},
+            "whens": [
+                "skip",
+                {
+                    "match": {"type": "literal", "value": "?"},
+                    "result": {
+                        "type": "binary_op",
+                        "op": "+",
+                        "left": {"type": "literal", "value": "?"},
+                        "right": {"type": "literal", "value": 1},
+                    },
+                },
+            ],
+            "else": {
+                "type": "unary_op",
+                "op": "-",
+                "operand": {"type": "literal", "value": "?"},
+            },
+        },
+    }
+    values = _expression_values_to_bind(expression)
+    assert values == ["?", "?", "?", 1, "?"]
+    consumed = _bind_expression_values(expression, [10, 20, 30, 40, 50], 0)
+    assert consumed == 5
+
+def test_parser_bind_params_too_many_values() -> None:
+    with pytest.raises(DatabaseError, match="Too many parameters for placeholders"):
+        _bind_params([1], (9,))
+
+def test_parser_insert_multi_row_scanner_edges() -> None:
+    parsed = parse_sql("INSERT INTO t VALUES ((1)), (2)")
+    assert parsed["values"] == [["(1)"], [2]]
+
+    with pytest.raises(DatabaseError, match="Invalid INSERT format"):
+        parse_sql("INSERT INTO t VALUES (1, 'x)")
+
+    with pytest.raises(DatabaseError, match="Too many parameters for placeholders"):
+        parse_sql("INSERT INTO t VALUES (?, ?), (?, ?)", (1, 2, 3, 4, 5))
+
+def test_parser_alter_valid_paths_and_compound_parenthesized_branches() -> None:
+    assert parse_sql("ALTER TABLE t ADD COLUMN c FLOAT")["type_name"] == "REAL"
+    assert parse_sql("ALTER TABLE t DROP COLUMN c")["operation"] == "DROP_COLUMN"
+    assert (
+        parse_sql("ALTER TABLE t RENAME COLUMN c TO d")["operation"] == "RENAME_COLUMN"
+    )
+
+    compound = parse_sql(
+        "(SELECT id FROM t1) UNION (SELECT id FROM t2 ORDER BY id DESC LIMIT 2 OFFSET 1)"
+    )
+    assert compound["action"] == "COMPOUND"
+
+def test_parser_compound_trailing_clause_validation_errors() -> None:
+    with pytest.raises(DatabaseError, match="Invalid LIMIT clause format"):
+        parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 LIMIT")
+    with pytest.raises(DatabaseError, match="Invalid OFFSET clause format"):
+        parse_sql("SELECT id FROM t1 UNION SELECT id FROM t2 OFFSET")
+
+    parsed = parse_sql(
+        "SELECT id FROM t1 UNION SELECT id FROM t2 LIMIT ? OFFSET ?", (2, 1)
+    )
+    assert parsed["limit"] == 2
+    assert parsed["offset"] == 1
+
+def test_parser_compound_internal_malformed_shapes() -> None:
+    assert _parse_compound("   ", None) is None
+    assert _parse_compound("UPDATE t SET x = 1", None) is None
+
+    with pytest.raises(DatabaseError, match="Invalid SQL query format"):
+        _parse_compound("SELECT id FROM t1 UNION SELECT id ORDER BY id", None)
+
+    with pytest.raises(DatabaseError, match="LIMIT must be an integer"):
+        _parse_compound("SELECT id FROM t1 UNION SELECT id FROM t2 LIMIT 1 EXTRA", None)
+
+    with pytest.raises(DatabaseError, match="Invalid SQL query format"):
+        _parse_compound("SELECT id FROM t1 UNION SELECT id FROM t2 )", None)
+    with pytest.raises(DatabaseError, match="Invalid SQL query format"):
+        _parse_compound("SELECT id FROM t1 UNION UNION SELECT id FROM t2", None)
+    with pytest.raises(DatabaseError, match="Invalid SQL query format"):
+        _parse_compound("SELECT id FROM t1 UNION (SELECT id FROM t2", None)
+    with pytest.raises(DatabaseError, match="Invalid SQL query format"):
+        _parse_compound("SELECT id FROM t1 UNION", None)
+
+    with pytest.raises(DatabaseError, match="Unsupported SQL action"):
+        parse_sql("(SELECT id FROM t1)")

@@ -1,10 +1,11 @@
 from pathlib import Path
 
-import pytest
 from openpyxl import Workbook
+import pytest
 
 from excel_dbapi.connection import ExcelConnection
 from excel_dbapi.exceptions import ProgrammingError
+from excel_dbapi.parser import parse_sql
 
 
 def _create_join_workbook(path: Path) -> None:
@@ -894,3 +895,54 @@ def test_join_on_mixed_and_or_with_parentheses(tmp_path: Path) -> None:
         "SELECT a.id, b.id FROM a JOIN b ON (a.id = b.id AND a.x > b.y) OR a.name = b.name ORDER BY a.id, b.id",
     )
     assert rows == [(1, 1), (3, 4)]
+
+
+
+def test_join_with_having_supported() -> None:
+    parsed = parse_sql(
+        "SELECT a.id, COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id GROUP BY a.id HAVING COUNT(*) > 1"
+    )
+    assert parsed["having"] is not None
+
+def test_right_join_accepted() -> None:
+    parsed = parse_sql("SELECT a.id FROM t1 a RIGHT JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"] is not None
+    assert parsed["joins"][0]["type"] == "RIGHT"
+
+def test_join_aggregate_supported() -> None:
+    parsed = parse_sql("SELECT COUNT(*) FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"] is not None
+
+def test_join_with_distinct_supported() -> None:
+    parsed = parse_sql("SELECT DISTINCT a.id FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["distinct"] is True
+
+def test_join_with_select_star_allowed() -> None:
+    parsed = parse_sql("SELECT * FROM t1 a JOIN t2 b ON a.id = b.id")
+    assert parsed["columns"] == ["*"]
+
+def test_full_outer_join_accepted() -> None:
+    parsed = parse_sql("SELECT a.id FROM t1 a FULL OUTER JOIN t2 b ON a.id = b.id")
+    assert parsed["joins"] is not None
+    assert parsed["joins"][0]["type"] == "FULL"
+
+def test_join_on_comparison_non_equality() -> None:
+    """JOIN ON supports non-equality comparisons."""
+    parsed = parse_sql("SELECT a.id FROM t1 a JOIN t2 b ON a.id > b.id")
+    cond = parsed["joins"][0]["on"]["conditions"][0]
+    assert cond["operator"] == ">"
+
+def test_cross_join_accepted() -> None:
+    parsed = parse_sql("SELECT a.id FROM t1 a CROSS JOIN t2 b")
+    assert parsed["joins"] is not None
+    assert parsed["joins"][0]["type"] == "CROSS"
+    assert parsed["joins"][0]["on"] is None
+
+def test_join_with_subquery_where_rejected() -> None:
+    parsed = parse_sql(
+        "SELECT a.id FROM t1 a JOIN t2 b ON a.id = b.id WHERE a.id IN (SELECT id FROM t3)"
+    )
+    assert parsed["joins"] is not None
+    where_cond = parsed["where"]["conditions"][0]
+    assert where_cond["operator"] == "IN"
+    assert where_cond["value"]["type"] == "subquery"

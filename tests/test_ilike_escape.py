@@ -1,7 +1,11 @@
+from pathlib import Path
 from typing import Any
 
-from excel_dbapi.executor import SharedExecutor
+from openpyxl import Workbook
+
+from excel_dbapi.connection import ExcelConnection
 from excel_dbapi.engines.base import TableData, WorkbookBackend
+from excel_dbapi.executor import SharedExecutor
 from excel_dbapi.parser import parse_sql
 
 
@@ -117,3 +121,25 @@ def test_escape_percent_and_underscore() -> None:
         {"tag": "a_b"},
         {"column": "tag", "operator": "LIKE", "value": "a!_b", "escape": "!"},
     )
+
+
+
+def _create_people_workbook(path: Path) -> None:
+    workbook = Workbook()
+    sheet = workbook.active
+    assert sheet is not None
+    sheet.title = "Sheet1"
+    sheet.append(["id", "Name", "phrase"])
+    sheet.append([1, "Alice", "Stra\u00dfe"])
+    sheet.append([2, "Bob", "Road"])
+    workbook.save(path)
+    workbook.close()
+
+def test_ilike_uses_unicode_casefold(tmp_path: Path) -> None:
+    file_path = tmp_path / "unicode-ilike.xlsx"
+    _create_people_workbook(file_path)
+
+    with ExcelConnection(str(file_path), engine="openpyxl", autocommit=True) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT phrase FROM Sheet1 WHERE phrase ILIKE '%STRASSE%'")
+        assert cursor.fetchall() == [("Stra\u00dfe",)]
