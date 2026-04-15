@@ -22,6 +22,7 @@ from .engines.registry import get_engine, resolve_engine_from_dsn
 from .executor import SharedExecutor
 from .engines.result import ExecutionResult
 from .exceptions import (
+    BackendOperationError,
     DatabaseError,
     Error,
     InterfaceError,
@@ -76,7 +77,7 @@ def _resolve_engine_and_location(file_path: str, engine: str | None) -> tuple[st
     if engine is None:
         engine = dsn_engine or "openpyxl"
     elif dsn_engine and engine != dsn_engine:
-        raise ValueError(f"Engine mismatch: DSN implies {dsn_engine!r}, got {engine!r}")
+        raise BackendOperationError(f"Engine mismatch: DSN implies {dsn_engine!r}, got {engine!r}")
     if dsn_engine:
         return engine, file_path  # Don't Path.resolve() URLs/DSNs
     return engine, str(Path(file_path).expanduser().resolve())

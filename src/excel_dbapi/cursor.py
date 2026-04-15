@@ -46,13 +46,11 @@ def check_closed(
     return cast(Callable[Concatenate["ExcelCursor", P], R], wrapper)
 
 def _map_exception(exc: Exception) -> DatabaseError:
-    """Map a non-DB-API exception to the appropriate DB-API exception type."""
-    if isinstance(exc, ValueError):
+    """Map unexpected non-DB-API exceptions to DB-API exception types."""
+    if isinstance(exc, (KeyError, TypeError, IndexError)):
         return ProgrammingError(str(exc))
     if isinstance(exc, NotImplementedError):
         return NotSupportedError(str(exc))
-    if isinstance(exc, (KeyError, TypeError, IndexError)):
-        return ProgrammingError(str(exc))
     if isinstance(exc, OSError):
         return OperationalError(str(exc))
     return DatabaseError(str(exc))

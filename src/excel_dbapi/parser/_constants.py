@@ -1,5 +1,7 @@
 from typing import Any, SupportsIndex
 
+from ..exceptions import SqlSemanticError
+
 
 class _QuotedString(str):
     pass
@@ -38,7 +40,7 @@ _SUPPORTED_COLUMN_TYPES = {"TEXT", "INTEGER", "REAL", "BOOLEAN", "DATE", "DATETI
 def _normalize_column_type(type_name: str, *, context: str) -> str:
     normalized = _COLUMN_TYPE_ALIASES.get(type_name.upper(), type_name.upper())
     if normalized not in _SUPPORTED_COLUMN_TYPES:
-        raise ValueError(f"Unsupported {context} column type: {type_name}")
+        raise SqlSemanticError(f"Unsupported {context} column type: {type_name}")
     return normalized
 
 

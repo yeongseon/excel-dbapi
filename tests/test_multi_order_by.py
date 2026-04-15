@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
@@ -61,12 +62,12 @@ def test_parser_order_by_second_column_defaults_asc() -> None:
 
 
 def test_parser_order_by_empty_clause_raises() -> None:
-    with pytest.raises(ValueError, match="Invalid ORDER BY clause format"):
+    with pytest.raises(DatabaseError, match="Invalid ORDER BY clause format"):
         parse_sql("SELECT * FROM users ORDER BY")
 
 
 def test_parser_order_by_invalid_direction_raises() -> None:
-    with pytest.raises(ValueError, match="Invalid ORDER BY direction"):
+    with pytest.raises(DatabaseError, match="Invalid ORDER BY direction"):
         parse_sql("SELECT * FROM users ORDER BY name SIDEWAYS")
 
 
@@ -201,7 +202,7 @@ def test_executor_unknown_column_in_second_order_position_raises(
 ) -> None:
     engine = OpenpyxlBackend(multi_order_xlsx)
     parsed = parse_sql("SELECT name, age FROM users ORDER BY age ASC, missing DESC")
-    with pytest.raises(ValueError, match="Unknown column: missing"):
+    with pytest.raises(DatabaseError, match="Unknown column: missing"):
         SharedExecutor(engine).execute(parsed)
 
 

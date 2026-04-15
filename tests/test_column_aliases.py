@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
@@ -75,12 +76,12 @@ def test_parse_select_with_implicit_alias() -> None:
 
 
 def test_parse_rejects_alias_on_wildcard() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("SELECT * AS x FROM users")
 
 
 def test_parse_rejects_reserved_alias() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("SELECT name AS FROM users")
 
 

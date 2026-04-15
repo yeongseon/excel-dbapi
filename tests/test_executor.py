@@ -2,6 +2,7 @@ import datetime
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
@@ -178,10 +179,7 @@ def test_executor_distinct_rejects_order_by_non_selected_column(tmp_path: Path):
 
     engine = OpenpyxlBackend(str(file_path))
     parsed = parse_sql("SELECT DISTINCT name FROM Sheet1 ORDER BY id ASC")
-    with pytest.raises(
-        ValueError,
-        match="ORDER BY columns must appear in SELECT list when using DISTINCT",
-    ):
+    with pytest.raises(DatabaseError, match="ORDER BY columns must appear in SELECT list when using DISTINCT",):
         SharedExecutor(engine).execute(parsed)
 
 
@@ -352,10 +350,7 @@ def test_having_rejects_non_grouped_column(tmp_path: Path):
     engine = OpenpyxlBackend(str(file_path))
     parsed = parse_sql("SELECT COUNT(*) FROM users GROUP BY name HAVING age > 30")
 
-    with pytest.raises(
-        ValueError,
-        match="in HAVING must be a GROUP BY column or aggregate function",
-    ):
+    with pytest.raises(DatabaseError, match="in HAVING must be a GROUP BY column or aggregate function",):
         SharedExecutor(engine).execute(parsed)
 
 
@@ -377,9 +372,7 @@ def test_having_rejects_aggregate_with_expression_arg(tmp_path: Path):
     engine = OpenpyxlBackend(str(file_path))
     parsed = parse_sql("SELECT COUNT(*) FROM users GROUP BY name HAVING SUM(age+1) > 1")
 
-    with pytest.raises(
-        ValueError, match="must be a GROUP BY column or aggregate function"
-    ):
+    with pytest.raises(DatabaseError, match="must be a GROUP BY column or aggregate function"):
         SharedExecutor(engine).execute(parsed)
 
 
@@ -388,7 +381,7 @@ def test_order_by_rejects_aggregate_with_expression_arg(tmp_path: Path):
     _create_users_workbook(file_path)
 
     engine = OpenpyxlBackend(str(file_path))
-    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+    with pytest.raises(DatabaseError, match="Unsupported aggregate expression"):
         parsed = parse_sql(
             "SELECT name, COUNT(*) FROM users GROUP BY name ORDER BY SUM(age+1)"
         )
@@ -609,7 +602,7 @@ def test_executor_join_missing_right_sheet(tmp_path: Path):
     parsed = parse_sql(
         "SELECT a.id, b.id FROM users a INNER JOIN nonexistent b ON a.id = b.id"
     )
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         SharedExecutor(engine).execute(parsed)
 
 
@@ -715,7 +708,7 @@ def test_executor_join_unknown_select_column(tmp_path: Path):
     parsed = parse_sql(
         "SELECT a.nonexistent FROM users a INNER JOIN admins b ON a.id = b.id"
     )
-    with pytest.raises(ValueError, match="Unknown column"):
+    with pytest.raises(DatabaseError, match="Unknown column"):
         SharedExecutor(engine).execute(parsed)
 
 
@@ -738,7 +731,7 @@ def test_executor_join_unknown_on_column(tmp_path: Path):
     parsed = parse_sql(
         "SELECT a.id, b.id FROM users a INNER JOIN admins b ON a.id = b.nonexistent"
     )
-    with pytest.raises(ValueError, match="Unknown column"):
+    with pytest.raises(DatabaseError, match="Unknown column"):
         SharedExecutor(engine).execute(parsed)
 
 

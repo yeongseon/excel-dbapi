@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -218,12 +219,12 @@ def test_case_in_complex_arithmetic(tmp_path: Path) -> None:
 
 
 def test_case_parser_error_missing_end() -> None:
-    with pytest.raises(ValueError, match="missing END"):
+    with pytest.raises(DatabaseError, match="missing END"):
         parse_sql("SELECT CASE WHEN x = 1 THEN 2 FROM t")
 
 
 def test_case_parser_error_missing_when() -> None:
-    with pytest.raises(ValueError, match="missing WHEN"):
+    with pytest.raises(DatabaseError, match="missing WHEN"):
         parse_sql("SELECT CASE THEN 1 END FROM t")
 
 

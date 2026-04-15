@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from typing import Any
 
 from excel_dbapi.parser import parse_sql
@@ -53,17 +54,17 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
 
 
 INVALID_CASES: list[tuple[str, type[Exception], str]] = [
-    ("UPDATE SET a = 1", ValueError, "Invalid UPDATE format"),
-    ("UPDATE Users a = 1", ValueError, "Invalid UPDATE format"),
-    ("UPDATE Users SET a", ValueError, "Invalid UPDATE format"),
+    ("UPDATE SET a = 1", DatabaseError, "Invalid UPDATE format"),
+    ("UPDATE Users a = 1", DatabaseError, "Invalid UPDATE format"),
+    ("UPDATE Users SET a", DatabaseError, "Invalid UPDATE format"),
     (
         "UPDATE Users SET a = ? WHERE b = ?",
-        ValueError,
+        DatabaseError,
         "Missing parameters for placeholders",
     ),
     (
         "UPDATE Users SET a = ? WHERE b = ?",
-        ValueError,
+        DatabaseError,
         "Not enough parameters for placeholders",
     ),
 ]

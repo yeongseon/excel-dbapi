@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
+from ..exceptions import SqlParseError
 from ._constants import _normalize_column_type
 from .tokenizer import (
     _parse_column_identifier,
@@ -14,21 +15,21 @@ from .tokenizer import (
 def _parse_create(query: str) -> Dict[str, Any]:
     tokens = _tokenize(query.strip())
     if len(tokens) < 3 or tokens[0].upper() != "CREATE" or tokens[1].upper() != "TABLE":
-        raise ValueError(f"Invalid CREATE TABLE format: {query}")
+        raise SqlParseError(f"Invalid CREATE TABLE format: {query}")
     table_and_cols = " ".join(tokens[2:]).strip()
     if "(" not in table_and_cols or not table_and_cols.endswith(")"):
-        raise ValueError(f"Invalid CREATE TABLE format: {query}")
+        raise SqlParseError(f"Invalid CREATE TABLE format: {query}")
     table_name, cols_part = table_and_cols.split("(", 1)
     table = _parse_table_identifier(table_name)
     if not table:
-        raise ValueError("Table name is required in CREATE TABLE")
+        raise SqlParseError("Table name is required in CREATE TABLE")
     cols_part = cols_part.rsplit(")", 1)[0]
     raw_columns = _split_csv_preserve_empty(cols_part)
     empty_indexes = [
         index for index, definition in enumerate(raw_columns) if not definition.strip()
     ]
     if empty_indexes:
-        raise ValueError("Malformed column definitions: empty column definition found")
+        raise SqlParseError("Malformed column definitions: empty column definition found")
     columns = []
     column_definitions = []
     for col in raw_columns:
@@ -47,7 +48,7 @@ def _parse_create(query: str) -> Dict[str, Any]:
                     break
                 idx += 1
             if idx >= len(stripped_col) or stripped_col[idx] != '"':
-                raise ValueError(f"Malformed column definition: {stripped_col!r}")
+                raise SqlParseError(f"Malformed column definition: {stripped_col!r}")
             raw_name = stripped_col[: idx + 1]
             remainder = stripped_col[idx + 1 :].strip()
         else:
@@ -59,15 +60,13 @@ def _parse_create(query: str) -> Dict[str, Any]:
         if remainder:
             # remainder should be a single type token
             if " " in remainder:
-                raise ValueError(
-                    "Malformed column definition: "
-                    f"{stripped_col!r}. Missing comma between column definitions?"
-                )
+                raise SqlParseError("Malformed column definition: "
+                f"{stripped_col!r}. Missing comma between column definitions?")
             type_name = _normalize_column_type(remainder, context="CREATE TABLE")
         columns.append(column_name)
         column_definitions.append({"name": column_name, "type_name": type_name})
     if not columns:
-        raise ValueError(f"Invalid CREATE TABLE format: {query}")
+        raise SqlParseError(f"Invalid CREATE TABLE format: {query}")
     return {
         "action": "CREATE",
         "table": table,
@@ -79,7 +78,7 @@ def _parse_create(query: str) -> Dict[str, Any]:
 def _parse_drop(query: str) -> Dict[str, Any]:
     tokens = _tokenize(query.strip())
     if len(tokens) != 3 or tokens[0].upper() != "DROP" or tokens[1].upper() != "TABLE":
-        raise ValueError(f"Invalid DROP TABLE format: {query}")
+        raise SqlParseError(f"Invalid DROP TABLE format: {query}")
     return {
         "action": "DROP",
         "table": _parse_table_identifier(tokens[2]),
@@ -89,14 +88,14 @@ def _parse_drop(query: str) -> Dict[str, Any]:
 def _parse_alter(query: str) -> Dict[str, Any]:
     tokens = _tokenize(query.strip())
     if len(tokens) < 6 or tokens[0].upper() != "ALTER" or tokens[1].upper() != "TABLE":
-        raise ValueError(f"Invalid ALTER TABLE format: {query}")
+        raise SqlParseError(f"Invalid ALTER TABLE format: {query}")
 
     table = _parse_table_identifier(tokens[2])
     operation = tokens[3].upper()
 
     if operation == "ADD":
         if len(tokens) != 7 or tokens[4].upper() != "COLUMN":
-            raise ValueError(f"Invalid ALTER TABLE format: {query}")
+            raise SqlParseError(f"Invalid ALTER TABLE format: {query}")
         type_name = _normalize_column_type(tokens[6], context="ALTER TABLE")
         return {
             "action": "ALTER",
@@ -108,7 +107,7 @@ def _parse_alter(query: str) -> Dict[str, Any]:
 
     if operation == "DROP":
         if len(tokens) != 6 or tokens[4].upper() != "COLUMN":
-            raise ValueError(f"Invalid ALTER TABLE format: {query}")
+            raise SqlParseError(f"Invalid ALTER TABLE format: {query}")
         return {
             "action": "ALTER",
             "table": table,
@@ -122,7 +121,7 @@ def _parse_alter(query: str) -> Dict[str, Any]:
             or tokens[4].upper() != "COLUMN"
             or tokens[6].upper() != "TO"
         ):
-            raise ValueError(f"Invalid ALTER TABLE format: {query}")
+            raise SqlParseError(f"Invalid ALTER TABLE format: {query}")
         return {
             "action": "ALTER",
             "table": table,
@@ -131,4 +130,4 @@ def _parse_alter(query: str) -> Dict[str, Any]:
             "new_column": _parse_column_identifier(tokens[7]),
         }
 
-    raise ValueError(f"Invalid ALTER TABLE format: {query}")
+    raise SqlParseError(f"Invalid ALTER TABLE format: {query}")

@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 import httpx
 
-from ...exceptions import NotSupportedError, OperationalError
+from ...exceptions import BackendOperationError, NotSupportedError, OperationalError
 from ..base import TableData, WorkbookBackend, _normalize_headers
 from .auth import TokenProvider, normalize_token_provider
 from .client import GraphClient
@@ -29,7 +29,7 @@ def _col_letter(index: int) -> str:
         ValueError: If *index* is negative.
     """
     if index < 0:
-        raise ValueError(f"Column index must be non-negative, got {index}")
+        raise BackendOperationError(f"Column index must be non-negative, got {index}")
     result = ""
     n = index
     while True:
@@ -107,10 +107,8 @@ class GraphBackend(WorkbookBackend):
 
         if conflict_strategy not in self._CONFLICT_STRATEGIES:
             allowed = ", ".join(sorted(self._CONFLICT_STRATEGIES))
-            raise ValueError(
-                f"Invalid conflict_strategy {conflict_strategy!r}. "
-                f"Expected one of: {allowed}"
-            )
+            raise BackendOperationError(f"Invalid conflict_strategy {conflict_strategy!r}. "
+            f"Expected one of: {allowed}")
         self._conflict_strategy = conflict_strategy
         self._etag: str | None = None
 
@@ -167,7 +165,7 @@ class GraphBackend(WorkbookBackend):
         self._load_sheets()
         ws_id = self._sheet_ids.get(sheet_name)
         if ws_id is None:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
 
         path = (
             f"{self._locator.item_path}/workbook"
@@ -198,7 +196,7 @@ class GraphBackend(WorkbookBackend):
         self._load_sheets()
         ws_id = self._sheet_ids.get(sheet_name)
         if ws_id is None:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
 
         # Read old used range to know both old row count and column width
         old_values = self._read_used_range(ws_id)
@@ -401,7 +399,7 @@ class GraphBackend(WorkbookBackend):
         self._load_sheets()
         ws_id = self._sheet_ids.get(sheet_name)
         if ws_id is None:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
 
         # Single read to get both row count and header width
         values = self._read_used_range(ws_id)
@@ -461,7 +459,7 @@ class GraphBackend(WorkbookBackend):
         self._load_sheets()
         ws_id = self._sheet_ids.get(name)
         if ws_id is None:
-            raise ValueError(f"Sheet '{name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{name}' not found in Excel")
 
         delete_path = f"{self._locator.item_path}/workbook/worksheets/{_encode_path_segment(ws_id)}"
         self._session_aware_request("DELETE", delete_path)

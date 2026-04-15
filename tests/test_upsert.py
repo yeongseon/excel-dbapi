@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -76,7 +77,7 @@ def test_parser_on_conflict_do_update() -> None:
     ],
 )
 def test_parser_on_conflict_invalid(sql: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql(sql)
 
 

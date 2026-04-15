@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from typing import Any
 
 from excel_dbapi.parser import parse_sql
@@ -95,34 +96,34 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
 
 
 INVALID_CASES: list[tuple[str, type[Exception], str]] = [
-    ("INSERT Users VALUES (1)", ValueError, "Invalid INSERT format"),
-    ("INSERT INTO Users (id)", ValueError, "Invalid INSERT format"),
+    ("INSERT Users VALUES (1)", DatabaseError, "Invalid INSERT format"),
+    ("INSERT INTO Users (id)", DatabaseError, "Invalid INSERT format"),
     (
         "INSERT INTO Users (, ) VALUES (1)",
-        ValueError,
+        DatabaseError,
         "Invalid column list",
     ),
     (
         "INSERT INTO Users (id, name) VALUES (?, ?)",
-        ValueError,
+        DatabaseError,
         "Missing parameters for placeholders",
     ),
     (
         "INSERT INTO Users (id) VALUES (?)",
-        ValueError,
+        DatabaseError,
         "Not enough parameters for placeholders",
     ),
     (
         "INSERT INTO Users (id) VALUES (1)",
-        ValueError,
+        DatabaseError,
         "Too many parameters for placeholders",
     ),
     # INSERT without VALUES or SELECT
-    ("INSERT INTO Users", ValueError, "Invalid INSERT format"),
+    ("INSERT INTO Users", DatabaseError, "Invalid INSERT format"),
     # VALUES with no tuples
-    ("INSERT INTO Users VALUES", ValueError, "Invalid INSERT format"),
+    ("INSERT INTO Users VALUES", DatabaseError, "Invalid INSERT format"),
     # Unclosed tuple
-    ("INSERT INTO Users VALUES (1, 'Alice'", ValueError, "Invalid INSERT format"),
+    ("INSERT INTO Users VALUES (1, 'Alice'", DatabaseError, "Invalid INSERT format"),
 ]
 
 

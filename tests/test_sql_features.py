@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook, load_workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -22,15 +23,15 @@ def _create_feature_workbook(path: Path) -> None:
 
 
 def test_param_binding_count_mismatch() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("INSERT INTO Sheet1 (id, name) VALUES (?, ?)")
 
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("INSERT INTO Sheet1 (id, name) VALUES (1, 2)", (1, 2, 3))
 
 
 def test_limit_requires_integer() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("SELECT * FROM Sheet1 LIMIT 'A'")
 
 

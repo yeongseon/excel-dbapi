@@ -38,6 +38,22 @@ class NotSupportedError(DatabaseError):
     """Raised when a requested operation is not supported."""
 
 
+class SqlParseError(ProgrammingError):
+    """SQL syntax error detected during parsing."""
+
+
+class SqlSemanticError(ProgrammingError):
+    """Valid SQL syntax but invalid semantics (e.g. unknown column, type mismatch)."""
+
+
+class BackendOperationError(OperationalError):
+    """Backend I/O or workbook operation failure."""
+
+
+class CapabilityError(NotSupportedError):
+    """Requested operation not supported by the current backend."""
+
+
 __all__ = [
     "Error",
     "Warning",
@@ -49,4 +65,8 @@ __all__ = [
     "InternalError",
     "ProgrammingError",
     "NotSupportedError",
+    "SqlParseError",
+    "SqlSemanticError",
+    "BackendOperationError",
+    "CapabilityError",
 ]

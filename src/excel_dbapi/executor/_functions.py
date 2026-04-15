@@ -2,6 +2,8 @@ from datetime import date, datetime, time
 import re
 from typing import Any, Callable, Protocol
 
+from ..exceptions import SqlSemanticError
+
 _READONLY_ACTIONS = frozenset({"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"})
 
 
@@ -18,7 +20,7 @@ def _build_like_regex(pattern: str, escape_char: str | None) -> str:
         if escape_char is not None and char == escape_char:
             index += 1
             if index >= len(pattern):
-                raise ValueError("Invalid LIKE pattern: trailing ESCAPE character")
+                raise SqlSemanticError("Invalid LIKE pattern: trailing ESCAPE character")
             parts.append(re.escape(pattern[index]))
         elif char == "%":
             parts.append(".*")
@@ -69,7 +71,7 @@ def _length(args: list[Any]) -> Any:
 
 def _to_int_like(value: Any) -> int:
     if isinstance(value, bool):
-        raise ValueError("expected numeric value")
+        raise SqlSemanticError("expected numeric value")
     if isinstance(value, int):
         return value
     if isinstance(value, float):
@@ -77,9 +79,9 @@ def _to_int_like(value: Any) -> int:
     if isinstance(value, str):
         text = value.strip()
         if not text:
-            raise ValueError("expected numeric value")
+            raise SqlSemanticError("expected numeric value")
         return int(float(text))
-    raise ValueError("expected numeric value")
+    raise SqlSemanticError("expected numeric value")
 
 
 def _substr(args: list[Any]) -> Any:
@@ -118,15 +120,15 @@ def _abs(args: list[Any]) -> Any:
     if value is None:
         return None
     if isinstance(value, bool):
-        raise ValueError("expected numeric value")
+        raise SqlSemanticError("expected numeric value")
     if isinstance(value, (int, float)):
         return abs(value)
     if isinstance(value, str):
         text = value.strip()
         if not text:
-            raise ValueError("expected numeric value")
+            raise SqlSemanticError("expected numeric value")
         return abs(float(text))
-    raise ValueError("expected numeric value")
+    raise SqlSemanticError("expected numeric value")
 
 
 def _round(args: list[Any]) -> Any:
@@ -134,16 +136,16 @@ def _round(args: list[Any]) -> Any:
     if value is None:
         return None
     if isinstance(value, bool):
-        raise ValueError("expected numeric value")
+        raise SqlSemanticError("expected numeric value")
     if isinstance(value, (int, float)):
         numeric = float(value)
     elif isinstance(value, str):
         text = value.strip()
         if not text:
-            raise ValueError("expected numeric value")
+            raise SqlSemanticError("expected numeric value")
         numeric = float(text)
     else:
-        raise ValueError("expected numeric value")
+        raise SqlSemanticError("expected numeric value")
 
     if len(args) < 2 or args[1] is None:
         return round(numeric)
@@ -170,7 +172,7 @@ def _date_value(value: Any) -> datetime:
     if isinstance(value, str):
         normalized = value.strip()
         if not normalized:
-            raise ValueError("expected date value")
+            raise SqlSemanticError("expected date value")
         if normalized.endswith("Z"):
             normalized = normalized[:-1] + "+00:00"
         try:
@@ -186,9 +188,9 @@ def _date_value(value: Any) -> datetime:
         try:
             parsed_date = date.fromisoformat(value.strip())
         except ValueError as exc:
-            raise ValueError("expected date value") from exc
+            raise SqlSemanticError("expected date value") from exc
         return datetime.combine(parsed_date, time.min)
-    raise ValueError("expected date value")
+    raise SqlSemanticError("expected date value")
 
 
 def _year(args: list[Any]) -> Any:
@@ -247,4 +249,3 @@ def _tv_or(a: bool | None, b: bool | None) -> bool | None:
     if a is None or b is None:
         return None
     return False
-

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from typing import Any
 
 from excel_dbapi.parser import parse_sql
@@ -47,11 +48,11 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
 
 
 INVALID_CASES: list[tuple[str, type[Exception], str]] = [
-    ("DELETE Users", ValueError, "Invalid DELETE format"),
-    ("DELETE FROM Users ORDER BY id", ValueError, "Invalid DELETE format"),
+    ("DELETE Users", DatabaseError, "Invalid DELETE format"),
+    ("DELETE FROM Users ORDER BY id", DatabaseError, "Invalid DELETE format"),
     (
         "DELETE FROM Users WHERE id = ?",
-        ValueError,
+        DatabaseError,
         "Missing parameters for placeholders",
     ),
 ]

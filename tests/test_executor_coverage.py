@@ -2,6 +2,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -390,7 +391,7 @@ def test_misc_internal_paths() -> None:
     assert row["t.id"] == 1
     assert row["t.v"] is None
 
-    with pytest.raises(ValueError, match="Unknown source reference"):
+    with pytest.raises(DatabaseError, match="Unknown source reference"):
         executor._resolve_join_column({"t": {"id": 1}}, {"source": "x", "name": "id"})
 
     assert (
@@ -426,7 +427,7 @@ def test_insert_and_alter_validation_paths(tmp_path: Path) -> None:
         "table": "t",
         "values": 123,
     }
-    with pytest.raises(ValueError, match="Invalid INSERT values format"):
+    with pytest.raises(DatabaseError, match="Invalid INSERT values format"):
         executor.execute(parsed_insert)
 
     parsed_insert_select = {
@@ -448,7 +449,7 @@ def test_insert_and_alter_validation_paths(tmp_path: Path) -> None:
             },
         },
     }
-    with pytest.raises(ValueError, match="column count mismatch"):
+    with pytest.raises(DatabaseError, match="column count mismatch"):
         executor.execute(parsed_insert_select)
 
     parsed_on_conflict_bad_action = {
@@ -462,7 +463,7 @@ def test_insert_and_alter_validation_paths(tmp_path: Path) -> None:
             "set": [],
         },
     }
-    with pytest.raises(ValueError, match="Invalid ON CONFLICT action"):
+    with pytest.raises(DatabaseError, match="Invalid ON CONFLICT action"):
         executor.execute(parsed_on_conflict_bad_action)
 
     parsed_alter_bad_op = {
@@ -470,7 +471,7 @@ def test_insert_and_alter_validation_paths(tmp_path: Path) -> None:
         "table": "t",
         "operation": "NOPE",
     }
-    with pytest.raises(ValueError, match="Unsupported ALTER operation"):
+    with pytest.raises(DatabaseError, match="Unsupported ALTER operation"):
         executor.execute(parsed_alter_bad_op)
 
 
@@ -490,7 +491,7 @@ def test_direct_helper_branches_and_subquery_errors(tmp_path: Path) -> None:
     with pytest.raises(ProgrammingError, match="Invalid arguments for DAY"):
         executor._call_function("DAY", [object()])
 
-    with pytest.raises(ValueError, match="Invalid CTE definition"):
+    with pytest.raises(DatabaseError, match="Invalid CTE definition"):
         executor.execute(
             {"ctes": [{"name": 1, "query": {}}], "action": "SELECT", "table": "t"}
         )
@@ -551,7 +552,7 @@ def test_condition_and_expression_normalization_branches(tmp_path: Path) -> None
         is False
     )
 
-    with pytest.raises(ValueError, match="single character"):
+    with pytest.raises(DatabaseError, match="single character"):
         executor._evaluate_condition(
             row,
             {"column": "z", "operator": "LIKE", "value": "a%", "escape": "!!"},

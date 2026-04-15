@@ -1,5 +1,6 @@
 from typing import Callable
 
+from ..exceptions import CapabilityError
 from .base import WorkbookBackend
 
 _REGISTRY: dict[str, Callable[..., type[WorkbookBackend]]] = {}
@@ -23,9 +24,7 @@ def get_engine(name: str) -> type[WorkbookBackend]:
         loader = _REGISTRY[key]
     except KeyError as exc:
         available = ", ".join(sorted(_REGISTRY.keys()))
-        raise ValueError(
-            f"Unsupported engine: {name}. Available engines: {available}"
-        ) from exc
+        raise CapabilityError(f"Unsupported engine: {name}. Available engines: {available}") from exc
     return loader()
 
 

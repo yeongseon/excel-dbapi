@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
@@ -198,7 +199,7 @@ def test_window_function_in_order_by(tmp_path: Path) -> None:
     file_path = tmp_path / "window_order_by.xlsx"
     _create_window_workbook(file_path)
 
-    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax"):
         parse_sql(
             "SELECT id FROM scores "
             "ORDER BY ROW_NUMBER() OVER (ORDER BY points DESC) ASC"

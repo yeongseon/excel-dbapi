@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from typing import Any
 
 from excel_dbapi.parser import parse_sql
@@ -235,57 +236,57 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
 
 
 INVALID_CASES: list[tuple[str, type[Exception], str]] = [
-    ("SELECT , FROM Users", ValueError, "Invalid column list"),
-    ("SELECT id FROM", ValueError, "Invalid SQL query format"),
+    ("SELECT , FROM Users", DatabaseError, "Invalid column list"),
+    ("SELECT id FROM", DatabaseError, "Invalid SQL query format"),
     (
         "SELECT * FROM Users LIMIT WHERE id = 1",
-        ValueError,
+        DatabaseError,
         "LIMIT cannot appear before WHERE",
     ),
-    ("SELECT * FROM Users LIMIT ?", ValueError, "Missing parameters for placeholders"),
+    ("SELECT * FROM Users LIMIT ?", DatabaseError, "Missing parameters for placeholders"),
     (
         "SELECT * FROM Users ORDER BY  LIMIT 1",
-        ValueError,
+        DatabaseError,
         "Invalid ORDER BY clause format",
     ),
     (
         "SELECT * FROM Users WHERE a = 1 XOR b = 2",
-        ValueError,
+        DatabaseError,
         "Invalid WHERE clause format",
     ),
     (
         "SELECT * FROM Users WHERE a BETWEEN 1 2",
-        ValueError,
+        DatabaseError,
         "Invalid WHERE clause format",
     ),
     (
         "SELECT * FROM Users WHERE a IN (",
-        ValueError,
+        DatabaseError,
         "expected '\\)' in IN clause",
     ),
     (
         "SELECT * FROM Users WHERE a IN 1,2)",
-        ValueError,
+        DatabaseError,
         "malformed IN clause",
     ),
     (
         "SELECT * FROM Users WHERE a IS MAYBE",
-        ValueError,
+        DatabaseError,
         "expected NULL or NOT after IS",
     ),
     (
         "SELECT * FROM Users WHERE a IS NOT MAYBE",
-        ValueError,
+        DatabaseError,
         "expected NULL after IS NOT",
     ),
     (
         "SELECT * FROM Users HAVING COUNT(*) > 1",
-        ValueError,
+        DatabaseError,
         "HAVING requires GROUP BY",
     ),
     (
         "SELECT * FROM Users GROUP BY name WHERE id = 1",
-        ValueError,
+        DatabaseError,
         "GROUP BY cannot appear before WHERE",
     ),
 ]

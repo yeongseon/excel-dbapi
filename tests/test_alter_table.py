@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -79,12 +80,12 @@ def test_parser_add_column_type_normalization() -> None:
 
 
 def test_parser_error_invalid_type() -> None:
-    with pytest.raises(ValueError, match="Unsupported ALTER TABLE column type"):
+    with pytest.raises(DatabaseError, match="Unsupported ALTER TABLE column type"):
         parse_sql("ALTER TABLE t ADD COLUMN age BLOB")
 
 
 def test_parser_error_missing_column_keyword() -> None:
-    with pytest.raises(ValueError, match="Invalid ALTER TABLE format"):
+    with pytest.raises(DatabaseError, match="Invalid ALTER TABLE format"):
         parse_sql("ALTER TABLE t ADD age INTEGER")
 
 

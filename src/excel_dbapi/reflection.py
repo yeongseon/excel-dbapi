@@ -7,6 +7,7 @@ from collections import Counter
 from typing import Any, cast
 
 from excel_dbapi.engines.base import TableData
+from excel_dbapi.exceptions import BackendOperationError
 
 METADATA_SHEET = "__excel_meta__"
 
@@ -38,7 +39,7 @@ def get_columns(
     """Return column metadata by sampling data rows."""
     resolved_table_name = _resolve_sheet_name(connection, table_name)
     if resolved_table_name is None:
-        raise ValueError(f"Sheet '{table_name}' not found in Excel")
+        raise BackendOperationError(f"Sheet '{table_name}' not found in Excel")
 
     data = connection.engine.read_sheet(resolved_table_name)
     columns: list[dict[str, Any]] = []

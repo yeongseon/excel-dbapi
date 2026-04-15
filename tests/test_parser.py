@@ -1,4 +1,5 @@
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from excel_dbapi.parser import parse_sql
 
 
@@ -21,7 +22,7 @@ def test_mixed_case_select_and_from():
 
 
 def test_parse_invalid_sql():
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("INVALID SQL")
 
 
@@ -112,12 +113,12 @@ def test_parse_subquery_preserves_literal_in():
 
 
 def test_parse_subquery_rejects_multi_column():
-    with pytest.raises(ValueError, match="exactly one column"):
+    with pytest.raises(DatabaseError, match="exactly one column"):
         parse_sql("SELECT * FROM users WHERE id IN (SELECT id, name FROM admins)")
 
 
 def test_parse_subquery_rejects_star():
-    with pytest.raises(ValueError, match="exactly one column"):
+    with pytest.raises(DatabaseError, match="exactly one column"):
         parse_sql("SELECT * FROM users WHERE id IN (SELECT * FROM admins)")
 
 
@@ -142,14 +143,14 @@ def test_parse_subquery_accepted_in_delete():
 
 
 def test_parse_subquery_rejects_correlated():
-    with pytest.raises(ValueError, match="[Cc]orrelated"):
+    with pytest.raises(DatabaseError, match="[Cc]orrelated"):
         parse_sql(
             "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE admins.user_id = users.id)"
         )
 
 
 def test_parse_subquery_rejects_parameterized():
-    with pytest.raises(ValueError, match="[Pp]arameterized"):
+    with pytest.raises(DatabaseError, match="[Pp]arameterized"):
         parse_sql(
             "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE role = ?)"
         )
@@ -172,36 +173,36 @@ def test_parse_subquery_allows_quoted_question_mark():
 
 
 def test_parse_subquery_rejects_group_by():
-    with pytest.raises(ValueError, match="GROUP BY is not supported in subqueries"):
+    with pytest.raises(DatabaseError, match="GROUP BY is not supported in subqueries"):
         parse_sql("SELECT * FROM users WHERE id IN (SELECT id FROM admins GROUP BY id)")
 
 
 def test_parse_subquery_rejects_order_by():
-    with pytest.raises(ValueError, match="ORDER BY is not supported in subqueries"):
+    with pytest.raises(DatabaseError, match="ORDER BY is not supported in subqueries"):
         parse_sql("SELECT * FROM users WHERE id IN (SELECT id FROM admins ORDER BY id)")
 
 
 def test_parse_subquery_rejects_limit():
-    with pytest.raises(ValueError, match="LIMIT is not supported in subqueries"):
+    with pytest.raises(DatabaseError, match="LIMIT is not supported in subqueries"):
         parse_sql("SELECT * FROM users WHERE id IN (SELECT id FROM admins LIMIT 10)")
 
 
 def test_parse_subquery_rejects_having():
-    with pytest.raises(ValueError, match="HAVING is not supported in subqueries"):
+    with pytest.raises(DatabaseError, match="HAVING is not supported in subqueries"):
         parse_sql(
             "SELECT * FROM users WHERE id IN (SELECT id FROM admins GROUP BY id HAVING COUNT(id) > 1)"
         )
 
 
 def test_parse_subquery_rejects_offset():
-    with pytest.raises(ValueError, match="OFFSET is not supported in subqueries"):
+    with pytest.raises(DatabaseError, match="OFFSET is not supported in subqueries"):
         parse_sql(
             "SELECT * FROM users WHERE id IN (SELECT id FROM admins LIMIT 10 OFFSET 5)"
         )
 
 
 def test_parse_subquery_rejects_nested() -> None:
-    with pytest.raises(ValueError, match="not supported in this context"):
+    with pytest.raises(DatabaseError, match="not supported in this context"):
         parse_sql(
             "SELECT * FROM users WHERE id IN (SELECT id FROM admins WHERE dept_id IN (SELECT id FROM depts))"
         )
@@ -299,31 +300,22 @@ def test_parse_select_all_aggregate_functions():
 
 
 def test_parse_select_group_by_before_where_raises():
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("SELECT name, COUNT(*) FROM Sheet1 GROUP BY name WHERE name = 'A'")
 
 
 def test_where_rejects_aggregate_count():
-    with pytest.raises(
-        ValueError,
-        match="Aggregate functions are not allowed in WHERE",
-    ):
+    with pytest.raises(DatabaseError, match="Aggregate functions are not allowed in WHERE",):
         parse_sql("SELECT name FROM users WHERE COUNT(*) > 1")
 
 
 def test_where_rejects_aggregate_sum():
-    with pytest.raises(
-        ValueError,
-        match="Aggregate functions are not allowed in WHERE",
-    ):
+    with pytest.raises(DatabaseError, match="Aggregate functions are not allowed in WHERE",):
         parse_sql("SELECT name FROM users WHERE SUM(score) > 100")
 
 
 def test_where_rejects_aggregate_avg():
-    with pytest.raises(
-        ValueError,
-        match="Aggregate functions are not allowed in WHERE",
-    ):
+    with pytest.raises(DatabaseError, match="Aggregate functions are not allowed in WHERE",):
         parse_sql("SELECT name FROM users WHERE AVG(score) > 50")
 
 
@@ -352,22 +344,22 @@ def test_aggregate_count_distinct():
 
 
 def test_aggregate_rejects_expression():
-    with pytest.raises(ValueError, match="Unsupported function: SUM"):
+    with pytest.raises(DatabaseError, match="Unsupported function: SUM"):
         parse_sql("SELECT SUM(age + 1) FROM users")
 
 
 def test_aggregate_rejects_numeric_literal():
-    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+    with pytest.raises(DatabaseError, match="Unsupported aggregate expression"):
         parse_sql("SELECT COUNT(1) FROM users")
 
 
 def test_aggregate_rejects_string_literal():
-    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+    with pytest.raises(DatabaseError, match="Unsupported aggregate expression"):
         parse_sql("SELECT COUNT('x') FROM users")
 
 
 def test_aggregate_rejects_float_literal():
-    with pytest.raises(ValueError, match="Unsupported aggregate expression"):
+    with pytest.raises(DatabaseError, match="Unsupported aggregate expression"):
         parse_sql("SELECT SUM(3.14) FROM users")
 
 
@@ -393,10 +385,7 @@ def test_parses_arithmetic_in_select():
 
 
 def test_rejects_aggregate_arithmetic_in_select():
-    with pytest.raises(
-        ValueError,
-        match="Unsupported column expression|Unsupported aggregate",
-    ):
+    with pytest.raises(DatabaseError, match="Unsupported column expression|Unsupported aggregate",):
         parse_sql("SELECT COUNT(*) + 1 FROM users")
 
 
@@ -508,7 +497,7 @@ def test_parse_join_allows_multiple_joins():
 
 
 def test_parse_join_rejects_unqualified_columns():
-    with pytest.raises(ValueError, match="qualified column"):
+    with pytest.raises(DatabaseError, match="qualified column"):
         parse_sql("SELECT id FROM t1 a JOIN t2 b ON a.id = b.id")
 
 
@@ -529,7 +518,7 @@ def test_parse_join_accepts_full_join():
 
 
 def test_parse_cross_join_rejects_on_clause():
-    with pytest.raises(ValueError, match="CROSS JOIN does not accept ON condition"):
+    with pytest.raises(DatabaseError, match="CROSS JOIN does not accept ON condition"):
         parse_sql("SELECT a.id FROM t1 a CROSS JOIN t2 b ON a.id = b.id")
 
 
@@ -601,13 +590,13 @@ def test_parse_left_outer_join_with_as():
 
 def test_parse_join_rejects_duplicate_alias():
     """Duplicate table refs in JOIN should be rejected."""
-    with pytest.raises(ValueError, match="Ambiguous table reference"):
+    with pytest.raises(DatabaseError, match="Ambiguous table reference"):
         parse_sql("SELECT a.id FROM t1 a JOIN t2 a ON a.id = a.id")
 
 
 def test_parse_join_rejects_duplicate_bare_table():
     """Self-join without distinct aliases should be rejected."""
-    with pytest.raises(ValueError, match="Ambiguous table reference"):
+    with pytest.raises(DatabaseError, match="Ambiguous table reference"):
         parse_sql("SELECT users.id FROM users JOIN users ON users.id = users.id")
 
 
@@ -616,7 +605,7 @@ def test_parse_join_rejects_alias_vs_table_name_collision():
 
     e.g. FROM users u JOIN orders users  -- right alias 'users' == left table 'users'
     """
-    with pytest.raises(ValueError, match="Ambiguous table reference 'users'"):
+    with pytest.raises(DatabaseError, match="Ambiguous table reference 'users'"):
         parse_sql("SELECT users.id FROM users u JOIN orders users ON u.id = users.id")
 
 
@@ -625,7 +614,7 @@ def test_parse_join_rejects_left_alias_vs_right_table_collision():
 
     e.g. FROM users orders JOIN orders o  -- left alias 'orders' == right table 'orders'
     """
-    with pytest.raises(ValueError, match="Ambiguous table reference 'orders'"):
+    with pytest.raises(DatabaseError, match="Ambiguous table reference 'orders'"):
         parse_sql(
             "SELECT orders.id FROM users orders JOIN orders o ON orders.id = o.id"
         )
@@ -633,7 +622,7 @@ def test_parse_join_rejects_left_alias_vs_right_table_collision():
 
 def test_parse_join_rejects_subquery_containing_join():
     """Subquery that itself contains a JOIN should be rejected."""
-    with pytest.raises(ValueError, match="JOIN is not supported in subqueries"):
+    with pytest.raises(DatabaseError, match="JOIN is not supported in subqueries"):
         parse_sql(
             "SELECT id FROM t1 WHERE id IN "
             "(SELECT a.id FROM t2 a JOIN t3 b ON a.id = b.id)"

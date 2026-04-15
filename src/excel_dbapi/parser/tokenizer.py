@@ -1,6 +1,7 @@
 import re
 from typing import Any, List
 
+from ..exceptions import SqlParseError
 from ._constants import (
     _AGGREGATE_FUNCTIONS,
     _IDENTIFIER_PATTERN,
@@ -318,7 +319,7 @@ def _parse_value(token: str) -> Any:
 def _parse_table_identifier(token: str) -> str:
     identifier = token.strip()
     if not identifier:
-        raise ValueError("Table name is required")
+        raise SqlParseError("Table name is required")
     if _is_double_quoted_token(identifier):
         return str(_parse_value(identifier))
     return identifier
@@ -339,7 +340,7 @@ def _parse_numeric_literal(token: str) -> int | float | None:
 
 def _find_matching_parenthesis(tokens: List[str], start_index: int) -> int:
     if start_index >= len(tokens) or tokens[start_index] != "(":
-        raise ValueError("Invalid SQL syntax: expected '('")
+        raise SqlParseError("Invalid SQL syntax: expected '('")
 
     depth = 0
     for index in range(start_index, len(tokens)):
@@ -352,7 +353,7 @@ def _find_matching_parenthesis(tokens: List[str], start_index: int) -> int:
             if depth == 0:
                 return index
 
-    raise ValueError("Invalid SQL syntax: unmatched parenthesis")
+    raise SqlParseError("Invalid SQL syntax: unmatched parenthesis")
 
 
 def _find_top_level_keyword_index(tokens: List[str], keyword: str) -> int:

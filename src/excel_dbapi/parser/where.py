@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from ..exceptions import SqlParseError, SqlSemanticError
 from ._constants import _is_placeholder
 from .tokenizer import (
     _collapse_aggregate_tokens,
@@ -50,7 +51,7 @@ def _parse_where_expression(
             if paren_depth > 0:
                 continue
             if re.fullmatch(r"(?i)(COUNT|SUM|AVG|MIN|MAX)\([^\)]+\)", token):
-                raise ValueError(
+                raise SqlSemanticError(
                     "Aggregate functions are not allowed in WHERE clause; use HAVING instead"
                 )
     if len(tokens) < 3:
@@ -59,7 +60,7 @@ def _parse_where_expression(
         if not (len(tokens) >= 1 and tokens[0].upper() == "NOT") and not (
             len(tokens) >= 1 and tokens[0] == "("
         ):
-            raise ValueError("Invalid WHERE clause format")
+            raise SqlParseError("Invalid WHERE clause format")
 
     index = 0
     result = _parse_or_expression(
@@ -74,7 +75,7 @@ def _parse_where_expression(
 
     # Validate we consumed all tokens
     if end_index < len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     # Ensure top-level result is always in flat format for backward compatibility
     # Single atomic conditions get wrapped in {"conditions": [...], "conjunctions": []}
@@ -211,28 +212,22 @@ def _parse_factor(
 ) -> tuple[Dict[str, Any], int]:
     """Parse a parenthesized group or an atomic condition."""
     if index >= len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     if tokens[index].upper() == "EXISTS":
         if not allow_subqueries:
-            raise ValueError("Subqueries are not supported in this context")
+            raise SqlParseError("Subqueries are not supported in this context")
         if index + 1 >= len(tokens) or tokens[index + 1] != "(":
-            raise ValueError(
-                "Invalid WHERE clause format: EXISTS requires '(SELECT ... )'"
-            )
+            raise SqlParseError("Invalid WHERE clause format: EXISTS requires '(SELECT ... )'")
 
         subquery_end = _find_matching_parenthesis(tokens, index + 1)
         subquery_tokens = tokens[index + 2 : subquery_end]
         if not subquery_tokens or subquery_tokens[0].upper() != "SELECT":
-            raise ValueError(
-                "Invalid WHERE clause format: EXISTS requires SELECT subquery"
-            )
+            raise SqlParseError("Invalid WHERE clause format: EXISTS requires SELECT subquery")
 
         subquery_sql = " ".join(subquery_tokens).strip()
         if "?" in _tokenize(subquery_sql):
-            raise ValueError(
-                "Parameterized subqueries are not supported; use literal values"
-            )
+            raise SqlParseError("Parameterized subqueries are not supported; use literal values")
 
         from .select import _parse_select, _detect_subquery_correlation
         parsed_subquery = _parse_select(
@@ -265,7 +260,7 @@ def _parse_factor(
             outer_sources=outer_sources,
         )
         if index >= len(tokens) or tokens[index] != ")":
-            raise ValueError("Invalid WHERE clause format: unmatched parenthesis")
+            raise SqlParseError("Invalid WHERE clause format: unmatched parenthesis")
         index += 1  # consume ')'
         # Wrap single conditions in compound so nesting is explicit
         if "conditions" not in expr and expr.get("type") != "not":
@@ -365,12 +360,12 @@ def _parse_condition_expression_tokens(
     collapse_literals: bool,
 ) -> Any:
     if not expression_tokens:
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     if _is_case_keyword(expression_tokens[0], "CASE"):
         parsed_case, consumed = _parse_case_expression_tokens(expression_tokens, 0)
         if consumed != len(expression_tokens):
-            raise ValueError("Invalid WHERE clause format")
+            raise SqlParseError("Invalid WHERE clause format")
         return parsed_case
 
     if (
@@ -379,10 +374,10 @@ def _parse_condition_expression_tokens(
         and expression_tokens[1].upper() == "SELECT"
     ):
         if not allow_subqueries:
-            raise ValueError("Subqueries are not supported in this context")
+            raise SqlParseError("Subqueries are not supported in this context")
         subquery_end = _find_matching_parenthesis(expression_tokens, 0)
         if subquery_end != len(expression_tokens) - 1:
-            raise ValueError("Invalid WHERE clause format")
+            raise SqlParseError("Invalid WHERE clause format")
         subquery_sql = " ".join(expression_tokens[1:subquery_end]).strip()
         from .select import _parse_scalar_subquery_node
         return _parse_scalar_subquery_node(
@@ -399,14 +394,14 @@ def _parse_condition_expression_tokens(
             allow_subqueries=allow_subqueries,
             outer_sources=outer_sources,
         )
-    except ValueError as exc:
+    except SqlParseError as exc:
         if (
             allow_aggregates
             and "Unsupported aggregate expression" in str(exc)
             and re.fullmatch(r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(.+\)", expression_text)
         ):
             return _normalize_aggregate_expressions(expression_text)
-        raise ValueError("Invalid WHERE clause format") from exc
+        raise SqlParseError("Invalid WHERE clause format") from exc
 
     if (
         isinstance(parsed_expression, dict)
@@ -433,7 +428,7 @@ def _parse_condition_operand(
     outer_sources: set[str] | None = None,
 ) -> tuple[Any, int]:
     if index >= len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     expression_tokens, expression_end = _collect_condition_expression_tokens(
         tokens,
@@ -441,7 +436,7 @@ def _parse_condition_operand(
         stop_at_operator=True,
     )
     if not expression_tokens:
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     try:
         parsed_operand = _parse_condition_expression_tokens(
@@ -451,9 +446,9 @@ def _parse_condition_operand(
             outer_sources=outer_sources,
             collapse_literals=False,
         )
-    except ValueError as exc:
+    except SqlParseError as exc:
         if "Unsupported column expression" in str(exc):
-            raise ValueError("Invalid WHERE clause format") from exc
+            raise SqlParseError("Invalid WHERE clause format") from exc
         raise
     return parsed_operand, expression_end
 
@@ -468,7 +463,7 @@ def _parse_condition_value(
     stop_keywords: set[str] | None = None,
 ) -> tuple[Any, int]:
     if index >= len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     value_stop_keywords = stop_keywords or {"AND", "OR"}
     expression_tokens, expression_end = _collect_condition_expression_tokens(
@@ -477,7 +472,7 @@ def _parse_condition_value(
         stop_keywords=value_stop_keywords,
     )
     if not expression_tokens:
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     try:
         parsed_value = _parse_condition_expression_tokens(
@@ -487,9 +482,9 @@ def _parse_condition_value(
             outer_sources=outer_sources,
             collapse_literals=True,
         )
-    except ValueError as exc:
+    except SqlParseError as exc:
         if "Unsupported column expression" in str(exc):
-            raise ValueError("Invalid WHERE clause format") from exc
+            raise SqlParseError("Invalid WHERE clause format") from exc
         raise
     return parsed_value, expression_end
 
@@ -503,7 +498,7 @@ def _parse_atomic_condition(
 ) -> tuple[Dict[str, Any], int]:
     """Parse a single condition: col OP value."""
     if index >= len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     column, operator_index = _parse_condition_operand(
         tokens,
@@ -513,7 +508,7 @@ def _parse_atomic_condition(
         outer_sources=outer_sources,
     )
     if operator_index >= len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     operator_token = tokens[operator_index].upper()
 
@@ -531,7 +526,7 @@ def _parse_atomic_condition(
                     {"column": column, "operator": "IS NOT", "value": None},
                     operator_index + 3,
                 )
-            raise ValueError("Invalid WHERE clause format: expected NULL after IS NOT")
+            raise SqlParseError("Invalid WHERE clause format: expected NULL after IS NOT")
         if (
             operator_index + 1 < len(tokens)
             and tokens[operator_index + 1].upper() == "NULL"
@@ -540,7 +535,7 @@ def _parse_atomic_condition(
                 {"column": column, "operator": "IS", "value": None},
                 operator_index + 2,
             )
-        raise ValueError("Invalid WHERE clause format: expected NULL or NOT after IS")
+        raise SqlParseError("Invalid WHERE clause format: expected NULL or NOT after IS")
 
     if operator_token == "NOT":
         if operator_index + 1 < len(tokens):
@@ -574,9 +569,7 @@ def _parse_atomic_condition(
                     allow_aggregates=allow_aggregates,
                     outer_sources=outer_sources,
                 )
-        raise ValueError(
-            "Invalid WHERE clause format: expected IN, LIKE, ILIKE, or BETWEEN after NOT"
-        )
+        raise SqlParseError("Invalid WHERE clause format: expected IN, LIKE, ILIKE, or BETWEEN after NOT")
 
     # BETWEEN
     if operator_token == "BETWEEN":
@@ -614,7 +607,7 @@ def _parse_atomic_condition(
 
     # Standard comparison: =, !=, <>, >, >=, <, <=
     if operator_index + 1 >= len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
     value, value_index = _parse_condition_value(
         tokens,
         operator_index + 1,
@@ -648,7 +641,7 @@ def _parse_between_condition(
         stop_keywords={"AND", "OR"},
     )
     if and_index >= len(tokens) or tokens[and_index].upper() != "AND":
-        raise ValueError("Invalid WHERE clause format: expected AND in BETWEEN clause")
+        raise SqlParseError("Invalid WHERE clause format: expected AND in BETWEEN clause")
 
     high_value, high_end = _parse_condition_value(
         tokens,
@@ -676,7 +669,7 @@ def _parse_like_condition(
     outer_sources: set[str] | None = None,
 ) -> tuple[Dict[str, Any], int]:
     if value_start >= len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     value, value_index = _parse_condition_value(
         tokens,
@@ -697,9 +690,7 @@ def _parse_like_condition(
             outer_sources=outer_sources,
         )
         if not isinstance(escape_value, str) or len(escape_value) != 1:
-            raise ValueError(
-                "Invalid WHERE clause format: ESCAPE requires a single character"
-            )
+            raise SqlParseError("Invalid WHERE clause format: ESCAPE requires a single character")
         condition["escape"] = escape_value
         value_index = escape_index
 
@@ -716,7 +707,7 @@ def _parse_in_condition(
 ) -> tuple[Dict[str, Any], int]:
     """Parse IN (values...) or IN (SELECT ...)."""
     if paren_start >= len(tokens):
-        raise ValueError("Invalid WHERE clause format")
+        raise SqlParseError("Invalid WHERE clause format")
 
     in_start = paren_start
     in_end = in_start
@@ -727,33 +718,31 @@ def _parse_in_condition(
             paren_depth += 1
         elif token == ")":
             if paren_depth == 0:
-                raise ValueError("Invalid WHERE clause format: malformed IN clause")
+                raise SqlParseError("Invalid WHERE clause format: malformed IN clause")
             paren_depth -= 1
             if paren_depth == 0:
                 break
         in_end += 1
     if in_end >= len(tokens):
-        raise ValueError("Invalid WHERE clause format: expected ')' in IN clause")
+        raise SqlParseError("Invalid WHERE clause format: expected ')' in IN clause")
 
     in_values_text = " ".join(tokens[in_start : in_end + 1]).strip()
     if not in_values_text.startswith("(") or not in_values_text.endswith(")"):
-        raise ValueError("Invalid WHERE clause format: malformed IN clause")
+        raise SqlParseError("Invalid WHERE clause format: malformed IN clause")
 
     raw_values = in_values_text[1:-1].strip()
     if not raw_values:
-        raise ValueError("Invalid WHERE clause format: IN clause cannot be empty")
+        raise SqlParseError("Invalid WHERE clause format: IN clause cannot be empty")
 
     op = "NOT IN" if negated else "IN"
 
     raw_tokens = raw_values.split()
     if raw_tokens and raw_tokens[0].upper() == "SELECT":
         if not allow_subqueries:
-            raise ValueError("Subqueries are not supported in this context")
+            raise SqlParseError("Subqueries are not supported in this context")
 
         if "?" in _tokenize(raw_values):
-            raise ValueError(
-                "Parameterized subqueries are not supported; use literal values"
-            )
+            raise SqlParseError("Parameterized subqueries are not supported; use literal values")
 
         # Reject JOINs inside subqueries before other checks
         subquery_tokens = _tokenize(raw_values)
@@ -761,7 +750,7 @@ def _parse_in_condition(
             if raw_token.startswith("'") or raw_token.startswith('"'):
                 continue
             if raw_token.upper() == "JOIN":
-                raise ValueError("JOIN is not supported in subqueries")
+                raise SqlParseError("JOIN is not supported in subqueries")
 
         from .select import _parse_select, _detect_subquery_correlation
         subquery_parsed = _parse_select(
@@ -775,24 +764,24 @@ def _parse_in_condition(
             outer_sources,
         )
         if correlated:
-            raise ValueError("Correlated subqueries are not supported")
+            raise SqlParseError("Correlated subqueries are not supported")
 
         if subquery_parsed.get("having") is not None:
-            raise ValueError("HAVING is not supported in subqueries")
+            raise SqlParseError("HAVING is not supported in subqueries")
         if subquery_parsed.get("order_by") is not None:
-            raise ValueError("ORDER BY is not supported in subqueries")
+            raise SqlParseError("ORDER BY is not supported in subqueries")
         if subquery_parsed.get("offset") is not None:
-            raise ValueError("OFFSET is not supported in subqueries")
+            raise SqlParseError("OFFSET is not supported in subqueries")
         if subquery_parsed.get("group_by") is not None:
-            raise ValueError("GROUP BY is not supported in subqueries")
+            raise SqlParseError("GROUP BY is not supported in subqueries")
         if subquery_parsed.get("limit") is not None:
-            raise ValueError("LIMIT is not supported in subqueries")
+            raise SqlParseError("LIMIT is not supported in subqueries")
         if subquery_parsed.get("joins"):
-            raise ValueError("JOIN is not supported in subqueries")
+            raise SqlParseError("JOIN is not supported in subqueries")
 
         subquery_columns = subquery_parsed["columns"]
         if subquery_columns == ["*"] or len(subquery_columns) != 1:
-            raise ValueError("Subquery in WHERE ... IN must select exactly one column")
+            raise SqlParseError("Subquery in WHERE ... IN must select exactly one column")
 
         return (
             {
@@ -811,7 +800,7 @@ def _parse_in_condition(
     else:
         parsed_values = tuple(_parse_value(token) for token in _split_csv(raw_values))
         if len(parsed_values) == 0:
-            raise ValueError("Invalid WHERE clause format: IN clause cannot be empty")
+            raise SqlParseError("Invalid WHERE clause format: IN clause cannot be empty")
 
         return (
             {

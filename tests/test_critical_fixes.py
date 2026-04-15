@@ -176,7 +176,7 @@ class TestDSNAutoEngineSelection:
         """Explicit engine conflicting with DSN raises ValueError."""
         from excel_dbapi.connection import _resolve_engine_and_location
 
-        with pytest.raises(ValueError, match="Engine mismatch"):
+        with pytest.raises(DatabaseError, match="Engine mismatch"):
             _resolve_engine_and_location("msgraph://drives/fake/items/fake", "openpyxl")
 
     @pytest.mark.parametrize(

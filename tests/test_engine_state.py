@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
@@ -46,5 +47,5 @@ def test_openpyxl_save_without_workbook(tmp_path: Path) -> None:
     _create_workbook(file_path)
     engine = OpenpyxlBackend(str(file_path))
     engine.workbook = None
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         engine.save()

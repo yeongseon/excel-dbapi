@@ -5,7 +5,7 @@ import tempfile
 
 import pandas as pd
 
-from ...exceptions import DataError, NotSupportedError
+from ...exceptions import BackendOperationError, DataError, NotSupportedError
 from ...executor import SharedExecutor
 from ..base import TableData, WorkbookBackend, _normalize_headers
 from ..result import ExecutionResult
@@ -137,7 +137,7 @@ class PandasBackend(WorkbookBackend):
         self._flush_pending(sheet_name)
         frame = self.data.get(sheet_name)
         if frame is None:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
 
         row_count = len(frame.index)
         self._check_row_limit(sheet_name, row_count)
@@ -159,13 +159,13 @@ class PandasBackend(WorkbookBackend):
     def write_sheet(self, sheet_name: str, data: TableData) -> None:
         self._pending_rows.pop(sheet_name, None)
         if sheet_name not in self.data:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
         self.data[sheet_name] = pd.DataFrame(data.rows, columns=pd.Series(data.headers))
 
     def append_row(self, sheet_name: str, row: list[Any]) -> int:
         frame = self.data.get(sheet_name)
         if frame is None:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
         row_data = {col: None for col in frame.columns}
         for idx, col in enumerate(frame.columns):
             if idx < len(row):
@@ -176,13 +176,13 @@ class PandasBackend(WorkbookBackend):
 
     def create_sheet(self, name: str, headers: list[str]) -> None:
         if name in self.data:
-            raise ValueError(f"Sheet '{name}' already exists")
+            raise BackendOperationError(f"Sheet '{name}' already exists")
         self.data[name] = pd.DataFrame(columns=pd.Series(headers))
 
     def drop_sheet(self, name: str) -> None:
         self._pending_rows.pop(name, None)
         if name not in self.data:
-            raise ValueError(f"Sheet '{name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{name}' not found in Excel")
         del self.data[name]
 
     def get_workbook(self) -> Any:

@@ -4,6 +4,7 @@ import pytest
 from typing import Any
 
 from excel_dbapi.parser import parse_sql
+from excel_dbapi.exceptions import SqlParseError
 
 
 VALID_CASES: list[tuple[str, dict[str, Any]]] = [
@@ -32,20 +33,20 @@ VALID_CASES: list[tuple[str, dict[str, Any]]] = [
 
 
 INVALID_CASES: list[tuple[str, type[Exception], str]] = [
-    ("CREATE TABLE", ValueError, "Invalid CREATE TABLE format"),
-    ("CREATE TABLE Bad", ValueError, "Invalid CREATE TABLE format"),
+    ("CREATE TABLE", SqlParseError, "Invalid CREATE TABLE format"),
+    ("CREATE TABLE Bad", SqlParseError, "Invalid CREATE TABLE format"),
     (
         "CREATE TABLE Bad (,)",
-        ValueError,
+        SqlParseError,
         "Malformed column definitions: empty column definition found",
     ),
     (
         "CREATE TABLE Logs (message TEXT,)",
-        ValueError,
+        SqlParseError,
         "Malformed column definitions: empty column definition found",
     ),
-    ("DROP TABLE", ValueError, "Invalid DROP TABLE format"),
-    ("DROP TABLE A B", ValueError, "Invalid DROP TABLE format"),
+    ("DROP TABLE", SqlParseError, "Invalid DROP TABLE format"),
+    ("DROP TABLE A B", SqlParseError, "Invalid DROP TABLE format"),
 ]
 
 

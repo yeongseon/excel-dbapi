@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from ...exceptions import BackendOperationError
+
 
 @dataclass(frozen=True)
 class GraphWorkbookLocator:
@@ -26,10 +28,8 @@ def parse_msgraph_dsn(dsn: str) -> GraphWorkbookLocator:
     parsed = urlparse(dsn)
     scheme = parsed.scheme
     if scheme not in {"msgraph", "sharepoint", "onedrive"}:
-        raise ValueError(
-            "Expected 'msgraph' scheme. "
-            f"Expected one of 'msgraph', 'sharepoint', or 'onedrive' scheme, got {scheme!r}"
-        )
+        raise BackendOperationError("Expected 'msgraph' scheme. "
+        f"Expected one of 'msgraph', 'sharepoint', or 'onedrive' scheme, got {scheme!r}")
 
     raw_path = parsed.netloc + parsed.path
     parts = [p for p in raw_path.split("/") if p]
@@ -54,15 +54,9 @@ def parse_msgraph_dsn(dsn: str) -> GraphWorkbookLocator:
         return GraphWorkbookLocator(drive_id="me", item_id=parts[3])
 
     if scheme == "msgraph":
-        raise ValueError(
-            f"Invalid msgraph DSN: expected 'msgraph://drives/{{drive_id}}/items/{{item_id}}', got {dsn!r}"
-        )
+        raise BackendOperationError(f"Invalid msgraph DSN: expected 'msgraph://drives/{{drive_id}}/items/{{item_id}}', got {dsn!r}")
 
     if scheme == "sharepoint":
-        raise ValueError(
-            f"Invalid sharepoint DSN: expected 'sharepoint://sites/{{site_name}}/drives/{{drive_id}}/items/{{item_id}}', got {dsn!r}"
-        )
+        raise BackendOperationError(f"Invalid sharepoint DSN: expected 'sharepoint://sites/{{site_name}}/drives/{{drive_id}}/items/{{item_id}}', got {dsn!r}")
 
-    raise ValueError(
-        f"Invalid onedrive DSN: expected 'onedrive://me/drive/items/{{item_id}}', got {dsn!r}"
-    )
+    raise BackendOperationError(f"Invalid onedrive DSN: expected 'onedrive://me/drive/items/{{item_id}}', got {dsn!r}")

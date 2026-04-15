@@ -8,6 +8,7 @@ from typing import Any, cast
 import httpx
 import pandas as pd
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -94,7 +95,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
     )
     executor = SharedExecutor(backend)
 
-    with pytest.raises(ValueError, match="Sheet 'Missing' not found"):
+    with pytest.raises(DatabaseError, match="Sheet 'Missing' not found"):
         executor.execute(
             {
                 "action": "UPDATE",
@@ -104,7 +105,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
             }
         )
 
-    with pytest.raises(ValueError, match="No columns defined in sheet 'Empty'"):
+    with pytest.raises(DatabaseError, match="No columns defined in sheet 'Empty'"):
         executor.execute(
             {
                 "action": "UPDATE",
@@ -114,7 +115,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
             }
         )
 
-    with pytest.raises(ValueError, match="Unknown column"):
+    with pytest.raises(DatabaseError, match="Unknown column"):
         executor.execute(
             {
                 "action": "UPDATE",
@@ -138,7 +139,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
     assert updated.rowcount == 1
     assert backend.read_sheet("Users").rows[0] == [1, "A", "Z"]
 
-    with pytest.raises(ValueError, match="Sheet 'Missing' not found"):
+    with pytest.raises(DatabaseError, match="Sheet 'Missing' not found"):
         executor.execute({"action": "DELETE", "table": "Missing", "where": None})
 
     delete_empty = executor.execute(
@@ -146,7 +147,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
     )
     assert delete_empty.rowcount == 0
 
-    with pytest.raises(ValueError, match="Sheet 'Missing' not found"):
+    with pytest.raises(DatabaseError, match="Sheet 'Missing' not found"):
         executor.execute(
             {
                 "action": "INSERT",
@@ -156,7 +157,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
             }
         )
 
-    with pytest.raises(ValueError, match="without headers"):
+    with pytest.raises(DatabaseError, match="without headers"):
         executor.execute(
             {
                 "action": "INSERT",
@@ -166,7 +167,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
             }
         )
 
-    with pytest.raises(ValueError, match="header count"):
+    with pytest.raises(DatabaseError, match="header count"):
         executor.execute(
             {
                 "action": "INSERT",
@@ -176,7 +177,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
             }
         )
 
-    with pytest.raises(ValueError, match="Unknown column"):
+    with pytest.raises(DatabaseError, match="Unknown column"):
         executor.execute(
             {
                 "action": "INSERT",
@@ -210,7 +211,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
         )
         is True
     )
-    with pytest.raises(NotImplementedError, match="Unsupported operator"):
+    with pytest.raises(DatabaseError, match="Unsupported operator"):
         executor._evaluate_condition(
             {"id": 1}, {"column": "id", "operator": "~~~", "value": 2}
         )
@@ -218,7 +219,7 @@ def test_executor_error_paths_and_utility_paths() -> None:
     assert executor._to_number(True) is None
     assert executor._to_number({"x": 1}) is None
 
-    with pytest.raises(ValueError, match="Unsupported action"):
+    with pytest.raises(DatabaseError, match="Unsupported action"):
         executor.execute({"action": "BOOM", "table": "Users"})
 
 
@@ -304,25 +305,25 @@ def test_openpyxl_backend_error_paths_and_execute_wrappers(tmp_path: Path) -> No
     _xlsx(file_path)
     backend = OpenpyxlBackend(str(file_path), create=False)
 
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         backend.read_sheet("Missing")
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         backend.write_sheet("Missing", TableData(headers=["a"], rows=[]))
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         backend.append_row("Missing", [1])
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(DatabaseError, match="already exists"):
         backend.create_sheet("Sheet1", ["a"])
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         backend.drop_sheet("Missing")
 
     backend.workbook = None
-    with pytest.raises(ValueError, match="not loaded"):
+    with pytest.raises(DatabaseError, match="not loaded"):
         backend.snapshot()
-    with pytest.raises(ValueError, match="not loaded"):
+    with pytest.raises(DatabaseError, match="not loaded"):
         backend.get_workbook()
-    with pytest.raises(ValueError, match="not loaded"):
+    with pytest.raises(DatabaseError, match="not loaded"):
         backend.create_sheet("X", ["a"])
-    with pytest.raises(ValueError, match="not loaded"):
+    with pytest.raises(DatabaseError, match="not loaded"):
         backend.drop_sheet("Sheet1")
 
     backend2 = OpenpyxlBackend(str(file_path), create=False)
@@ -341,15 +342,15 @@ def test_pandas_backend_error_paths_and_execute_wrappers(
     )
     backend = PandasBackend(str(file_path), create=False)
 
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         backend.read_sheet("Missing")
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         backend.write_sheet("Missing", TableData(headers=["a"], rows=[]))
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         backend.append_row("Missing", [1])
-    with pytest.raises(ValueError, match="already exists"):
+    with pytest.raises(DatabaseError, match="already exists"):
         backend.create_sheet("Sheet1", ["a"])
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(DatabaseError, match="not found"):
         backend.drop_sheet("Missing")
 
     result1 = backend.execute("SELECT * FROM Sheet1")

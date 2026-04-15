@@ -6,6 +6,7 @@ from typing import Any
 
 import coverage
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 
 from excel_dbapi.parser import (
     _annotate_column_tables,
@@ -83,9 +84,9 @@ def _eq_cond(left: str, right: str) -> dict[str, object]:
 def test_split_csv_and_parenthesis_helpers_error_paths() -> None:
     assert _split_csv("a), b") == ["a)", "b"]
 
-    with pytest.raises(ValueError, match="expected '\\('"):
+    with pytest.raises(DatabaseError, match="expected '\\('"):
         _find_matching_parenthesis(["a", ")"], 0)
-    with pytest.raises(ValueError, match="unmatched parenthesis"):
+    with pytest.raises(DatabaseError, match="unmatched parenthesis"):
         _find_matching_parenthesis(["(", "a"], 0)
 
     assert _find_top_level_keyword_index([")", "WHERE", "x"], "WHERE") == 1
@@ -100,16 +101,16 @@ def test_tokenize_expression_and_case_collection_edges() -> None:
 
 
 def test_case_parser_validation_errors() -> None:
-    with pytest.raises(ValueError, match="missing WHEN"):
+    with pytest.raises(DatabaseError, match="missing WHEN"):
         _parse_case_expression("CASE x ELSE 1 END")
-    with pytest.raises(ValueError, match="missing WHEN"):
+    with pytest.raises(DatabaseError, match="missing WHEN"):
         _parse_case_expression("CASE x END")
-    with pytest.raises(ValueError, match="ELSE requires"):
+    with pytest.raises(DatabaseError, match="ELSE requires"):
         _parse_case_expression("CASE WHEN a = 1 THEN 2 ELSE END")
 
 
 def test_window_spec_invalid_frame_and_window_function_argument_rules() -> None:
-    with pytest.raises(ValueError, match="Unsupported window frame"):
+    with pytest.raises(DatabaseError, match="Unsupported window frame"):
         _parse_window_spec_tokens(
             [
                 "OVER",
@@ -127,7 +128,7 @@ def test_window_spec_invalid_frame_and_window_function_argument_rules() -> None:
             outer_sources=None,
         )
 
-    with pytest.raises(ValueError, match="does not accept arguments"):
+    with pytest.raises(DatabaseError, match="does not accept arguments"):
         parse_sql("SELECT ROW_NUMBER(1) OVER () FROM t")
 
 
@@ -281,30 +282,30 @@ def test_validate_join_on_condition_node_errors_and_not_recursion() -> None:
     valid_not = {"type": "not", "operand": _eq_cond("a.id", "b.id")}
     _validate_join_on_condition_node(valid_not, left_sources, right_sources)
 
-    with pytest.raises(ValueError, match="Invalid JOIN ON condition"):
+    with pytest.raises(DatabaseError, match="Invalid JOIN ON condition"):
         _validate_join_on_condition_node(
             {"type": "not", "operand": "bad"}, left_sources, right_sources
         )
 
-    with pytest.raises(ValueError, match="Invalid JOIN ON condition"):
+    with pytest.raises(DatabaseError, match="Invalid JOIN ON condition"):
         _validate_join_on_condition_node(
             {"type": "compound", "conditions": "x", "conjunctions": []},
             left_sources,
             right_sources,
         )
-    with pytest.raises(ValueError, match="Invalid JOIN ON condition"):
+    with pytest.raises(DatabaseError, match="Invalid JOIN ON condition"):
         _validate_join_on_condition_node(
             {"type": "compound", "conditions": [{}], "conjunctions": "x"},
             left_sources,
             right_sources,
         )
-    with pytest.raises(ValueError, match="Invalid JOIN ON condition"):
+    with pytest.raises(DatabaseError, match="Invalid JOIN ON condition"):
         _validate_join_on_condition_node(
             {"type": "compound", "conditions": [{}], "conjunctions": ["AND"]},
             left_sources,
             right_sources,
         )
-    with pytest.raises(ValueError, match="AND/OR"):
+    with pytest.raises(DatabaseError, match="AND/OR"):
         _validate_join_on_condition_node(
             {
                 "type": "compound",
@@ -315,7 +316,7 @@ def test_validate_join_on_condition_node_errors_and_not_recursion() -> None:
             right_sources,
         )
 
-    with pytest.raises(ValueError, match="Unsupported JOIN ON operator"):
+    with pytest.raises(DatabaseError, match="Unsupported JOIN ON operator"):
         _validate_join_on_condition_node(
             {"operator": "LIKE", "column": {}, "value": {}}, left_sources, right_sources
         )
@@ -385,7 +386,7 @@ def test_validate_join_column_reference_across_expression_types() -> None:
         "SELECT",
     )
 
-    with pytest.raises(ValueError, match="qualified column names"):
+    with pytest.raises(DatabaseError, match="qualified column names"):
         _validate_join_column_reference(123, allowed, "SELECT")
 
 
@@ -405,7 +406,7 @@ def test_is_subquery_condition_and_join_where_validation_paths() -> None:
     _validate_join_where_node(
         {"type": "exists", "outer_refs": ["a.id", "bad"]}, {"a", "b"}
     )
-    with pytest.raises(ValueError, match="Invalid source reference in WHERE"):
+    with pytest.raises(DatabaseError, match="Invalid source reference in WHERE"):
         _validate_join_where_node(
             {"type": "exists", "outer_refs": ["x.id"]}, {"a", "b"}
         )
@@ -497,22 +498,22 @@ def test_expression_to_sql_for_order_by_window_aggregate_and_case() -> None:
 
 
 def test_parse_order_by_item_error_branches() -> None:
-    with pytest.raises(ValueError, match="Invalid ORDER BY clause format"):
+    with pytest.raises(DatabaseError, match="Invalid ORDER BY clause format"):
         _parse_order_by_item_tokens([])
-    with pytest.raises(ValueError, match="Invalid ORDER BY direction"):
+    with pytest.raises(DatabaseError, match="Invalid ORDER BY direction"):
         _parse_order_by_item_tokens(["a", "x"])
-    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax"):
         _parse_order_by_item_tokens(["a", "NULLS", "FIRST"])
-    with pytest.raises(ValueError, match="Invalid ORDER BY direction"):
+    with pytest.raises(DatabaseError, match="Invalid ORDER BY direction"):
         _parse_order_by_item_tokens(["a", "b"])
-    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax"):
         _parse_order_by_item_tokens(
             ["CASE", "WHEN", "a", "=", "1", "THEN", "1", "END", "ASC", "EXTRA"]
         )
 
 
 def test_parse_select_join_group_by_and_order_by_expression_validation() -> None:
-    with pytest.raises(ValueError, match="GROUP BY in JOIN queries requires qualified"):
+    with pytest.raises(DatabaseError, match="GROUP BY in JOIN queries requires qualified"):
         parse_sql("SELECT a.id FROM a JOIN b ON a.id = b.id GROUP BY id")
 
     parsed = parse_sql(
@@ -590,47 +591,47 @@ def test_annotate_column_tables_traverses_expression_shapes() -> None:
 
 def test_on_conflict_clause_and_insert_error_paths() -> None:
     query = "INSERT INTO t (id) VALUES (1) ON CONFLICT (id) DO NOTHING"
-    with pytest.raises(ValueError, match="Invalid ON CONFLICT clause format"):
+    with pytest.raises(DatabaseError, match="Invalid ON CONFLICT clause format"):
         _parse_on_conflict_clause("ON CONFLICT", query, None)
-    with pytest.raises(ValueError, match="Invalid ON CONFLICT clause format"):
+    with pytest.raises(DatabaseError, match="Invalid ON CONFLICT clause format"):
         _parse_on_conflict_clause("ON BAD (id) DO NOTHING", query, None)
-    with pytest.raises(ValueError, match="target supports only bare"):
+    with pytest.raises(DatabaseError, match="target supports only bare"):
         _parse_on_conflict_clause("ON CONFLICT (t.id) DO NOTHING", query, None)
-    with pytest.raises(ValueError, match="Invalid ON CONFLICT clause format"):
+    with pytest.raises(DatabaseError, match="Invalid ON CONFLICT clause format"):
         _parse_on_conflict_clause("ON CONFLICT (id) DO NOTHING trailing", query, None)
-    with pytest.raises(ValueError, match="Invalid ON CONFLICT clause format"):
+    with pytest.raises(DatabaseError, match="Invalid ON CONFLICT clause format"):
         _parse_on_conflict_clause("ON CONFLICT (id) DO UPDATE SET", query, None)
-    with pytest.raises(ValueError, match="Invalid ON CONFLICT clause format"):
+    with pytest.raises(DatabaseError, match="Invalid ON CONFLICT clause format"):
         _parse_on_conflict_clause("ON CONFLICT (id) DO UPDATE SET bad", query, None)
 
-    with pytest.raises(ValueError, match="Invalid INSERT format"):
+    with pytest.raises(DatabaseError, match="Invalid INSERT format"):
         parse_sql("INSERT INTO")
-    with pytest.raises(ValueError, match="Invalid INSERT format"):
+    with pytest.raises(DatabaseError, match="Invalid INSERT format"):
         parse_sql("INSERT INTO t (a VALUES (1)")
 
 
 def test_with_clause_and_recursive_reference_error_paths() -> None:
-    with pytest.raises(ValueError, match="Invalid SQL query format"):
+    with pytest.raises(DatabaseError, match="Invalid SQL query format"):
         parse_sql("WITH")
-    with pytest.raises(ValueError, match="Recursive CTEs are not supported"):
+    with pytest.raises(DatabaseError, match="Recursive CTEs are not supported"):
         parse_sql("WITH RECURSIVE c AS (SELECT 1 FROM t) SELECT * FROM c")
-    with pytest.raises(ValueError, match="Invalid CTE name"):
+    with pytest.raises(DatabaseError, match="Invalid CTE name"):
         parse_sql("WITH 1c AS (SELECT 1 FROM t) SELECT 1 FROM t")
-    with pytest.raises(ValueError, match="Duplicate CTE name"):
+    with pytest.raises(DatabaseError, match="Duplicate CTE name"):
         parse_sql("WITH c AS (SELECT 1 FROM t), c AS (SELECT 2 FROM t) SELECT * FROM c")
-    with pytest.raises(ValueError, match="expected AS"):
+    with pytest.raises(DatabaseError, match="expected AS"):
         parse_sql("WITH c (SELECT 1 FROM t) SELECT 1 FROM t")
-    with pytest.raises(ValueError, match="expected '\\(' after AS"):
+    with pytest.raises(DatabaseError, match="expected '\\(' after AS"):
         parse_sql("WITH c AS SELECT 1 FROM t SELECT 1 FROM t")
-    with pytest.raises(ValueError, match="empty CTE query"):
+    with pytest.raises(DatabaseError, match="empty CTE query"):
         parse_sql("WITH c AS () SELECT 1 FROM t")
-    with pytest.raises(ValueError, match="Not enough parameters"):
+    with pytest.raises(DatabaseError, match="Not enough parameters"):
         parse_sql("WITH c AS (SELECT ? FROM t) SELECT 1 FROM t", ())
-    with pytest.raises(ValueError, match="missing main SELECT query"):
+    with pytest.raises(DatabaseError, match="missing main SELECT query"):
         parse_sql("WITH c AS (SELECT 1 FROM t)")
-    with pytest.raises(ValueError, match="WITH clause requires a SELECT query"):
+    with pytest.raises(DatabaseError, match="WITH clause requires a SELECT query"):
         parse_sql("WITH c AS (SELECT 1 FROM t) UPDATE t SET x = 1")
-    with pytest.raises(ValueError, match="Unsupported SQL action"):
+    with pytest.raises(DatabaseError, match="Unsupported SQL action"):
         parse_sql("WITH c AS (SELECT 1 FROM t) (SELECT 1 FROM t)")
 
 

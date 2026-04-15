@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
+from ..exceptions import SqlParseError, SqlSemanticError
 from ._constants import (
     _OrderByClause,
     _is_placeholder,
@@ -95,7 +96,7 @@ def _find_clause_positions(tokens: List[str]) -> Dict[str, int]:
 
 def _validate_non_negative_pagination(value: Any, clause_name: str) -> None:
     if isinstance(value, int) and value < 0:
-        raise ValueError(f"{clause_name} must be a non-negative integer")
+        raise SqlParseError(f"{clause_name} must be a non-negative integer")
 
 
 def _parse_columns(
@@ -133,10 +134,10 @@ def _parse_columns(
         if len(collapsed_tokens) >= 3 and collapsed_tokens[-2].upper() == "AS":
             candidate_alias = collapsed_tokens[-1]
             if not _is_valid_alias_name(candidate_alias):
-                raise ValueError(f"Invalid column alias: {candidate_alias}")
+                raise SqlParseError(f"Invalid column alias: {candidate_alias}")
             expression_tokens = collapsed_tokens[:-2]
             if not expression_tokens:
-                raise ValueError("Invalid column list")
+                raise SqlParseError("Invalid column list")
             alias_name = _parse_column_identifier(candidate_alias)
         elif len(collapsed_tokens) >= 2:
             candidate_alias = collapsed_tokens[-1]
@@ -149,7 +150,7 @@ def _parse_columns(
                         allow_subqueries=allow_subqueries,
                         outer_sources=outer_sources,
                     )
-                except ValueError:
+                except SqlParseError:
                     parsed_expression = None
                 else:
                     expression_tokens = candidate_expression_tokens
@@ -168,7 +169,7 @@ def _parse_columns(
             continue
 
         if parsed_expression == "*":
-            raise ValueError("Cannot alias wildcard column '*'")
+            raise SqlParseError("Cannot alias wildcard column '*'")
 
         columns.append(
             {
@@ -179,7 +180,7 @@ def _parse_columns(
         )
 
     if not columns:
-        raise ValueError("Invalid column list")
+        raise SqlParseError("Invalid column list")
     return columns
 
 
@@ -315,9 +316,7 @@ def _parse_scalar_subquery_node(
     outer_sources: set[str] | None,
 ) -> Dict[str, Any]:
     if "?" in _tokenize(subquery_sql):
-        raise ValueError(
-            "Parameterized subqueries are not supported; use literal values"
-        )
+        raise SqlParseError("Parameterized subqueries are not supported; use literal values")
 
     parsed_subquery = _parse_select(
         subquery_sql,
@@ -330,7 +329,7 @@ def _parse_scalar_subquery_node(
         or not isinstance(subquery_columns, list)
         or len(subquery_columns) != 1
     ):
-        raise ValueError("Scalar subquery must select exactly one column")
+        raise SqlParseError("Scalar subquery must select exactly one column")
 
     correlated, outer_refs = _detect_subquery_correlation(
         parsed_subquery,
@@ -383,9 +382,7 @@ def _is_reserved_select_token(token: str) -> bool:
 
 def _parse_qualified_column_reference(token: str) -> Dict[str, str]:
     if not _is_qualified_identifier_or_quoted(token):
-        raise ValueError(
-            f"Invalid column reference in JOIN clause: {token}. Expected source.column"
-        )
+        raise SqlParseError(f"Invalid column reference in JOIN clause: {token}. Expected source.column")
     parts = _split_qualified_identifier(token)
     if parts is not None:
         source = _parse_column_identifier(parts[0])
@@ -401,7 +398,7 @@ def _parse_join_on_condition(
     right_sources: set[str],
 ) -> Dict[str, Any]:
     if not on_tokens:
-        raise ValueError("JOIN requires ON condition")
+        raise SqlParseError("JOIN requires ON condition")
 
     parsed_condition = _parse_where_expression(
         " ".join(on_tokens),
@@ -425,42 +422,38 @@ def _validate_join_on_condition_node(
         if isinstance(operand, dict):
             _validate_join_on_condition_node(operand, left_sources, right_sources)
             return
-        raise ValueError("Invalid JOIN ON condition")
+        raise SqlParseError("Invalid JOIN ON condition")
 
     if "conditions" in node and node.get("type") != "not":
         conditions = node.get("conditions")
         conjunctions = node.get("conjunctions")
         if not isinstance(conditions, list):
-            raise ValueError("Invalid JOIN ON condition")
+            raise SqlParseError("Invalid JOIN ON condition")
         if not isinstance(conjunctions, list):
-            raise ValueError("Invalid JOIN ON condition")
+            raise SqlParseError("Invalid JOIN ON condition")
         if len(conditions) != len(conjunctions) + 1:
-            raise ValueError("Invalid JOIN ON condition")
+            raise SqlParseError("Invalid JOIN ON condition")
 
         for conjunction in conjunctions:
             if str(conjunction).upper() not in {"AND", "OR"}:
-                raise ValueError("JOIN ON supports only AND/OR conjunctions")
+                raise SqlParseError("JOIN ON supports only AND/OR conjunctions")
 
         for condition in conditions:
             if not isinstance(condition, dict):
-                raise ValueError("Invalid JOIN ON condition")
+                raise SqlParseError("Invalid JOIN ON condition")
             _validate_join_on_condition_node(condition, left_sources, right_sources)
         return
 
     operator = str(node.get("operator", "")).upper()
     if operator not in {"=", "==", "!=", "<>", ">", "<", ">=", "<="}:
-        raise ValueError(f"Unsupported JOIN ON operator: {operator}")
+        raise SqlParseError(f"Unsupported JOIN ON operator: {operator}")
 
     left = node.get("column")
     right = node.get("value")
     if not isinstance(left, dict) or left.get("type") != "column":
-        raise ValueError(
-            "Invalid column reference in JOIN: ON supports only qualified column-to-column comparisons"
-        )
+        raise SqlParseError("Invalid column reference in JOIN: ON supports only qualified column-to-column comparisons")
     if not isinstance(right, dict) or right.get("type") != "column":
-        raise ValueError(
-            "Invalid column reference in JOIN: ON supports only qualified column-to-column comparisons"
-        )
+        raise SqlParseError("Invalid column reference in JOIN: ON supports only qualified column-to-column comparisons")
 
     left_source = str(left.get("source", ""))
     right_source = str(right.get("source", ""))
@@ -470,9 +463,7 @@ def _validate_join_on_condition_node(
     right_on_right = right_source in right_sources
 
     if not ((left_on_left and right_on_right) or (left_on_right and right_on_left)):
-        raise ValueError(
-            "JOIN ON references must compare columns from the two joined sources"
-        )
+        raise SqlParseError("JOIN ON references must compare columns from the two joined sources")
 
 
 def _validate_join_column_reference(
@@ -482,9 +473,7 @@ def _validate_join_column_reference(
 ) -> None:
     if isinstance(column, str):
         if not _is_qualified_identifier_or_quoted(column):
-            raise ValueError(
-                f"{context} requires qualified column names in JOIN queries"
-            )
+            raise SqlSemanticError(f"{context} requires qualified column names in JOIN queries")
         parts = _split_qualified_identifier(column)
         if parts is not None:
             source = _parse_column_identifier(parts[0])
@@ -492,7 +481,7 @@ def _validate_join_column_reference(
         else:
             source, name = column.split(".", 1)
         if source not in allowed_sources or not name:
-            raise ValueError(f"Invalid source reference in {context}: {source}.{name}")
+            raise SqlParseError(f"Invalid source reference in {context}: {source}.{name}")
         return
 
     if isinstance(column, dict):
@@ -506,9 +495,7 @@ def _validate_join_column_reference(
             source = str(column.get("source", ""))
             name = str(column.get("name", ""))
             if source not in allowed_sources or not name:
-                raise ValueError(
-                    f"Invalid source reference in {context}: {source}.{name}"
-                )
+                raise SqlParseError(f"Invalid source reference in {context}: {source}.{name}")
             return
         if column_type == "literal":
             return
@@ -516,9 +503,7 @@ def _validate_join_column_reference(
             arg = str(column.get("arg", ""))
             if arg != "*":
                 if not _is_qualified_identifier_or_quoted(arg):
-                    raise ValueError(
-                        "Aggregate arguments in JOIN queries must be qualified column names or *"
-                    )
+                    raise SqlParseError("Aggregate arguments in JOIN queries must be qualified column names or *")
                 parts = _split_qualified_identifier(arg)
                 if parts is not None:
                     source = _parse_column_identifier(parts[0])
@@ -526,9 +511,7 @@ def _validate_join_column_reference(
                 else:
                     source, name = arg.split(".", 1)
                 if source not in allowed_sources or not name:
-                    raise ValueError(
-                        f"Invalid source reference in {context}: {source}.{name}"
-                    )
+                    raise SqlParseError(f"Invalid source reference in {context}: {source}.{name}")
             filter_clause = column.get("filter")
             if isinstance(filter_clause, dict):
                 _validate_join_where_node(filter_clause, allowed_sources)
@@ -625,7 +608,7 @@ def _validate_join_column_reference(
                 )
             return
 
-    raise ValueError(f"{context} requires qualified column names in JOIN queries")
+    raise SqlSemanticError(f"{context} requires qualified column names in JOIN queries")
 
 
 def _validate_join_where_columns(where: Dict[str, Any], join_sources: set[str]) -> None:
@@ -648,7 +631,7 @@ def _validate_join_where_node(node: Dict[str, Any], join_sources: set[str]) -> N
                 else:
                     source = reference.split(".", 1)[0]
                 if source not in join_sources:
-                    raise ValueError(f"Invalid source reference in WHERE: {reference}")
+                    raise SqlParseError(f"Invalid source reference in WHERE: {reference}")
         return
 
     # NOT node: recurse into operand
@@ -689,7 +672,7 @@ def _parse_order_by_item_tokens(
 ) -> dict[str, Any]:
     """Parse a single ORDER BY item like ['name', 'DESC']."""
     if not tokens:
-        raise ValueError("Invalid ORDER BY clause format")
+        raise SqlParseError("Invalid ORDER BY clause format")
 
     direction = "ASC"
     expression_tokens = list(tokens)
@@ -698,11 +681,11 @@ def _parse_order_by_item_tokens(
         expression_tokens = expression_tokens[:-1]
 
     if direction not in {"ASC", "DESC"}:
-        raise ValueError("Invalid ORDER BY direction")
+        raise SqlParseError("Invalid ORDER BY direction")
     if not expression_tokens:
-        raise ValueError("Invalid ORDER BY clause format")
+        raise SqlParseError("Invalid ORDER BY clause format")
     if any(token.upper() in {"NULLS", "FIRST", "LAST"} for token in expression_tokens):
-        raise ValueError(f"Unsupported SQL syntax: {' '.join(expression_tokens)}")
+        raise SqlParseError(f"Unsupported SQL syntax: {' '.join(expression_tokens)}")
     if (
         len(expression_tokens) == 2
         and (
@@ -711,30 +694,26 @@ def _parse_order_by_item_tokens(
         )
         and expression_tokens[1].isalpha()
     ):
-        raise ValueError("Invalid ORDER BY direction")
+        raise SqlParseError("Invalid ORDER BY direction")
     if any(token.upper() == "NULLS" for token in expression_tokens):
         nulls_index = next(
             index
             for index, token in enumerate(expression_tokens)
             if token.upper() == "NULLS"
         )
-        raise ValueError(
-            f"Unsupported SQL syntax: {' '.join(expression_tokens[nulls_index:])}"
-        )
+        raise SqlParseError(f"Unsupported SQL syntax: {' '.join(expression_tokens[nulls_index:])}")
     if len(expression_tokens) > 1 and expression_tokens[-2].upper() in {"ASC", "DESC"}:
-        raise ValueError(f"Unsupported SQL syntax: {expression_tokens[-1]}")
+        raise SqlParseError(f"Unsupported SQL syntax: {expression_tokens[-1]}")
 
     if _is_case_keyword(expression_tokens[0], "CASE"):
         parsed_case, consumed = _parse_case_expression_tokens(expression_tokens, 0)
         if consumed != len(expression_tokens):
             trailing_tokens = expression_tokens[consumed:]
             if len(trailing_tokens) == 1:
-                raise ValueError("Invalid ORDER BY direction")
+                raise SqlParseError("Invalid ORDER BY direction")
             if trailing_tokens[0].upper() in {"ASC", "DESC"}:
-                raise ValueError(
-                    f"Unsupported SQL syntax: {' '.join(trailing_tokens[1:])}"
-                )
-            raise ValueError("Invalid ORDER BY clause format")
+                raise SqlParseError(f"Unsupported SQL syntax: {' '.join(trailing_tokens[1:])}")
+            raise SqlParseError("Invalid ORDER BY clause format")
         result: dict[str, Any] = {
             "column": f"__expr__:{_expression_to_sql_for_order_by(parsed_case)}",
             "direction": direction,
@@ -813,7 +792,7 @@ def _parse_order_by_clause_tokens(
     """Parse ORDER BY tokens (comma-separated) into parsed items."""
     order_text = " ".join(tokens).strip()
     if not order_text:
-        raise ValueError("Invalid ORDER BY clause format")
+        raise SqlParseError("Invalid ORDER BY clause format")
 
     parts = [part.strip() for part in _split_csv(order_text) if part.strip()]
     items = [
@@ -825,7 +804,7 @@ def _parse_order_by_clause_tokens(
         for part in parts
     ]
     if not items:
-        raise ValueError("Invalid ORDER BY clause format")
+        raise SqlParseError("Invalid ORDER BY clause format")
     return _OrderByClause(items)
 
 
@@ -838,20 +817,20 @@ def _parse_select(
     tokens = _tokenize(query.strip())
     from_index = _find_top_level_keyword_index(tokens, "FROM")
     if from_index < 0:
-        raise ValueError(f"Invalid SQL query format: {query}")
+        raise SqlParseError(f"Invalid SQL query format: {query}")
 
     columns_token = " ".join(tokens[1:from_index]).strip()
     if not columns_token:
-        raise ValueError(f"Invalid SQL query format: {query}")
+        raise SqlParseError(f"Invalid SQL query format: {query}")
     distinct = False
     if columns_token.upper().startswith("DISTINCT "):
         distinct = True
         columns_token = columns_token[len("DISTINCT ") :].strip()
         if not columns_token:
-            raise ValueError("DISTINCT requires column list")
+            raise SqlParseError("DISTINCT requires column list")
 
     if len(tokens) <= from_index + 1:
-        raise ValueError(f"Invalid SQL query format: {query}")
+        raise SqlParseError(f"Invalid SQL query format: {query}")
     table = _parse_table_identifier(tokens[from_index + 1])
     from_entry: Dict[str, Any] = {"table": table, "alias": None, "ref": table}
     token_index = from_index + 2
@@ -860,7 +839,7 @@ def _parse_select(
         if maybe_alias.upper() == "AS":
             token_index += 1
             if token_index >= len(tokens):
-                raise ValueError("Expected alias after AS")
+                raise SqlParseError("Expected alias after AS")
             maybe_alias = tokens[token_index]
         if not _is_reserved_select_token(maybe_alias):
             from_entry["alias"] = _parse_column_identifier(maybe_alias)
@@ -882,7 +861,7 @@ def _parse_select(
                 token_index + 1 >= len(tokens)
                 or tokens[token_index + 1].upper() != "JOIN"
             ):
-                raise ValueError("Unsupported SQL syntax: INNER")
+                raise SqlParseError("Unsupported SQL syntax: INNER")
             join_type = "INNER"
             token_index += 2
         elif join_token == "LEFT":
@@ -890,7 +869,7 @@ def _parse_select(
             if token_index < len(tokens) and tokens[token_index].upper() == "OUTER":
                 token_index += 1
             if token_index >= len(tokens) or tokens[token_index].upper() != "JOIN":
-                raise ValueError("Unsupported SQL syntax: LEFT")
+                raise SqlParseError("Unsupported SQL syntax: LEFT")
             join_type = "LEFT"
             token_index += 1
         elif join_token == "RIGHT":
@@ -898,7 +877,7 @@ def _parse_select(
             if token_index < len(tokens) and tokens[token_index].upper() == "OUTER":
                 token_index += 1
             if token_index >= len(tokens) or tokens[token_index].upper() != "JOIN":
-                raise ValueError("Unsupported SQL syntax: RIGHT")
+                raise SqlParseError("Unsupported SQL syntax: RIGHT")
             join_type = "RIGHT"
             token_index += 1
         elif join_token == "FULL":
@@ -906,7 +885,7 @@ def _parse_select(
             if token_index < len(tokens) and tokens[token_index].upper() == "OUTER":
                 token_index += 1
             if token_index >= len(tokens) or tokens[token_index].upper() != "JOIN":
-                raise ValueError("Unsupported SQL syntax: FULL")
+                raise SqlParseError("Unsupported SQL syntax: FULL")
             join_type = "FULL"
             token_index += 1
         elif join_token == "CROSS":
@@ -914,14 +893,14 @@ def _parse_select(
                 token_index + 1 >= len(tokens)
                 or tokens[token_index + 1].upper() != "JOIN"
             ):
-                raise ValueError("Unsupported SQL syntax: CROSS")
+                raise SqlParseError("Unsupported SQL syntax: CROSS")
             join_type = "CROSS"
             token_index += 2
         else:
             break
 
         if token_index >= len(tokens):
-            raise ValueError("Invalid JOIN clause: missing table")
+            raise SqlParseError("Invalid JOIN clause: missing table")
         join_table = _parse_table_identifier(tokens[token_index])
         token_index += 1
 
@@ -935,7 +914,7 @@ def _parse_select(
             if maybe_alias.upper() == "AS":
                 token_index += 1
                 if token_index >= len(tokens):
-                    raise ValueError("Expected alias after AS")
+                    raise SqlParseError("Expected alias after AS")
                 maybe_alias = tokens[token_index]
             if not _is_reserved_select_token(maybe_alias):
                 join_source["alias"] = _parse_column_identifier(maybe_alias)
@@ -959,14 +938,14 @@ def _parse_select(
             # Only collides if table name matches existing ref (non-table)
             pass  # already covered by _known_refs check above
         if collision:
-            raise ValueError(
+            raise SqlSemanticError(
                 f"Ambiguous table reference '{collision.pop()}' in JOIN; "
                 f"use distinct aliases for each table"
             )
 
         if join_type == "CROSS":
             if token_index < len(tokens) and tokens[token_index].upper() == "ON":
-                raise ValueError("CROSS JOIN does not accept ON condition")
+                raise SqlParseError("CROSS JOIN does not accept ON condition")
             joins.append(
                 {
                     "type": join_type,
@@ -980,7 +959,7 @@ def _parse_select(
             continue
         else:
             if token_index >= len(tokens) or tokens[token_index].upper() != "ON":
-                raise ValueError("JOIN requires ON condition")
+                raise SqlParseError("JOIN requires ON condition")
             token_index += 1
 
         on_start = token_index
@@ -1043,36 +1022,36 @@ def _parse_select(
     outer_query_sources = set(known_source_refs)
 
     if having_index >= 0 and group_index < 0:
-        raise ValueError("HAVING requires GROUP BY")
+        raise SqlParseError("HAVING requires GROUP BY")
 
     if where_index >= 0 and order_index >= 0 and order_index < where_index:
-        raise ValueError("ORDER BY cannot appear before WHERE")
+        raise SqlParseError("ORDER BY cannot appear before WHERE")
     if where_index >= 0 and limit_index >= 0 and limit_index < where_index:
-        raise ValueError("LIMIT cannot appear before WHERE")
+        raise SqlParseError("LIMIT cannot appear before WHERE")
     if where_index >= 0 and offset_index >= 0 and offset_index < where_index:
-        raise ValueError("OFFSET cannot appear before WHERE")
+        raise SqlParseError("OFFSET cannot appear before WHERE")
     if where_index >= 0 and group_index >= 0 and group_index < where_index:
-        raise ValueError("GROUP BY cannot appear before WHERE")
+        raise SqlParseError("GROUP BY cannot appear before WHERE")
     if where_index >= 0 and having_index >= 0 and having_index < where_index:
-        raise ValueError("HAVING cannot appear before WHERE")
+        raise SqlParseError("HAVING cannot appear before WHERE")
     if group_index >= 0 and having_index >= 0 and having_index < group_index:
-        raise ValueError("HAVING cannot appear before GROUP BY")
+        raise SqlParseError("HAVING cannot appear before GROUP BY")
     if group_index >= 0 and order_index >= 0 and order_index < group_index:
-        raise ValueError("ORDER BY cannot appear before GROUP BY")
+        raise SqlParseError("ORDER BY cannot appear before GROUP BY")
     if group_index >= 0 and limit_index >= 0 and limit_index < group_index:
-        raise ValueError("LIMIT cannot appear before GROUP BY")
+        raise SqlParseError("LIMIT cannot appear before GROUP BY")
     if group_index >= 0 and offset_index >= 0 and offset_index < group_index:
-        raise ValueError("OFFSET cannot appear before GROUP BY")
+        raise SqlParseError("OFFSET cannot appear before GROUP BY")
     if having_index >= 0 and order_index >= 0 and order_index < having_index:
-        raise ValueError("ORDER BY cannot appear before HAVING")
+        raise SqlParseError("ORDER BY cannot appear before HAVING")
     if having_index >= 0 and limit_index >= 0 and limit_index < having_index:
-        raise ValueError("LIMIT cannot appear before HAVING")
+        raise SqlParseError("LIMIT cannot appear before HAVING")
     if having_index >= 0 and offset_index >= 0 and offset_index < having_index:
-        raise ValueError("OFFSET cannot appear before HAVING")
+        raise SqlParseError("OFFSET cannot appear before HAVING")
     if order_index >= 0 and offset_index >= 0 and offset_index < order_index:
-        raise ValueError("OFFSET cannot appear before ORDER BY")
+        raise SqlParseError("OFFSET cannot appear before ORDER BY")
     if limit_index >= 0 and offset_index >= 0 and offset_index < limit_index:
-        raise ValueError("OFFSET cannot appear before LIMIT")
+        raise SqlParseError("OFFSET cannot appear before LIMIT")
 
     if where_index >= 0:
         where_start = where_index + 1
@@ -1112,7 +1091,7 @@ def _parse_select(
         group_part = " ".join(clause_tokens[group_start:group_end]).strip()
         group_columns = [col.strip() for col in _split_csv(group_part) if col.strip()]
         if not group_columns:
-            raise ValueError("Invalid GROUP BY clause format")
+            raise SqlParseError("Invalid GROUP BY clause format")
         parsed_group_by = [
             _parse_column_expression(
                 column,
@@ -1150,7 +1129,7 @@ def _parse_select(
         )
         having_part = " ".join(clause_tokens[having_start:having_end]).strip()
         if not having_part:
-            raise ValueError("Invalid HAVING clause format")
+            raise SqlParseError("Invalid HAVING clause format")
         having_part = _normalize_aggregate_expressions(having_part)
         having = _parse_where_expression(
             having_part,
@@ -1184,21 +1163,21 @@ def _parse_select(
         )
         limit_part = " ".join(clause_tokens[limit_start:limit_end]).strip()
         if not limit_part:
-            raise ValueError("Invalid LIMIT clause format")
+            raise SqlParseError("Invalid LIMIT clause format")
         limit_value = _parse_value(limit_part)
         if not isinstance(limit_value, int):
             if limit_value != "?":
-                raise ValueError("LIMIT must be an integer")
+                raise SqlParseError("LIMIT must be an integer")
         limit = limit_value
 
     if offset_index >= 0:
         offset_part = " ".join(clause_tokens[offset_index + 1 :]).strip()
         if not offset_part:
-            raise ValueError("Invalid OFFSET clause format")
+            raise SqlParseError("Invalid OFFSET clause format")
         offset_value = _parse_value(offset_part)
         if not isinstance(offset_value, int):
             if offset_value != "?":
-                raise ValueError("OFFSET must be an integer")
+                raise SqlParseError("OFFSET must be an integer")
         offset = offset_value
 
     consumed_indices: set[int] = set()
@@ -1276,7 +1255,7 @@ def _parse_select(
     unconsumed = [i for i in range(len(clause_tokens)) if i not in consumed_indices]
     if unconsumed:
         unconsumed_text = " ".join(clause_tokens[i] for i in unconsumed)
-        raise ValueError(f"Unsupported SQL syntax: {unconsumed_text}")
+        raise SqlParseError(f"Unsupported SQL syntax: {unconsumed_text}")
 
     column_expressions: List[Any] = []
     for column in columns:
@@ -1351,9 +1330,9 @@ def _parse_select(
         if offset is not None:
             offset = bound[consumed]
     if limit is not None and not isinstance(limit, int):
-        raise ValueError("LIMIT must be an integer")
+        raise SqlParseError("LIMIT must be an integer")
     if offset is not None and not isinstance(offset, int):
-        raise ValueError("OFFSET must be an integer")
+        raise SqlParseError("OFFSET must be an integer")
     if limit is not None:
         _validate_non_negative_pagination(limit, "LIMIT")
     if offset is not None:
@@ -1374,20 +1353,14 @@ def _parse_select(
                     ):
                         qualified_group_column = f"{source_name}.{column_name}"
                     else:
-                        raise ValueError(
-                            "GROUP BY in JOIN queries requires qualified column names"
-                        )
+                        raise SqlParseError("GROUP BY in JOIN queries requires qualified column names")
                 elif isinstance(group_column, str):
                     qualified_group_column = group_column
                 else:
-                    raise ValueError(
-                        "GROUP BY in JOIN queries requires qualified column names"
-                    )
+                    raise SqlParseError("GROUP BY in JOIN queries requires qualified column names")
 
                 if not _is_qualified_identifier_or_quoted(qualified_group_column):
-                    raise ValueError(
-                        "GROUP BY in JOIN queries requires qualified column names"
-                    )
+                    raise SqlParseError("GROUP BY in JOIN queries requires qualified column names")
 
         join_sources = {
             str(from_entry["table"]),
@@ -1405,9 +1378,7 @@ def _parse_select(
 
         has_wildcard = any(isinstance(col, str) and col == "*" for col in columns)
         if has_wildcard and len(columns) > 1:
-            raise ValueError(
-                "SELECT * cannot be mixed with other columns in JOIN queries"
-            )
+            raise SqlParseError("SELECT * cannot be mixed with other columns in JOIN queries")
         if has_wildcard:
             # Bare wildcard is valid; skip per-column validation
             pass
@@ -1423,9 +1394,7 @@ def _parse_select(
                 ):
                     arg = str(expression.get("arg", "")).strip()
                     if arg != "*" and not _is_qualified_identifier_or_quoted(arg):
-                        raise ValueError(
-                            "Aggregate arguments in JOIN queries must be qualified column names or *"
-                        )
+                        raise SqlParseError("Aggregate arguments in JOIN queries must be qualified column names or *")
                     filter_clause = expression.get("filter")
                     if isinstance(filter_clause, dict):
                         _validate_join_where_node(filter_clause, join_sources)
@@ -1460,9 +1429,7 @@ def _parse_select(
                 ):
                     arg = str(aggregate_expression.get("arg", "")).strip()
                     if arg != "*" and not _is_qualified_identifier_or_quoted(arg):
-                        raise ValueError(
-                            "Aggregate arguments in JOIN queries must be qualified column names or *"
-                        )
+                        raise SqlParseError("Aggregate arguments in JOIN queries must be qualified column names or *")
                     filter_clause = aggregate_expression.get("filter")
                     if isinstance(filter_clause, dict):
                         _validate_join_where_node(filter_clause, join_sources)
@@ -1491,18 +1458,18 @@ def _parse_select(
 def _bind_params(values: List[Any], params: Optional[tuple[Any, ...]]) -> List[Any]:
     if params is None:
         if any(_is_placeholder(value) for value in values):
-            raise ValueError("Missing parameters for placeholders")
+            raise SqlParseError("Missing parameters for placeholders")
         return values
     bound: List[Any] = []
     param_index = 0
     for value in values:
         if _is_placeholder(value):
             if param_index >= len(params):
-                raise ValueError("Not enough parameters for placeholders")
+                raise SqlParseError("Not enough parameters for placeholders")
             bound.append(params[param_index])
             param_index += 1
         else:
             bound.append(value)
     if param_index < len(params):
-        raise ValueError("Too many parameters for placeholders")
+        raise SqlParseError("Too many parameters for placeholders")
     return bound

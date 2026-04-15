@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -42,7 +43,7 @@ def test_parse_where_in_single_value() -> None:
 
 
 def test_parse_where_in_rejects_empty_list() -> None:
-    with pytest.raises(ValueError, match="IN clause cannot be empty"):
+    with pytest.raises(DatabaseError, match="IN clause cannot be empty"):
         parse_sql("SELECT * FROM t WHERE x IN ()")
 
 

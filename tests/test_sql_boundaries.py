@@ -1,4 +1,5 @@
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 
 from excel_dbapi.parser import parse_sql
 
@@ -9,12 +10,12 @@ def test_scalar_subquery_in_where_is_accepted():
 
 
 def test_rejects_for_update():
-    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax"):
         parse_sql("SELECT * FROM users FOR UPDATE")
 
 
 def test_rejects_nulls_last():
-    with pytest.raises(ValueError, match="Unsupported SQL syntax"):
+    with pytest.raises(DatabaseError, match="Unsupported SQL syntax"):
         parse_sql("SELECT * FROM users ORDER BY id ASC NULLS LAST")
 
 

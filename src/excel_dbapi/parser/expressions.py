@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
+from ..exceptions import SqlParseError
 from ._constants import (
     _AGGREGATE_FUNCTIONS,
     _IDENTIFIER_PATTERN,
@@ -94,12 +95,12 @@ def _parse_case_expression_tokens(
     start_index: int,
 ) -> tuple[Dict[str, Any], int]:
     if start_index >= len(tokens) or not _is_case_keyword(tokens[start_index], "CASE"):
-        raise ValueError("Invalid CASE expression")
+        raise SqlParseError("Invalid CASE expression")
 
     index = start_index + 1
     head_tokens, index, first_stop = _collect_case_tokens_until(tokens, index, {"WHEN"})
     if first_stop != "WHEN":
-        raise ValueError("Invalid CASE expression: missing WHEN")
+        raise SqlParseError("Invalid CASE expression: missing WHEN")
 
     mode = "searched"
     case_value: Any = None
@@ -121,7 +122,7 @@ def _parse_case_expression_tokens(
             tokens, index, {"THEN"}
         )
         if then_stop != "THEN" or not when_tokens:
-            raise ValueError("Invalid CASE expression: expected WHEN ... THEN ...")
+            raise SqlParseError("Invalid CASE expression: expected WHEN ... THEN ...")
 
         index += 1
         result_tokens, index, next_stop = _collect_case_tokens_until(
@@ -130,7 +131,7 @@ def _parse_case_expression_tokens(
             {"WHEN", "ELSE", "END"},
         )
         if not result_tokens:
-            raise ValueError("Invalid CASE expression: THEN requires a result")
+            raise SqlParseError("Invalid CASE expression: THEN requires a result")
         result_expression = _parse_column_expression(
             " ".join(result_tokens),
             allow_wildcard=False,
@@ -173,9 +174,9 @@ def _parse_case_expression_tokens(
                 tokens, index, {"END"}
             )
             if end_stop != "END":
-                raise ValueError("Invalid CASE expression: missing END")
+                raise SqlParseError("Invalid CASE expression: missing END")
             if not else_tokens:
-                raise ValueError("Invalid CASE expression: ELSE requires a result")
+                raise SqlParseError("Invalid CASE expression: ELSE requires a result")
             else_expression = _parse_column_expression(
                 " ".join(else_tokens),
                 allow_wildcard=False,
@@ -191,18 +192,18 @@ def _parse_case_expression_tokens(
             break
 
         if next_stop is None:
-            raise ValueError("Invalid CASE expression: missing END")
+            raise SqlParseError("Invalid CASE expression: missing END")
 
-        raise ValueError("Invalid CASE expression")
+        raise SqlParseError("Invalid CASE expression")
 
     if not whens:
-        raise ValueError("Invalid CASE expression: missing WHEN branches")
+        raise SqlParseError("Invalid CASE expression: missing WHEN branches")
 
     if not closed:
         if index < len(tokens) and _is_case_keyword(tokens[index], "END"):
             index += 1
         else:
-            raise ValueError("Invalid CASE expression: missing END")
+            raise SqlParseError("Invalid CASE expression: missing END")
 
     return (
         {
@@ -220,7 +221,7 @@ def _parse_case_expression(expression: str) -> Dict[str, Any]:
     tokens = _collapse_aggregate_tokens(_tokenize(expression.strip()))
     parsed_case, index = _parse_case_expression_tokens(tokens, 0)
     if index != len(tokens):
-        raise ValueError("Invalid CASE expression")
+        raise SqlParseError("Invalid CASE expression")
     return parsed_case
 
 
@@ -234,7 +235,7 @@ def _parse_column_expression(
 ) -> Any:
     expression = expression.strip()
     if not expression:
-        raise ValueError("Invalid column expression")
+        raise SqlParseError("Invalid column expression")
 
     pretokenized = _collapse_aggregate_tokens(_tokenize(expression))
     parsed_window_or_aggregate = _parse_window_or_aggregate_expression_tokens(
@@ -249,9 +250,7 @@ def _parse_column_expression(
     if expression == "*":
         if allow_wildcard:
             return expression
-        raise ValueError(
-            "Unsupported column expression: wildcard is not supported here"
-        )
+        raise SqlParseError("Unsupported column expression: wildcard is not supported here")
 
     literal_value: Any | None = None
     parsed_numeric = _parse_numeric_literal(expression)
@@ -291,9 +290,9 @@ def _parse_column_expression(
         nonlocal position
         token = _peek()
         if token is None:
-            raise ValueError(f"Unsupported column expression: {expression}")
+            raise SqlParseError(f"Unsupported column expression: {expression}")
         if expected is not None and token != expected:
-            raise ValueError(f"Unsupported column expression: {expression}")
+            raise SqlParseError(f"Unsupported column expression: {expression}")
         position += 1
         return token
 
@@ -301,7 +300,7 @@ def _parse_column_expression(
         nonlocal position
         token = _peek()
         if token is None:
-            raise ValueError(f"Unsupported column expression: {expression}")
+            raise SqlParseError(f"Unsupported column expression: {expression}")
 
         if token == "(":
             if (
@@ -324,7 +323,7 @@ def _parse_column_expression(
             _consume("(")
             parsed = _parse_expression_internal()
             if _peek() != ")":
-                raise ValueError(f"Unsupported column expression: {expression}")
+                raise SqlParseError(f"Unsupported column expression: {expression}")
             _consume(")")
             return parsed
 
@@ -347,13 +346,13 @@ def _parse_column_expression(
                 cast_value = _parse_expression_internal()
                 as_token = _peek()
                 if as_token is None or as_token.upper() != "AS":
-                    raise ValueError(f"Unsupported column expression: {expression}")
+                    raise SqlParseError(f"Unsupported column expression: {expression}")
                 _consume()
                 target_type = _consume()
                 if not re.fullmatch(_IDENTIFIER_PATTERN, target_type):
-                    raise ValueError(f"Unsupported column expression: {expression}")
+                    raise SqlParseError(f"Unsupported column expression: {expression}")
                 if _peek() != ")":
-                    raise ValueError(f"Unsupported column expression: {expression}")
+                    raise SqlParseError(f"Unsupported column expression: {expression}")
                 _consume(")")
                 return {
                     "type": "cast",
@@ -363,12 +362,10 @@ def _parse_column_expression(
 
             if function_name not in _SCALAR_FUNCTION_NAMES:
                 if function_name in _AGGREGATE_FUNCTIONS:
-                    raise ValueError(
-                        f"Unsupported function: {token}. "
-                        f"Unsupported aggregate expression: {expression}. "
-                        "Only bare column names and * are supported"
-                    )
-                raise ValueError(f"Unsupported function: {token}")
+                    raise SqlParseError(f"Unsupported function: {token}. "
+                    f"Unsupported aggregate expression: {expression}. "
+                    "Only bare column names and * are supported")
+                raise SqlParseError(f"Unsupported function: {token}")
 
             arguments: list[Any] = []
             if _peek() == ")":
@@ -380,7 +377,7 @@ def _parse_column_expression(
                         break
                     _consume(",")
                 if _peek() != ")":
-                    raise ValueError(f"Unsupported column expression: {expression}")
+                    raise SqlParseError(f"Unsupported column expression: {expression}")
                 _consume(")")
 
             return {"type": "function", "name": function_name, "args": arguments}
@@ -413,16 +410,12 @@ def _parse_column_expression(
             r"(?i)(COUNT|SUM|AVG|MIN|MAX)\s*\(\s*(DISTINCT\s+)?([^\)]+?)\s*\)",
             token,
         ):
-            raise ValueError(
-                "Unsupported column expression: aggregate functions cannot be used inside arithmetic expressions"
-            )
+            raise SqlParseError("Unsupported column expression: aggregate functions cannot be used inside arithmetic expressions")
 
-        raise ValueError(
-            f"Unsupported column expression: {expression}. "
-            "Only bare column names, qualified column names, numeric literals, "
-            "quoted literals, CASE expressions, CAST, scalar functions, "
-            "arithmetic operators (+, -, *, /, ||), and aggregate functions are supported"
-        )
+        raise SqlParseError(f"Unsupported column expression: {expression}. "
+        "Only bare column names, qualified column names, numeric literals, "
+        "quoted literals, CASE expressions, CAST, scalar functions, "
+        "arithmetic operators (+, -, *, /, ||), and aggregate functions are supported")
 
     def _parse_factor() -> Any:
         token = _peek()
@@ -466,7 +459,7 @@ def _parse_column_expression(
 
     parsed_expression = _parse_expression_internal()
     if _peek() is not None:
-        raise ValueError(f"Unsupported column expression: {expression}")
+        raise SqlParseError(f"Unsupported column expression: {expression}")
     return parsed_expression
 
 
@@ -496,27 +489,23 @@ def _parse_aggregate_token(token: str) -> dict[str, Any] | None:
     distinct_modifier = match.group(2)
     arg = match.group(3).strip()
     if not arg:
-        raise ValueError("Invalid aggregate expression")
+        raise SqlParseError("Invalid aggregate expression")
     if distinct_modifier:
         if func != "COUNT":
-            raise ValueError("DISTINCT is only supported with COUNT")
+            raise SqlParseError("DISTINCT is only supported with COUNT")
         if arg == "*":
-            raise ValueError("Invalid aggregate expression")
+            raise SqlParseError("Invalid aggregate expression")
         if not (_is_identifier_or_quoted(arg) or _is_qualified_identifier_or_quoted(arg)):
-            raise ValueError(
-                f"Unsupported aggregate expression: COUNT(DISTINCT {arg}). "
-                "Only bare and qualified column names are supported with DISTINCT"
-            )
+            raise SqlParseError(f"Unsupported aggregate expression: COUNT(DISTINCT {arg}). "
+            "Only bare and qualified column names are supported with DISTINCT")
 
     if arg == "*" and func != "COUNT":
-        raise ValueError(f"{func} does not support *")
+        raise SqlParseError(f"{func} does not support *")
     if arg != "*" and not (
         _is_identifier_or_quoted(arg) or _is_qualified_identifier_or_quoted(arg)
     ):
-        raise ValueError(
-            f"Unsupported aggregate expression: {func}({arg}). "
-            "Only bare column names and * are supported"
-        )
+        raise SqlParseError(f"Unsupported aggregate expression: {func}({arg}). "
+        "Only bare column names and * are supported")
 
     aggregate: dict[str, Any] = {"type": "aggregate", "func": func, "arg": arg}
     if distinct_modifier:
@@ -535,14 +524,14 @@ def _parse_filter_clause_tokens(
         return None, start_index
 
     if start_index + 2 >= len(tokens) or tokens[start_index + 1] != "(":
-        raise ValueError("Invalid FILTER clause")
+        raise SqlParseError("Invalid FILTER clause")
     if tokens[start_index + 2].upper() != "WHERE":
-        raise ValueError("Invalid FILTER clause: expected WHERE")
+        raise SqlParseError("Invalid FILTER clause: expected WHERE")
 
     filter_end = _find_matching_parenthesis(tokens, start_index + 1)
     filter_tokens = tokens[start_index + 3 : filter_end]
     if not filter_tokens:
-        raise ValueError("Invalid FILTER clause")
+        raise SqlParseError("Invalid FILTER clause")
 
     filter_text = " ".join(filter_tokens).strip()
     from .where import _parse_where_expression
@@ -595,9 +584,9 @@ def _parse_window_spec_tokens(
     outer_sources: set[str] | None,
 ) -> tuple[list[Any], list[dict[str, Any]], int]:
     if start_index >= len(tokens) or tokens[start_index].upper() != "OVER":
-        raise ValueError("Invalid window function: missing OVER")
+        raise SqlParseError("Invalid window function: missing OVER")
     if start_index + 1 >= len(tokens) or tokens[start_index + 1] != "(":
-        raise ValueError("Invalid window specification")
+        raise SqlParseError("Invalid window specification")
 
     spec_end = _find_matching_parenthesis(tokens, start_index + 1)
     spec_tokens = tokens[start_index + 2 : spec_end]
@@ -608,18 +597,14 @@ def _parse_window_spec_tokens(
 
     if index < len(spec_tokens) and spec_tokens[index].upper() == "PARTITION":
         if index + 1 >= len(spec_tokens) or spec_tokens[index + 1].upper() != "BY":
-            raise ValueError(
-                "Invalid window specification: expected BY after PARTITION"
-            )
+            raise SqlParseError("Invalid window specification: expected BY after PARTITION")
         partition_start = index + 2
         partition_end = _find_top_level_window_clause_index(
             spec_tokens, partition_start
         )
         partition_text = " ".join(spec_tokens[partition_start:partition_end]).strip()
         if not partition_text:
-            raise ValueError(
-                "Invalid window specification: PARTITION BY requires expression"
-            )
+            raise SqlParseError("Invalid window specification: PARTITION BY requires expression")
         partition_by = [
             _parse_column_expression(
                 part,
@@ -632,21 +617,17 @@ def _parse_window_spec_tokens(
             if part.strip()
         ]
         if not partition_by:
-            raise ValueError(
-                "Invalid window specification: PARTITION BY requires expression"
-            )
+            raise SqlParseError("Invalid window specification: PARTITION BY requires expression")
         index = partition_end
 
     if index < len(spec_tokens) and spec_tokens[index].upper() == "ORDER":
         if index + 1 >= len(spec_tokens) or spec_tokens[index + 1].upper() != "BY":
-            raise ValueError("Invalid window specification: expected BY after ORDER")
+            raise SqlParseError("Invalid window specification: expected BY after ORDER")
         order_start = index + 2
         order_end = _find_top_level_window_clause_index(spec_tokens, order_start)
         order_text = " ".join(spec_tokens[order_start:order_end]).strip()
         if not order_text:
-            raise ValueError(
-                "Invalid window specification: ORDER BY requires expression"
-            )
+            raise SqlParseError("Invalid window specification: ORDER BY requires expression")
         from .select import _parse_order_by_clause_text
         order_by = list(
             _parse_order_by_clause_text(
@@ -668,7 +649,7 @@ def _parse_window_spec_tokens(
             "CURRENT",
             "ROW",
         ]:
-            raise ValueError("Unsupported window frame specification")
+            raise SqlParseError("Unsupported window frame specification")
 
     return partition_by, order_by, spec_end + 1
 
@@ -702,7 +683,7 @@ def _parse_window_or_aggregate_expression_tokens(
                 outer_sources=outer_sources,
             )
             if index != len(tokens):
-                raise ValueError("Unsupported column expression")
+                raise SqlParseError("Unsupported column expression")
             window_function: dict[str, Any] = {
                 "type": "window_function",
                 "func": str(aggregate_expression["func"]),
@@ -718,9 +699,7 @@ def _parse_window_or_aggregate_expression_tokens(
 
         if index == len(tokens):
             if not allow_aggregates:
-                raise ValueError(
-                    "Unsupported column expression: aggregate functions are not supported here"
-                )
+                raise SqlParseError("Unsupported column expression: aggregate functions are not supported here")
             return aggregate_expression
 
     if (
@@ -732,7 +711,7 @@ def _parse_window_or_aggregate_expression_tokens(
         if function_name in _WINDOW_FUNCTIONS:
             function_end = _find_matching_parenthesis(tokens, 1)
             if function_end != 2:
-                raise ValueError(f"{function_name} does not accept arguments")
+                raise SqlParseError(f"{function_name} does not accept arguments")
             if (
                 function_end + 1 >= len(tokens)
                 or tokens[function_end + 1].upper() != "OVER"
@@ -745,7 +724,7 @@ def _parse_window_or_aggregate_expression_tokens(
                 outer_sources=outer_sources,
             )
             if next_index != len(tokens):
-                raise ValueError("Unsupported column expression")
+                raise SqlParseError("Unsupported column expression")
             return {
                 "type": "window_function",
                 "func": function_name,

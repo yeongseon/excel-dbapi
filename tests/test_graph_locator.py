@@ -1,4 +1,5 @@
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 
 from excel_dbapi.engines.graph.locator import parse_msgraph_dsn
 
@@ -38,5 +39,5 @@ def test_parse_onedrive_me_locator() -> None:
     ],
 )
 def test_parse_extended_locators_reject_invalid_shapes(dsn: str) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         _ = parse_msgraph_dsn(dsn)

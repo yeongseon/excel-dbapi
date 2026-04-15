@@ -5,6 +5,8 @@ import os
 from typing import Any
 import warnings
 
+from ..exceptions import BackendOperationError
+
 
 @dataclass
 class TableData:
@@ -57,7 +59,7 @@ class WorkbookBackend(ABC):
         if value is None:
             return None
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-            raise ValueError("max_rows must be a positive integer")
+            raise BackendOperationError("max_rows must be a positive integer")
         return int(value)
 
     @staticmethod
@@ -69,7 +71,7 @@ class WorkbookBackend(ABC):
             or not isinstance(value, (int, float))
             or float(value) <= 0
         ):
-            raise ValueError("max_memory_mb must be a positive number")
+            raise BackendOperationError("max_memory_mb must be a positive number")
         return float(value)
 
     def _acquire_lock(self) -> None:

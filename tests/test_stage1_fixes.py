@@ -15,7 +15,7 @@ import pytest
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
-from excel_dbapi.exceptions import OperationalError
+from excel_dbapi.exceptions import NotSupportedError, OperationalError
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -330,7 +330,7 @@ class TestNullHandling:
 
 class TestExceptionTypes:
     def test_unsupported_engine_raises_operational_error(self, tmp_xlsx):
-        with pytest.raises(OperationalError, match="Unsupported engine"):
+        with pytest.raises(NotSupportedError, match="Unsupported engine"):
             ExcelConnection(tmp_xlsx, engine="sqlite")
 
     def test_missing_file_raises_operational_error(self, tmp_xlsx_path):
@@ -352,5 +352,5 @@ class TestExceptionTypes:
         """Engine validation should happen before file existence check."""
         # Both conditions fail: bad engine + missing file
         # Should get OperationalError about engine, not about file
-        with pytest.raises(OperationalError, match="Unsupported engine"):
+        with pytest.raises(NotSupportedError, match="Unsupported engine"):
             ExcelConnection(tmp_xlsx_path, engine="nonexistent")

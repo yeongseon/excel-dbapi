@@ -7,6 +7,7 @@ from typing import Any, cast
 from openpyxl import load_workbook
 from openpyxl.workbook.workbook import Workbook
 
+from ...exceptions import BackendOperationError
 from ...executor import SharedExecutor
 from ..result import ExecutionResult
 from ..base import TableData, WorkbookBackend, _normalize_headers
@@ -55,7 +56,7 @@ class OpenpyxlBackend(WorkbookBackend):
 
     def save(self) -> None:
         if self.workbook is None:
-            raise ValueError("Workbook is not loaded")
+            raise BackendOperationError("Workbook is not loaded")
         directory = os.path.dirname(self.file_path) or "."
         temp_file = None
         try:
@@ -72,7 +73,7 @@ class OpenpyxlBackend(WorkbookBackend):
 
     def snapshot(self) -> BytesIO:
         if self.workbook is None:
-            raise ValueError("Workbook is not loaded")
+            raise BackendOperationError("Workbook is not loaded")
         buffer = BytesIO()
         self.workbook.save(buffer)
         buffer.seek(0)
@@ -89,7 +90,7 @@ class OpenpyxlBackend(WorkbookBackend):
     def read_sheet(self, sheet_name: str) -> TableData:
         ws = self.data.get(sheet_name)
         if ws is None:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
         row_iter = ws.iter_rows(values_only=True)
         first_row = next(row_iter, None)
         if first_row is None:
@@ -119,7 +120,7 @@ class OpenpyxlBackend(WorkbookBackend):
     def write_sheet(self, sheet_name: str, data: TableData) -> None:
         ws = self.data.get(sheet_name)
         if ws is None:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
         # Write in-place to preserve cell formatting (fonts, borders, fills).
         # Step 1: Write header row.
         for col_idx, header in enumerate(data.headers, start=1):
@@ -143,31 +144,31 @@ class OpenpyxlBackend(WorkbookBackend):
     def append_row(self, sheet_name: str, row: list[Any]) -> int:
         ws = self.data.get(sheet_name)
         if ws is None:
-            raise ValueError(f"Sheet '{sheet_name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{sheet_name}' not found in Excel")
         ws.append(row)
         return cast(int, ws.max_row)
 
     def create_sheet(self, name: str, headers: list[str]) -> None:
         if self.workbook is None:
-            raise ValueError("Workbook is not loaded")
+            raise BackendOperationError("Workbook is not loaded")
         if name in self.data:
-            raise ValueError(f"Sheet '{name}' already exists")
+            raise BackendOperationError(f"Sheet '{name}' already exists")
         ws = self.workbook.create_sheet(title=name)
         ws.append(headers)
         self.data[name] = ws
 
     def drop_sheet(self, name: str) -> None:
         if self.workbook is None:
-            raise ValueError("Workbook is not loaded")
+            raise BackendOperationError("Workbook is not loaded")
         ws = self.data.get(name)
         if ws is None:
-            raise ValueError(f"Sheet '{name}' not found in Excel")
+            raise BackendOperationError(f"Sheet '{name}' not found in Excel")
         self.workbook.remove(ws)
         del self.data[name]
 
     def get_workbook(self) -> Any:
         if self.workbook is None:
-            raise ValueError("Workbook is not loaded")
+            raise BackendOperationError("Workbook is not loaded")
         return self.workbook
 
     def execute(self, query: str) -> ExecutionResult:

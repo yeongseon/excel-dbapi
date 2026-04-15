@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Union
 
+from ..exceptions import SqlParseError, SqlSemanticError
 from .tokenizer import (
     _count_unquoted_placeholders,
     _find_matching_parenthesis,
@@ -121,7 +122,7 @@ def _extract_trailing_clauses(
         elif tu == "LIMIT":
             idx += 1
             if idx >= len(trail_tokens):
-                raise ValueError("Invalid LIMIT clause format")
+                raise SqlParseError("Invalid LIMIT clause format")
             val = trail_tokens[idx]
             limit = int(val) if val != "?" else val
             _validate_non_negative_pagination(limit, "LIMIT")
@@ -129,7 +130,7 @@ def _extract_trailing_clauses(
         elif tu == "OFFSET":
             idx += 1
             if idx >= len(trail_tokens):
-                raise ValueError("Invalid OFFSET clause format")
+                raise SqlParseError("Invalid OFFSET clause format")
             val = trail_tokens[idx]
             offset = int(val) if val != "?" else val
             _validate_non_negative_pagination(offset, "OFFSET")
@@ -174,14 +175,14 @@ def _parse_compound(
             if depth < 0:
                 if not found_compound:
                     return None
-                raise ValueError(f"Invalid SQL query format: {query}")
+                raise SqlParseError(f"Invalid SQL query format: {query}")
             current_tokens.append(token)
             index += 1
             continue
 
         if depth == 0 and upper in {"UNION", "INTERSECT", "EXCEPT"}:
             if not current_tokens:
-                raise ValueError(f"Invalid SQL query format: {query}")
+                raise SqlParseError(f"Invalid SQL query format: {query}")
             query_tokens.append(current_tokens)
             current_tokens = []
             found_compound = True
@@ -202,15 +203,15 @@ def _parse_compound(
         index += 1
 
     if depth != 0 and found_compound:
-        raise ValueError(f"Invalid SQL query format: {query}")
+        raise SqlParseError(f"Invalid SQL query format: {query}")
     if not found_compound:
         return None
     if not current_tokens:
-        raise ValueError(f"Invalid SQL query format: {query}")
+        raise SqlParseError(f"Invalid SQL query format: {query}")
 
     query_tokens.append(current_tokens)
     if len(query_tokens) != len(operators) + 1:
-        raise ValueError(f"Invalid SQL query format: {query}")
+        raise SqlParseError(f"Invalid SQL query format: {query}")
 
     # Extract compound-level ORDER BY / LIMIT / OFFSET from the last branch.
     last_branch = query_tokens[-1]
@@ -227,7 +228,7 @@ def _parse_compound(
     total_params = len(params) if params is not None else 0
     for segment_tokens in query_tokens:
         if not segment_tokens or segment_tokens[0].upper() != "SELECT":
-            raise ValueError("Compound queries support only SELECT subqueries")
+            raise SqlParseError("Compound queries support only SELECT subqueries")
 
         segment_query = " ".join(segment_tokens)
         segment_params: Optional[tuple[Any, ...]] = None
@@ -235,7 +236,7 @@ def _parse_compound(
             placeholder_count = _count_unquoted_placeholders(segment_query)
             next_index = param_index + placeholder_count
             if next_index > total_params:
-                raise ValueError("Not enough parameters for placeholders")
+                raise SqlParseError("Not enough parameters for placeholders")
             segment_params = params[param_index:next_index]
             param_index = next_index
 
@@ -245,17 +246,17 @@ def _parse_compound(
     if params is not None:
         if compound_limit == "?":
             if param_index >= total_params:
-                raise ValueError("Not enough parameters for LIMIT placeholder")
+                raise SqlParseError("Not enough parameters for LIMIT placeholder")
             compound_limit = int(params[param_index])
             param_index += 1
         if compound_offset == "?":
             if param_index >= total_params:
-                raise ValueError("Not enough parameters for OFFSET placeholder")
+                raise SqlParseError("Not enough parameters for OFFSET placeholder")
             compound_offset = int(params[param_index])
             param_index += 1
 
     if params is not None and param_index < total_params:
-        raise ValueError("Too many parameters for placeholders")
+        raise SqlParseError("Too many parameters for placeholders")
 
     _validate_non_negative_pagination(compound_limit, "LIMIT")
     _validate_non_negative_pagination(compound_offset, "OFFSET")
@@ -299,11 +300,11 @@ def _parse_with_query(
 ) -> Dict[str, Any]:
     tokens = _tokenize(query.strip())
     if len(tokens) < 2 or tokens[0].upper() != "WITH":
-        raise ValueError(f"Invalid SQL query format: {query}")
+        raise SqlParseError(f"Invalid SQL query format: {query}")
 
     index = 1
     if tokens[index].upper() == "RECURSIVE":
-        raise ValueError("Recursive CTEs are not supported")
+        raise SqlParseError("Recursive CTEs are not supported")
 
     ctes: List[Dict[str, Any]] = []
     cte_names: set[str] = set()
@@ -312,28 +313,28 @@ def _parse_with_query(
 
     while True:
         if index >= len(tokens):
-            raise ValueError("Invalid WITH clause: missing CTE name")
+            raise SqlParseError("Invalid WITH clause: missing CTE name")
 
         cte_name = tokens[index]
         if not _is_identifier_or_quoted(cte_name):
-            raise ValueError(f"Invalid CTE name: {cte_name}")
+            raise SqlParseError(f"Invalid CTE name: {cte_name}")
         cte_name = _parse_column_identifier(cte_name)
         lowered_name = cte_name.casefold()
         if lowered_name in cte_names:
-            raise ValueError(f"Duplicate CTE name: {cte_name}")
+            raise SqlSemanticError(f"Duplicate CTE name: {cte_name}")
         cte_names.add(lowered_name)
         index += 1
 
         if index >= len(tokens) or tokens[index].upper() != "AS":
-            raise ValueError("Invalid WITH clause: expected AS")
+            raise SqlParseError("Invalid WITH clause: expected AS")
         index += 1
 
         if index >= len(tokens) or tokens[index] != "(":
-            raise ValueError("Invalid WITH clause: expected '(' after AS")
+            raise SqlParseError("Invalid WITH clause: expected '(' after AS")
         end_index = _find_matching_parenthesis(tokens, index)
         subquery_tokens = tokens[index + 1 : end_index]
         if not subquery_tokens:
-            raise ValueError("Invalid WITH clause: empty CTE query")
+            raise SqlParseError("Invalid WITH clause: empty CTE query")
 
         subquery_sql = " ".join(subquery_tokens)
         cte_params: Optional[tuple[Any, ...]] = None
@@ -341,7 +342,7 @@ def _parse_with_query(
             placeholder_count = _count_unquoted_placeholders(subquery_sql)
             next_param_index = param_index + placeholder_count
             if next_param_index > total_params:
-                raise ValueError("Not enough parameters for placeholders")
+                raise SqlParseError("Not enough parameters for placeholders")
             cte_params = params[param_index:next_param_index]
             param_index = next_param_index
 
@@ -350,13 +351,13 @@ def _parse_with_query(
             parsed_cte = _parse_select(subquery_sql, cte_params)
 
         if _query_references_name(parsed_cte, cte_name):
-            raise ValueError("Recursive CTEs are not supported")
+            raise SqlParseError("Recursive CTEs are not supported")
 
         ctes.append({"type": "cte", "name": cte_name, "query": parsed_cte})
         index = end_index + 1
 
         if index >= len(tokens):
-            raise ValueError("Invalid WITH clause: missing main SELECT query")
+            raise SqlParseError("Invalid WITH clause: missing main SELECT query")
         if tokens[index] == ",":
             index += 1
             continue
@@ -364,13 +365,13 @@ def _parse_with_query(
 
     main_query = " ".join(tokens[index:]).strip()
     if not main_query:
-        raise ValueError("Invalid WITH clause: missing main SELECT query")
+        raise SqlParseError("Invalid WITH clause: missing main SELECT query")
 
     main_tokens = _tokenize(main_query)
     if not main_tokens:
-        raise ValueError("Invalid WITH clause: missing main SELECT query")
+        raise SqlParseError("Invalid WITH clause: missing main SELECT query")
     if main_tokens[0].upper() != "SELECT" and main_tokens[0] != "(":
-        raise ValueError("WITH clause requires a SELECT query")
+        raise SqlParseError("WITH clause requires a SELECT query")
 
     remaining_params: Optional[tuple[Any, ...]] = None
     if params is not None:
@@ -379,7 +380,7 @@ def _parse_with_query(
     parsed = _parse_compound(main_query, remaining_params)
     if parsed is None:
         if main_tokens[0] == "(":
-            raise ValueError(f"Unsupported SQL action: {main_tokens[0]}")
+            raise SqlParseError(f"Unsupported SQL action: {main_tokens[0]}")
         parsed = _parse_select(main_query, remaining_params)
 
     parsed["ctes"] = ctes

@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 
+from ..exceptions import SqlParseError
 from .tokenizer import _count_unquoted_placeholders, _tokenize
 from .compound import _parse_compound, _parse_with_query
 from .dml import _parse_delete, _parse_insert, _parse_update
@@ -9,11 +10,11 @@ from .select import _parse_select
 
 def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str, Any]:
     if params and _count_unquoted_placeholders(query) == 0:
-        raise ValueError("Too many parameters for placeholders")
+        raise SqlParseError("Too many parameters for placeholders")
 
     tokens = _tokenize(query.strip())
     if not tokens:
-        raise ValueError(f"Invalid SQL query format: {query}")
+        raise SqlParseError(f"Invalid SQL query format: {query}")
     action = tokens[0].upper()
     parsed: Dict[str, Any]
     if action == "WITH":
@@ -22,7 +23,7 @@ def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str,
         compound_parsed = _parse_compound(query, params)
         if compound_parsed is None:
             if tokens[0] == "(":
-                raise ValueError(f"Unsupported SQL action: {tokens[0]}")
+                raise SqlParseError(f"Unsupported SQL action: {tokens[0]}")
             parsed = _parse_select(query, params)
         else:
             parsed = compound_parsed
@@ -39,7 +40,7 @@ def parse_sql(query: str, params: Optional[tuple[Any, ...]] = None) -> Dict[str,
     elif action == "ALTER":
         parsed = _parse_alter(query)
     else:
-        raise ValueError(f"Unsupported SQL action: {action}")
+        raise SqlParseError(f"Unsupported SQL action: {action}")
 
     parsed["params"] = params
     return parsed

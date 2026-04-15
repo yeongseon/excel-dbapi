@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
@@ -104,5 +105,5 @@ def test_cte_referenced_multiple_times(tmp_path: Path) -> None:
 
 
 def test_recursive_cte_rejected() -> None:
-    with pytest.raises(ValueError, match="Recursive CTEs are not supported"):
+    with pytest.raises(DatabaseError, match="Recursive CTEs are not supported"):
         parse_sql("WITH t AS (SELECT id FROM t) SELECT * FROM t")

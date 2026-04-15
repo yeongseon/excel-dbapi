@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 
 from excel_dbapi.engines.graph.backend import GraphBackend, _col_letter
 from excel_dbapi.exceptions import NotSupportedError
@@ -278,7 +279,7 @@ class TestGraphBackendReadSheet:
 
     def test_read_unknown_sheet(self):
         backend = _make_backend()
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(DatabaseError, match="not found"):
             backend.read_sheet("Missing")
 
     def test_read_sheet_enforces_row_limit(self):
@@ -435,7 +436,7 @@ class TestGraphBackendAppendRow:
 
     def test_append_row_unknown_sheet(self):
         backend, _ = _make_writable_backend()
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(DatabaseError, match="not found"):
             backend.append_row("NoSuchSheet", [1, 2, 3])
         backend.close()
 
@@ -505,7 +506,7 @@ class TestGraphBackendWriteSheet:
         from excel_dbapi.engines.base import TableData
 
         backend, _ = _make_writable_backend()
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(DatabaseError, match="not found"):
             backend.write_sheet("NoSuchSheet", TableData(headers=["a"], rows=[]))
         backend.close()
 
@@ -616,7 +617,7 @@ class TestGraphBackendDropSheet:
 
     def test_drop_sheet_unknown(self):
         backend, _ = _make_writable_backend()
-        with pytest.raises(ValueError, match="not found"):
+        with pytest.raises(DatabaseError, match="not found"):
             backend.drop_sheet("NoSuchSheet")
         backend.close()
 
@@ -676,11 +677,11 @@ class TestGraphBackendSessionRecoveryWrite:
 
 class TestColLetterNegative:
     def test_negative_index_raises(self):
-        with pytest.raises(ValueError, match="non-negative"):
+        with pytest.raises(DatabaseError, match="non-negative"):
             _col_letter(-1)
 
     def test_negative_large_raises(self):
-        with pytest.raises(ValueError, match="non-negative"):
+        with pytest.raises(DatabaseError, match="non-negative"):
             _col_letter(-100)
 
 

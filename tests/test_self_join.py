@@ -2,6 +2,7 @@
 
 from excel_dbapi.parser import parse_sql
 from excel_dbapi.connection import ExcelConnection
+from excel_dbapi.exceptions import DatabaseError
 
 
 class TestSelfJoinParsing:
@@ -38,7 +39,7 @@ class TestSelfJoinParsing:
         """Two sources with the SAME alias should still be rejected."""
         import pytest
 
-        with pytest.raises(ValueError, match="Ambiguous"):
+        with pytest.raises(DatabaseError, match="Ambiguous"):
             parse_sql("SELECT * FROM t AS x JOIN t2 AS x ON x.id = x.id")
 
 

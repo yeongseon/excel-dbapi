@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.connection import ExcelConnection
@@ -41,12 +42,12 @@ def _create_workbook(
 def test_create_table_rejects_missing_name_and_empty_column_definitions(
     sql: str,
 ) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql(sql)
 
 
 def test_create_table_rejects_single_trailing_comma() -> None:
-    with pytest.raises(ValueError, match="empty column definition"):
+    with pytest.raises(DatabaseError, match="empty column definition"):
         parse_sql("CREATE TABLE t (id INTEGER, name TEXT,)")
 
 def test_execute_create_table_rejects_malformed_definitions(tmp_path: Path) -> None:
@@ -205,7 +206,7 @@ def test_create_and_alter_share_type_normalization_and_validation() -> None:
     alter_parsed = parse_sql("ALTER TABLE people ADD COLUMN age INT")
     assert alter_parsed["type_name"] == "INTEGER"
 
-    with pytest.raises(ValueError, match="Unsupported CREATE TABLE column type"):
+    with pytest.raises(DatabaseError, match="Unsupported CREATE TABLE column type"):
         parse_sql("CREATE TABLE bad (payload BLOB)")
-    with pytest.raises(ValueError, match="Unsupported ALTER TABLE column type"):
+    with pytest.raises(DatabaseError, match="Unsupported ALTER TABLE column type"):
         parse_sql("ALTER TABLE bad ADD COLUMN payload BLOB")

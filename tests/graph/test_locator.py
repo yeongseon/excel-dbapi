@@ -1,6 +1,7 @@
 """Tests for GraphWorkbookLocator and DSN parsing."""
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 
 from excel_dbapi.engines.graph.locator import GraphWorkbookLocator, parse_msgraph_dsn
 
@@ -28,19 +29,19 @@ class TestParseMsgraphDsn:
         assert loc.item_id == "xyz789"
 
     def test_wrong_scheme(self):
-        with pytest.raises(ValueError, match=r"Expected 'msgraph' scheme"):
+        with pytest.raises(DatabaseError, match=r"Expected 'msgraph' scheme"):
             parse_msgraph_dsn("https://drives/abc/items/xyz")
 
     def test_missing_items_segment(self):
-        with pytest.raises(ValueError, match="Invalid msgraph DSN"):
+        with pytest.raises(DatabaseError, match="Invalid msgraph DSN"):
             parse_msgraph_dsn("msgraph://drives/abc/files/xyz")
 
     def test_too_few_segments(self):
-        with pytest.raises(ValueError, match="Invalid msgraph DSN"):
+        with pytest.raises(DatabaseError, match="Invalid msgraph DSN"):
             parse_msgraph_dsn("msgraph://drives/abc")
 
     def test_too_many_segments(self):
-        with pytest.raises(ValueError, match="Invalid msgraph DSN"):
+        with pytest.raises(DatabaseError, match="Invalid msgraph DSN"):
             parse_msgraph_dsn("msgraph://drives/abc/items/xyz/extra/stuff")
 
     def test_trailing_slash(self):

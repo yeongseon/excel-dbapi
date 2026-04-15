@@ -3,9 +3,10 @@ from __future__ import annotations
 from hypothesis import given, settings, strategies as st
 
 from excel_dbapi.parser import _tokenize, parse_sql
+from excel_dbapi.exceptions import DatabaseError
 
 
-ParseError = ValueError
+ParseError = DatabaseError
 
 
 @settings(max_examples=300)
@@ -27,7 +28,7 @@ def test_parser_empty_string_raises_parse_error() -> None:
         parse_sql("")
     except ParseError:
         return
-    assert False, "Expected parse_sql to raise ValueError for empty input"
+    assert False, "Expected parse_sql to raise DatabaseError for empty input"
 
 
 def test_tokenizer_handles_very_long_string() -> None:

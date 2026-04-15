@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 from openpyxl import Workbook
 
 from excel_dbapi.engines.openpyxl.backend import OpenpyxlBackend
@@ -71,17 +72,17 @@ def test_parse_count_without_distinct() -> None:
 
 
 def test_parse_rejects_sum_distinct() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("SELECT SUM(DISTINCT age) FROM users")
 
 
 def test_parse_rejects_avg_distinct() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("SELECT AVG(DISTINCT age) FROM users")
 
 
 def test_parse_rejects_count_distinct_star() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(DatabaseError):
         parse_sql("SELECT COUNT(DISTINCT *) FROM users")
 
 

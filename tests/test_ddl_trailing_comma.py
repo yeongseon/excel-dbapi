@@ -3,29 +3,30 @@
 from __future__ import annotations
 
 import pytest
+from excel_dbapi.exceptions import DatabaseError
 
 from excel_dbapi.parser.ddl import _parse_create
 
 
 def test_trailing_comma_rejected() -> None:
     """CREATE TABLE t (a,) should raise ValueError."""
-    with pytest.raises(ValueError, match="empty column definition"):
+    with pytest.raises(DatabaseError, match="empty column definition"):
         _parse_create("CREATE TABLE t (a,)")
 
 
 def test_trailing_comma_with_type_rejected() -> None:
     """CREATE TABLE t (a TEXT,) should raise ValueError."""
-    with pytest.raises(ValueError, match="empty column definition"):
+    with pytest.raises(DatabaseError, match="empty column definition"):
         _parse_create("CREATE TABLE t (a TEXT,)")
 
 
 def test_multiple_trailing_commas_rejected() -> None:
-    with pytest.raises(ValueError, match="empty column definition"):
+    with pytest.raises(DatabaseError, match="empty column definition"):
         _parse_create("CREATE TABLE t (a,,)")
 
 
 def test_leading_comma_rejected() -> None:
-    with pytest.raises(ValueError, match="empty column definition"):
+    with pytest.raises(DatabaseError, match="empty column definition"):
         _parse_create("CREATE TABLE t (,a)")
 
 
