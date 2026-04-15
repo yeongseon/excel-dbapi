@@ -120,9 +120,7 @@ class ExcelCursor:
         total_rowcount = 0
         last_rowid = None
         last_action = None
-        supports_transactions = bool(
-            getattr(self.connection.engine, "supports_transactions", True)
-        )
+        supports_transactions = self.connection.engine.supports_transactions
         snapshot = self.connection.engine.snapshot() if supports_transactions else None
         backend_name = type(self.connection.engine).__name__
 

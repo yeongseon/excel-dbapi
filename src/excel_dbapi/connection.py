@@ -186,7 +186,7 @@ class ExcelConnection:
             raise OperationalError(str(exc)) from exc
 
         # Guard: non-transactional backends reject autocommit=False
-        if not autocommit and not getattr(self.engine, "supports_transactions", True):
+        if not autocommit and not self.engine.supports_transactions:
             self.engine.close()
             raise NotSupportedError(
                 f"Backend '{self.engine.__class__.__name__}' does not support "
@@ -223,7 +223,7 @@ class ExcelConnection:
     @check_closed
     def rollback(self) -> None:
         try:
-            if not getattr(self.engine, "supports_transactions", True):
+            if not self.engine.supports_transactions:
                 raise NotSupportedError(
                     f"Backend '{self.engine.__class__.__name__}' does not support "
                     f"rollback (non-transactional backend)"

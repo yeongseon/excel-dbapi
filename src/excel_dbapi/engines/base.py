@@ -16,8 +16,18 @@ class WorkbookBackend(ABC):
     file_path: str
     create: bool
     sanitize_formulas: bool
-    readonly: bool = False
-    supports_transactions: bool = True
+
+    @property
+    @abstractmethod
+    def readonly(self) -> bool:
+        """Whether the backend is read-only (no write operations allowed)."""
+        ...
+
+    @property
+    @abstractmethod
+    def supports_transactions(self) -> bool:
+        """Whether the backend supports commit/rollback transactions."""
+        ...
 
     def __init__(
         self,

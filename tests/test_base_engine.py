@@ -7,6 +7,14 @@ from excel_dbapi.exceptions import NotSupportedError
 
 
 class DummyBackend(WorkbookBackend):
+    @property
+    def readonly(self) -> bool:
+        return False
+
+    @property
+    def supports_transactions(self) -> bool:
+        return True
+
     def load(self) -> None:
         pass
 

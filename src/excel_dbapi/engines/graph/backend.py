@@ -62,7 +62,9 @@ class GraphBackend(WorkbookBackend):
     - ``backoff_factor`` (float, default 0.5): Exponential retry backoff factor.
     """
 
-    supports_transactions: bool = False
+    @property
+    def supports_transactions(self) -> bool:
+        return False
     _CONFLICT_STRATEGIES = frozenset({"fail", "force"})
     _WRITE_METHODS = frozenset({"POST", "PATCH", "PUT", "DELETE"})
     _FULL_REWRITE_THRESHOLD = 0.5
@@ -101,7 +103,8 @@ class GraphBackend(WorkbookBackend):
         )
 
         # Instance attribute — toggleable per connection
-        self.readonly: bool = readonly
+        self._readonly: bool = readonly
+
         if conflict_strategy not in self._CONFLICT_STRATEGIES:
             allowed = ", ".join(sorted(self._CONFLICT_STRATEGIES))
             raise ValueError(
@@ -129,6 +132,10 @@ class GraphBackend(WorkbookBackend):
         # Cache: name → worksheet id
         self._sheet_ids: dict[str, str] = {}
         self._sheets_loaded: bool = False
+
+    @property
+    def readonly(self) -> bool:
+        return self._readonly
 
     # -- WorkbookBackend interface -------------------------------------------
 

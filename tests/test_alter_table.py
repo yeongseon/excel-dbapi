@@ -266,15 +266,15 @@ def test_alter_readonly_blocked(tmp_path: Path) -> None:
     file_path = tmp_path / "alter_readonly.xlsx"
     _create_people_workbook(file_path)
 
+    from unittest.mock import PropertyMock, patch
+
     from excel_dbapi.exceptions import NotSupportedError
 
-    with ExcelConnection(str(file_path), engine="openpyxl", readonly=True) as conn:
+    with ExcelConnection(str(file_path), engine="openpyxl") as conn:
         cursor = conn.cursor()
-        if not getattr(conn.engine, "readonly", False):
-            conn.engine.readonly = True
-        with pytest.raises(NotSupportedError, match="ALTER.*not supported.*read-only"):
-            cursor.execute("ALTER TABLE people ADD COLUMN email TEXT")
-
+        with patch.object(type(conn.engine), "readonly", new_callable=PropertyMock, return_value=True):
+            with pytest.raises(NotSupportedError, match="ALTER.*not supported.*read-only"):
+                cursor.execute("ALTER TABLE people ADD COLUMN email TEXT")
 
 def test_add_column_invalid_type_rejected_at_execute(tmp_path: Path) -> None:
     file_path = tmp_path / "alter_invalid_type.xlsx"

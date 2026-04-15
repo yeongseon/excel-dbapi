@@ -30,7 +30,16 @@ class MemoryBackend(WorkbookBackend):
     def __init__(self, sheets: dict[str, TableData], readonly: bool = False) -> None:
         super().__init__("memory.xlsx")
         self._sheets = sheets
-        self.readonly = readonly
+        self._readonly = readonly
+
+    @property
+    def readonly(self) -> bool:
+        return self._readonly
+
+    @property
+    def supports_transactions(self) -> bool:
+        return True
+
 
     def load(self) -> None:
         return None
@@ -215,6 +224,9 @@ def test_executor_error_paths_and_utility_paths() -> None:
 
 def test_cursor_paths_for_executemany_and_fetch() -> None:
     class FakeEngine:
+        supports_transactions = True
+        readonly = False
+
         def __init__(self) -> None:
             self.restored: Any = None
             self.saved = False

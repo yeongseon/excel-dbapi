@@ -140,6 +140,14 @@ class TestWorkbookBackendContract:
         from excel_dbapi.engines.base import TableData, WorkbookBackend
 
         class Stub(WorkbookBackend):
+            @property
+            def readonly(self) -> bool:
+                return False
+
+            @property
+            def supports_transactions(self) -> bool:
+                return True
+
             def load(self) -> None:
                 pass
 

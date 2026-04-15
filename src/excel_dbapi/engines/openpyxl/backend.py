@@ -13,6 +13,15 @@ from ..base import TableData, WorkbookBackend, _normalize_headers
 
 
 class OpenpyxlBackend(WorkbookBackend):
+
+    @property
+    def readonly(self) -> bool:
+        return False
+
+    @property
+    def supports_transactions(self) -> bool:
+        return True
+
     def __init__(
         self,
         file_path: str,

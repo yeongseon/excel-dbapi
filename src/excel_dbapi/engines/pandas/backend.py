@@ -12,6 +12,15 @@ from ..result import ExecutionResult
 
 
 class PandasBackend(WorkbookBackend):
+
+    @property
+    def readonly(self) -> bool:
+        return False
+
+    @property
+    def supports_transactions(self) -> bool:
+        return True
+
     def __init__(
         self,
         file_path: str,

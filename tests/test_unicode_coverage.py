@@ -6,6 +6,14 @@ from excel_dbapi.parser import parse_sql
 
 
 class _StubBackend(WorkbookBackend):
+    @property
+    def readonly(self) -> bool:
+        return False
+
+    @property
+    def supports_transactions(self) -> bool:
+        return True
+
     def __init__(self) -> None:
         super().__init__("stub.xlsx")
 

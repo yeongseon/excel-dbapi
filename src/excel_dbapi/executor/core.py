@@ -59,7 +59,7 @@ class SharedExecutor:
                 table_name,
             )
         except Exception as exc:
-            if getattr(self.backend, "supports_transactions", True):
+            if self.backend.supports_transactions:
                 raise
             _logger.warning(
                 "Metadata read skipped before non-transactional metadata write (%s): %s",
@@ -125,7 +125,7 @@ class SharedExecutor:
         try:
             operation()
         except Exception as exc:
-            if getattr(self.backend, "supports_transactions", True):
+            if self.backend.supports_transactions:
                 raise
             _logger.warning(
                 "Metadata sync skipped after non-transactional workbook mutation (%s): %s",
@@ -135,7 +135,7 @@ class SharedExecutor:
 
     def _ensure_writable(self, action: str) -> None:
         """Raise NotSupportedError if backend is read-only and action mutates data."""
-        if action in _READONLY_ACTIONS and getattr(self.backend, "readonly", False):
+        if action in _READONLY_ACTIONS and self.backend.readonly:
             from ..exceptions import NotSupportedError
 
             raise NotSupportedError(
