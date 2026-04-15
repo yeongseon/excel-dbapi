@@ -15,7 +15,7 @@ Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no da
 
 ## About and docs
 
-- SQL reference and authoritative feature matrix: [docs/SQL_SPEC.md](docs/SQL_SPEC.md)
+- SQL reference and authoritative feature matrix: [docs/SQL_SPEC.md](docs/SQL_SPEC.md) (SQL Spec v1.0)
 - Usage guide: [docs/USAGE.md](docs/USAGE.md)
 - 10-minute quickstart: [docs/QUICKSTART_10_MIN.md](docs/QUICKSTART_10_MIN.md)
 - Roadmap and planning status: [docs/ROADMAP.md](docs/ROADMAP.md)

@@ -1,8 +1,9 @@
 # excel-dbapi SQL Specification
 
-> Version: 0.4.1
-> Status: **Normative** - this document defines the SQL subset supported by `excel-dbapi`.
-> Last updated: 2026-04-14
+> Version: **SQL Spec v1.0** (excel-dbapi 0.4.x series)
+> Status: **Normative** — this document defines the frozen SQL subset for `excel-dbapi`.
+> All ✅ features are stable and will not change semantics within the 0.x series.
+> Last updated: 2026-04-15
 
 ---
 
@@ -12,7 +13,7 @@
 single-table CRUD, DDL, set operations, joins, aggregation, upsert, parameter binding,
 and selected advanced query constructs (CTEs, window functions).
 
-The parser is strict: unsupported grammar is rejected with `ValueError`.
+The parser is strict: unsupported grammar is rejected with `ProgrammingError`.
 
 ---
 
@@ -20,54 +21,54 @@ The parser is strict: unsupported grammar is rejected with `ValueError`.
 
 This table is the **single authoritative matrix** for SQL feature support.
 
-| Area | Feature | Status | Notes |
-|------|---------|--------|-------|
-| `SELECT` | Projection (`*`, named columns) | ✅ | `*` and explicit column lists supported |
-| `SELECT` | Expressions in select list | ✅ | Arithmetic (`+ - * /`), literals, CASE |
-| `SELECT` | Column aliases | ✅ | `AS alias` and implicit alias supported |
-| `SELECT` | `DISTINCT` | ✅ | For `DISTINCT`, `ORDER BY` columns must be in the select list |
-| `SELECT` | Window functions (`OVER (...)`) | ⚠️ Experimental | Core support for `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` |
-| `SELECT` | CTEs (`WITH`) | ⚠️ Experimental | Non-recursive CTEs only |
-| `FROM` | Table aliases | ✅ | Base table and JOIN sources |
-| Identifiers | Unquoted table names | ✅ | Worksheet names follow Excel naming conventions (not strict SQL identifier grammar) |
-| Identifiers | Quoted table names (`"Sales 2024"`) | ✅ | Use double quotes for names with spaces/special characters |
-| Identifiers | Column names (unquoted) | ✅ | ASCII and Unicode identifiers: `[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*` |
-| Identifiers | Quoted column identifiers (`"Full Name"`, `"이름"`) | ✅ | Double-quoted identifiers for columns with spaces, special characters, or reserved words |
-| `WHERE` | Comparison operators | ✅ | `= == != <> > >= < <=` |
-| `WHERE` | Boolean logic | ✅ | `AND`, `OR`, `NOT`, nested parentheses |
-| `WHERE` | `BETWEEN` / `NOT BETWEEN` | ✅ | Inclusive bounds |
-| `WHERE` | `IN` / `NOT IN` (literal list) | ✅ | Empty list rejected |
-| `WHERE` | `LIKE` / `NOT LIKE` | ✅ | `%` and `_` wildcards |
-| `WHERE` | `ILIKE` / `NOT ILIKE` | ✅ | Case-insensitive pattern matching |
-| `WHERE` | `IS NULL` / `IS NOT NULL` | ✅ | |
-| `WHERE` | Subquery in `IN` / `NOT IN` | ✅ | Single-column `SELECT`; non-correlated only |
-| `WHERE` | `EXISTS (SELECT ...)` | ✅ | Correlated and non-correlated supported |
-| Expressions | `CAST(expr AS type)` | ✅ | Supported target types: `INTEGER`/`INT`, `REAL`/`FLOAT`/`NUMERIC`, `TEXT`, `DATE`, `DATETIME`, `BOOLEAN` |
-| Expressions | Scalar functions | ✅ | `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTR`, `COALESCE`, `NULLIF`, `CONCAT`, `YEAR`, `MONTH`, `DAY`, `ABS`, `ROUND`, `REPLACE` |
-| Aggregation | `FILTER (WHERE ...)` | ✅ | Per-aggregate filtering clause |
-| `JOIN` | `INNER`, `LEFT`, `RIGHT` | ✅ | Chained joins supported |
-| `JOIN` | `FULL OUTER` / `FULL` | ✅ | |
-| `JOIN` | `CROSS JOIN` | ✅ | No `ON` clause allowed |
-| `JOIN` | `NATURAL JOIN` | ❌ | Rejected at parse time |
-| Aggregation | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` | ✅ | |
-| Aggregation | `COUNT(DISTINCT col)` | ✅ | `DISTINCT` only valid with `COUNT` |
-| Grouping | `GROUP BY` | ✅ | |
-| Grouping | `HAVING` | ✅ | Requires `GROUP BY` |
-| Sorting | `ORDER BY` | ✅ | Multi-column, `ASC`/`DESC` |
-| Pagination | `LIMIT` / `OFFSET` | ✅ | Integer literal or `?` placeholder |
-| Set ops | `UNION` | ✅ | |
-| Set ops | `UNION ALL` | ✅ | |
-| Set ops | `INTERSECT` | ✅ | |
-| Set ops | `EXCEPT` | ✅ | |
-| Set ops | `INTERSECT ALL` / `EXCEPT ALL` | ❌ | Not implemented |
-| DML | `INSERT` single-row / multi-row | ✅ | `VALUES (...)`, `VALUES (...), (...)` |
-| DML | `INSERT ... SELECT` | ✅ | |
-| DML | UPSERT (`ON CONFLICT`) | ✅ | `DO NOTHING`, `DO UPDATE SET ...` |
-| DML | `UPDATE ... SET ... [WHERE ...]` | ✅ | SET supports row-level expressions (columns, arithmetic, functions, CAST, CASE) |
-| DML | `DELETE FROM ... [WHERE ...]` | ✅ | |
-| DDL | `CREATE TABLE`, `DROP TABLE` | ✅ | |
-| DDL | `ALTER TABLE ADD/DROP/RENAME COLUMN` | ✅ | `COLUMN` keyword required |
-| Parameters | Positional placeholders (`?`) | ✅ | qmark paramstyle |
+| Area | Feature | Stability | Status | Notes |
+|------|---------|-----------|--------|-------|
+| `SELECT` | Projection (`*`, named columns) | Stable | ✅ | `*` and explicit column lists supported |
+| `SELECT` | Expressions in select list | Stable | ✅ | Arithmetic (`+ - * /`), literals, CASE |
+| `SELECT` | Column aliases | Stable | ✅ | `AS alias` and implicit alias supported |
+| `SELECT` | `DISTINCT` | Stable | ✅ | For `DISTINCT`, `ORDER BY` columns must be in the select list |
+| `SELECT` | Window functions (`OVER (...)`) | Experimental | ⚠️ | Core support for `ROW_NUMBER`, `RANK`, `DENSE_RANK`, `SUM`, `AVG`, `COUNT`, `MIN`, `MAX` |
+| `SELECT` | CTEs (`WITH`) | Experimental | ⚠️ | Non-recursive CTEs only |
+| `FROM` | Table aliases | Stable | ✅ | Base table and JOIN sources |
+| Identifiers | Unquoted table names | Stable | ✅ | Worksheet names follow Excel naming conventions (not strict SQL identifier grammar) |
+| Identifiers | Quoted table names (`"Sales 2024"`) | Stable | ✅ | Use double quotes for names with spaces/special characters |
+| Identifiers | Column names (unquoted) | Stable | ✅ | ASCII and Unicode identifiers: `[A-Za-z_\u0080-\uffff][A-Za-z0-9_\u0080-\uffff]*` |
+| Identifiers | Quoted column identifiers (`"Full Name"`, `"이름"`) | Stable | ✅ | Double-quoted identifiers for columns with spaces, special characters, or reserved words |
+| `WHERE` | Comparison operators | Stable | ✅ | `= == != <> > >= < <=` |
+| `WHERE` | Boolean logic | Stable | ✅ | `AND`, `OR`, `NOT`, nested parentheses |
+| `WHERE` | `BETWEEN` / `NOT BETWEEN` | Stable | ✅ | Inclusive bounds |
+| `WHERE` | `IN` / `NOT IN` (literal list) | Stable | ✅ | Empty list rejected |
+| `WHERE` | `LIKE` / `NOT LIKE` | Stable | ✅ | `%` and `_` wildcards |
+| `WHERE` | `ILIKE` / `NOT ILIKE` | Stable | ✅ | Case-insensitive pattern matching |
+| `WHERE` | `IS NULL` / `IS NOT NULL` | Stable | ✅ | |
+| `WHERE` | Subquery in `IN` / `NOT IN` | Stable | ✅ | Single-column `SELECT`; non-correlated only |
+| `WHERE` | `EXISTS (SELECT ...)` | Stable | ✅ | Correlated and non-correlated supported |
+| Expressions | `CAST(expr AS type)` | Stable | ✅ | Supported target types: `INTEGER`/`INT`, `REAL`/`FLOAT`/`NUMERIC`, `TEXT`, `DATE`, `DATETIME`, `BOOLEAN` |
+| Expressions | Scalar functions | Stable | ✅ | `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTR`, `COALESCE`, `NULLIF`, `CONCAT`, `YEAR`, `MONTH`, `DAY`, `ABS`, `ROUND`, `REPLACE` |
+| Aggregation | `FILTER (WHERE ...)` | Stable | ✅ | Per-aggregate filtering clause |
+| `JOIN` | `INNER`, `LEFT`, `RIGHT` | Stable | ✅ | Chained joins supported |
+| `JOIN` | `FULL OUTER` / `FULL` | Stable | ✅ | |
+| `JOIN` | `CROSS JOIN` | Stable | ✅ | No `ON` clause allowed |
+| `JOIN` | `NATURAL JOIN` | — | ❌ | Rejected at parse time |
+| Aggregation | `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` | Stable | ✅ | |
+| Aggregation | `COUNT(DISTINCT col)` | Stable | ✅ | `DISTINCT` only valid with `COUNT` |
+| Grouping | `GROUP BY` | Stable | ✅ | |
+| Grouping | `HAVING` | Stable | ✅ | Requires `GROUP BY` |
+| Sorting | `ORDER BY` | Stable | ✅ | Multi-column, `ASC`/`DESC` |
+| Pagination | `LIMIT` / `OFFSET` | Stable | ✅ | Integer literal or `?` placeholder |
+| Set ops | `UNION` | Stable | ✅ | |
+| Set ops | `UNION ALL` | Stable | ✅ | |
+| Set ops | `INTERSECT` | Stable | ✅ | |
+| Set ops | `EXCEPT` | Stable | ✅ | |
+| Set ops | `INTERSECT ALL` / `EXCEPT ALL` | — | ❌ | Not implemented |
+| DML | `INSERT` single-row / multi-row | Stable | ✅ | `VALUES (...)`, `VALUES (...), (...)` |
+| DML | `INSERT ... SELECT` | Stable | ✅ | |
+| DML | UPSERT (`ON CONFLICT`) | Stable | ✅ | `DO NOTHING`, `DO UPDATE SET ...` |
+| DML | `UPDATE ... SET ... [WHERE ...]` | Stable | ✅ | SET supports row-level expressions (columns, arithmetic, functions, CAST, CASE) |
+| DML | `DELETE FROM ... [WHERE ...]` | Stable | ✅ | |
+| DDL | `CREATE TABLE`, `DROP TABLE` | Stable | ✅ | |
+| DDL | `ALTER TABLE ADD/DROP/RENAME COLUMN` | Stable | ✅ | `COLUMN` keyword required |
+| Parameters | Positional placeholders (`?`) | Stable | ✅ | qmark paramstyle |
 
 ### 2.1 Important JOIN Restrictions
 
@@ -221,3 +222,18 @@ Subquery limitations:
 
 The parser implementation in `src/excel_dbapi/parser/` package is the runtime source of truth.
 This specification is maintained to match implemented behavior and is updated with parser changes.
+
+---
+
+## 9. Feature Addition Process
+
+New SQL features follow this lifecycle:
+
+1. **Proposal** — Open a GitHub issue with `feat:` prefix describing the SQL construct
+2. **Review** — Evaluate parser complexity, regression risk, and user need
+3. **Implement** — Add to parser and executor with full test coverage
+4. **Document** — Update this spec with ⚠️ Experimental stability status
+5. **Stabilize** — After one minor release without semantic changes, promote to ✅ Stable
+
+Experimental features may change semantics or be removed. Stable features will not
+change semantics within the 0.x series.

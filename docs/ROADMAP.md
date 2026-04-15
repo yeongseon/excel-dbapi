@@ -1,6 +1,6 @@
 # excel-dbapi Roadmap
 
-> Current line: 0.4.x series  
+> Current line: 0.4.x series (SQL Spec v1.0 — feature freeze)
 > SQL support reference: [`docs/SQL_SPEC.md`](SQL_SPEC.md)
 
 ---
@@ -37,14 +37,19 @@
 
 ---
 
-## Planned
+### Stability Focus (Current Priority)
+
+- SQL syntax freeze: no new SQL syntax additions until v0.5.0
+- Internal architecture improvements (exception hierarchy, parser/validator separation)
+- Test consolidation and coverage hardening
+- Documentation reconciliation with implemented behavior
+
+### Future
 
 - Async-friendly API surface (design investigation)
 - Additional backend options (e.g., Polars-based engine)
 - Performance tuning for large-sheet scans and join-heavy queries
 - Documentation and example expansion around advanced SQL patterns
-- Identifier grammar expansion (quoted identifiers and non-ASCII table/column references)
-
 ---
 
 ## Explicitly Out of Scope
@@ -58,5 +63,5 @@
 
 ## Documentation Authority
 
-- Authoritative SQL behavior: [`docs/SQL_SPEC.md`](SQL_SPEC.md)
+- Authoritative SQL behavior: [`docs/SQL_SPEC.md`](SQL_SPEC.md) (SQL Spec v1.0)
 - Authoritative feature matrix: [`docs/SQL_SPEC.md#2-authoritative-feature-matrix`](SQL_SPEC.md#2-authoritative-feature-matrix)
