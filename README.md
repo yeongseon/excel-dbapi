@@ -10,40 +10,61 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/docs-GitHub-blue.svg)](https://github.com/yeongseon/excel-dbapi/tree/main/docs)
 
-A **local-first** Python DB-API 2.0 connector for Excel files.
-Use SQL to query, insert, update, and delete rows in `.xlsx` workbooks — no database server required.
+A **local-first worksheet query engine** with a Python [DB-API 2.0 (PEP 249)](https://peps.python.org/pep-0249/) interface.
+Query, insert, update, and delete rows in `.xlsx` workbooks using SQL — no database server required.
 
-## About and docs
+> **This is not a document-preservation tool.** excel-dbapi treats worksheets as
+> row-oriented datasets. It does not guarantee preservation of Excel formatting,
+> charts, images, conditional formatting, or formulas — particularly with the
+> pandas engine, which rewrites the entire workbook on save. If you need a
+> round-trip-safe Excel editor, use openpyxl directly.
 
-- SQL reference and authoritative feature matrix: [docs/SQL_SPEC.md](docs/SQL_SPEC.md) (SQL Spec v1.0)
-- Usage guide: [docs/USAGE.md](docs/USAGE.md)
-- 10-minute quickstart: [docs/QUICKSTART_10_MIN.md](docs/QUICKSTART_10_MIN.md)
-- Roadmap and planning status: [docs/ROADMAP.md](docs/ROADMAP.md)
+## Documentation
+
+- **[SQL Specification](docs/SQL_SPEC.md)** — authoritative feature matrix and SQL subset reference (v1.0)
+- [Usage Guide](docs/USAGE.md) — engine comparison, configuration, advanced patterns
+- [10-Minute Quickstart](docs/QUICKSTART_10_MIN.md)
+- [Engine Benchmarks](docs/BENCHMARKS.md) — row limits, performance characteristics, preservation matrix
+- [Project Roadmap](docs/ROADMAP.md)
+- [Development Guide](docs/DEVELOPMENT.md)
+- [Operations Notes](docs/OPERATIONS.md)
 
 ## Limitations
 
 Before you begin, understand what excel-dbapi is **not**:
 
-- **Not full SQL** — this is a documented SQL subset (see `docs/SQL_SPEC.md`)
-- **No concurrent writes** — use a single-writer model
-- **Not for large datasets** — if your Excel file has 100k+ rows, use pandas directly or a database
-- **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL
-- **PandasEngine rewrites workbooks** — formatting, charts, images, and formulas are dropped
-- **Identifier grammar** — both unquoted Unicode identifiers (`이름`, `naïve`) and double-quoted identifiers (`"Full Name"`, `"이름"`) are supported for table and column names
+- **Not full SQL** — a documented SQL subset (see [SQL Specification](docs/SQL_SPEC.md))
+- **Not a document-preservation tool** — the pandas engine drops all formatting, charts, images, and formulas on save; openpyxl preserves formatting but not all Excel features survive round-trips through SQL DML
+- **No concurrent writes** — single-writer model; advisory PID-based file locking is provided but not ACID
+- **Not for large datasets** — designed for worksheets up to ~50k rows; beyond that, use a real database
+- **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL-based recovery; a crash mid-save can lose data
+- **Identifier grammar** — both unquoted Unicode identifiers (`이름`, `naïve`) and double-quoted identifiers (`"Full Name"`, `"이름"`) are supported
 
-If you need relational features, use SQLite or PostgreSQL.
+If you need relational guarantees, concurrent access, or large-scale data, use SQLite or PostgreSQL.
 
-See the full [SQL Specification](docs/SQL_SPEC.md) for the exact SQL subset supported.
+## SQL Feature Set (Stable)
 
-## Current SQL feature set
+All features below are **Stable** — covered by the [SQL Spec v1.0](docs/SQL_SPEC.md) contract and will not have breaking changes.
 
 - `SELECT` with aliases, arithmetic/CASE expressions, `DISTINCT`, `WHERE`, `GROUP BY`, `HAVING`, `ORDER BY`, `LIMIT`, `OFFSET`
-- JOINs: `INNER`, `LEFT`, `RIGHT`, `FULL OUTER`, `CROSS` (with documented JOIN-specific restrictions)
-- Aggregates: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `COUNT(DISTINCT col)`
-- Subqueries in `WHERE ... [NOT] IN (SELECT ...)` and compound queries (`UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`)
-- DML/DDL: `INSERT` (single/multi-row and `INSERT ... SELECT`), UPSERT (`ON CONFLICT`), `UPDATE`, `DELETE`, `CREATE/DROP/ALTER TABLE`
+- JOINs: `INNER`, `LEFT`, `RIGHT`, `FULL OUTER`, `CROSS`
+- Aggregates: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX`, `COUNT(DISTINCT col)`, `FILTER (WHERE ...)`
+- Scalar functions: `UPPER`, `LOWER`, `LENGTH`, `TRIM`, `SUBSTR`, `COALESCE`, `NULLIF`, `CONCAT`, `ABS`, `ROUND`, `REPLACE`, `YEAR`, `MONTH`, `DAY`
+- `CAST(expr AS type)` — `INTEGER`, `REAL`, `TEXT`, `DATE`, `DATETIME`, `BOOLEAN`
+- Subqueries: `WHERE col [NOT] IN (SELECT ...)`, `EXISTS (SELECT ...)`, scalar subqueries
+- Set operations: `UNION`, `UNION ALL`, `INTERSECT`, `EXCEPT`
+- DML: `INSERT` (single/multi-row, `INSERT ... SELECT`), UPSERT (`ON CONFLICT`), `UPDATE`, `DELETE`
+- DDL: `CREATE TABLE`, `DROP TABLE`, `ALTER TABLE ADD/DROP/RENAME COLUMN`
+- Parameters: `?` positional placeholders (qmark paramstyle)
 
-For exact support/limitations per feature, use the matrix in [docs/SQL_SPEC.md#2-authoritative-feature-matrix](docs/SQL_SPEC.md#2-authoritative-feature-matrix).
+### Experimental Features
+
+These features are implemented but may change semantics or be removed in a future release:
+
+- **Window functions** (`ROW_NUMBER`, `RANK`, `DENSE_RANK`, running aggregates) — [SQL Spec § Window Functions](docs/SQL_SPEC.md)
+- **CTEs** (`WITH ... AS`) — non-recursive only — [SQL Spec § CTEs](docs/SQL_SPEC.md)
+
+For the full feature matrix with per-feature notes, see [docs/SQL_SPEC.md § Authoritative Feature Matrix](docs/SQL_SPEC.md#2-authoritative-feature-matrix).
 
 ---
 
@@ -116,13 +137,15 @@ with ExcelConnection("sample.xlsx") as conn:
     cursor.execute("DROP TABLE NewSheet")
 ```
 
-### Engine Options
+---
 
-| Engine | Description | Dependency |
-|--------|-------------|------------|
-| openpyxl (default) | Fast sheet access | openpyxl |
-| pandas | DataFrame-based operations | pandas, openpyxl |
-| graph | Microsoft Graph API (remote Excel) | httpx |
+## Engine Options
+
+| Engine | Description | Dependency | Preserves formatting |
+|--------|-------------|------------|---------------------|
+| openpyxl (default) | Cell-level read/write | openpyxl | ✅ Yes |
+| pandas | DataFrame-based operations | pandas, openpyxl | ❌ **No** — rewrites entire workbook |
+| graph | Microsoft Graph API (remote) | httpx | ✅ (cell values only) |
 
 ```python
 conn = ExcelConnection("sample.xlsx", engine="openpyxl")  # default
@@ -147,9 +170,11 @@ Choose **openpyxl** (default) for local files where you need formatting preserva
 Choose **pandas** when you prefer DataFrame-based workflows and don't need formatting.
 Choose **graph** for remote Excel on OneDrive/SharePoint via Microsoft Graph API.
 
-For detailed engine comparison, see the [Usage Guide — Engine Comparison](docs/USAGE.md#engine-comparison).
+For detailed engine comparison and benchmarks, see the [Usage Guide](docs/USAGE.md#engine-comparison) and [Benchmarks](docs/BENCHMARKS.md).
 
-### WHERE Operators
+---
+
+## WHERE Operators
 
 | Operator | Example | Description |
 |----------|---------|-------------|
@@ -228,7 +253,7 @@ with ExcelConnection("sample.xlsx", sanitize_formulas=False) as conn:
 
 ---
 
-## Transaction Example
+## Transactions
 
 ```python
 with ExcelConnection("sample.xlsx", autocommit=False) as conn:
@@ -237,7 +262,12 @@ with ExcelConnection("sample.xlsx", autocommit=False) as conn:
     conn.rollback()
 ```
 
-When autocommit is enabled, `rollback()` is not supported.
+> **Important:** Transactions use in-memory snapshots, not write-ahead logging.
+> `rollback()` restores the last committed snapshot in memory — it does not undo
+> writes already flushed to disk. When `autocommit=True` (the default), each
+> write is saved immediately and `rollback()` is not supported. The graph engine
+> does not support transactions at all; writes are applied immediately to the
+> remote workbook.
 
 ## Cursor Metadata
 
@@ -336,15 +366,6 @@ For DSN formats and dependency choices, see the
 - [sqlalchemy-excel](https://github.com/yeongseon/sqlalchemy-excel) — SQLAlchemy dialect that uses excel-dbapi as its DB-API 2.0 driver. Use `create_engine("excel:///file.xlsx")` for full ORM support.
 
 ---
-
-## Documentation
-
-- [SQL Specification](docs/SQL_SPEC.md)
-- [Usage Guide](docs/USAGE.md)
-- [Development Guide](docs/DEVELOPMENT.md)
-- [Project Roadmap](docs/ROADMAP.md)
-- [10-Minute Quickstart](docs/QUICKSTART_10_MIN.md)
-- [Operations Notes](docs/OPERATIONS.md)
 
 ## Examples
 
