@@ -92,6 +92,7 @@ __all__ = [
     # select
     "_bind_params",
     "_collect_qualified_references_from_query",
+    "_detect_subquery_correlation",
     "_find_clause_positions",
     "_parse_columns",
     "_parse_order_by_clause_tokens",
@@ -99,6 +100,7 @@ __all__ = [
     "_parse_select",
     "_query_source_references",
     "_validate_join_column_reference",
+    "_validate_join_where_columns",
     "_validate_join_on_condition_node",
     "_validate_join_where_node",
     # dml
@@ -163,14 +165,18 @@ from .where import (  # noqa: F401, E402
 )
 from .select import (  # noqa: F401, E402
     _bind_params,
-    _collect_qualified_references_from_query,
     _find_clause_positions,
     _parse_columns,
     _parse_order_by_clause_tokens,
     _parse_order_by_item_tokens,
+)
+from .validator import (  # noqa: F401, E402
+    _collect_qualified_references_from_query,
+    _detect_subquery_correlation,
     _query_source_references,
     _validate_join_column_reference,
     _validate_join_on_condition_node,
+    _validate_join_where_columns,
     _validate_join_where_node,
 )
 from .dml import _parse_on_conflict_clause  # noqa: F401, E402

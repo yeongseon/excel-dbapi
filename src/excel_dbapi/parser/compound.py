@@ -13,9 +13,9 @@ from .tokenizer import (
 from .select import (
     _parse_order_by_clause_tokens,
     _parse_select,
-    _query_source_references,
     _validate_non_negative_pagination,
 )
+from .validator import _query_source_references
 
 
 def _strip_outer_parens(tokens: List[str]) -> List[str]:

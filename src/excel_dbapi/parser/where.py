@@ -229,7 +229,8 @@ def _parse_factor(
         if "?" in _tokenize(subquery_sql):
             raise SqlParseError("Parameterized subqueries are not supported; use literal values")
 
-        from .select import _parse_select, _detect_subquery_correlation
+        from .select import _parse_select
+        from .validator import _detect_subquery_correlation
         parsed_subquery = _parse_select(
             subquery_sql,
             params=None,
@@ -752,7 +753,11 @@ def _parse_in_condition(
             if raw_token.upper() == "JOIN":
                 raise SqlParseError("JOIN is not supported in subqueries")
 
-        from .select import _parse_select, _detect_subquery_correlation
+        from .select import _parse_select
+        from .validator import (
+            _detect_subquery_correlation,
+            _validate_in_subquery_restrictions,
+        )
         subquery_parsed = _parse_select(
             raw_values,
             params=None,
@@ -766,18 +771,7 @@ def _parse_in_condition(
         if correlated:
             raise SqlParseError("Correlated subqueries are not supported")
 
-        if subquery_parsed.get("having") is not None:
-            raise SqlParseError("HAVING is not supported in subqueries")
-        if subquery_parsed.get("order_by") is not None:
-            raise SqlParseError("ORDER BY is not supported in subqueries")
-        if subquery_parsed.get("offset") is not None:
-            raise SqlParseError("OFFSET is not supported in subqueries")
-        if subquery_parsed.get("group_by") is not None:
-            raise SqlParseError("GROUP BY is not supported in subqueries")
-        if subquery_parsed.get("limit") is not None:
-            raise SqlParseError("LIMIT is not supported in subqueries")
-        if subquery_parsed.get("joins"):
-            raise SqlParseError("JOIN is not supported in subqueries")
+        _validate_in_subquery_restrictions(subquery_parsed)
 
         subquery_columns = subquery_parsed["columns"]
         if subquery_columns == ["*"] or len(subquery_columns) != 1:
