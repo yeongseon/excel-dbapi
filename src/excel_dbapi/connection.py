@@ -1,6 +1,6 @@
 import importlib
 import os
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from functools import wraps
 from pathlib import Path
 from types import TracebackType
@@ -262,6 +262,98 @@ class ExcelConnection:
             raise
         except Exception as exc:
             raise DatabaseError(str(exc)) from exc
+
+    @check_closed
+    def executemany(
+        self, query: str, seq_of_params: Iterable[Sequence[Any]]
+    ) -> ExecutionResult:
+        """Execute *query* once for each parameter set in *seq_of_params*.
+
+        Owns snapshot/restore orchestration so that transactional backends
+        get atomic batch semantics.  Non-transactional backends warn on
+        partial failure.
+        """
+        self._ensure_write_lock_for_query(query)
+        supports_transactions = self.engine.supports_transactions
+        snapshot = self.engine.snapshot() if supports_transactions else None
+        backend_name = type(self.engine).__name__
+
+        total_rowcount = 0
+        last_rowid: int | None = None
+        last_action: str | None = None
+
+        for params in seq_of_params:
+            try:
+                result = self._executor.execute_with_params(
+                    query, tuple(params)
+                )
+            except DatabaseError as exc:
+                if supports_transactions:
+                    self.engine.restore(snapshot)
+                    raise
+                raise type(exc)(
+                    f"{exc}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
+            except ValueError as exc:
+                mapped = ProgrammingError(str(exc))
+                if supports_transactions:
+                    self.engine.restore(snapshot)
+                    raise mapped from exc
+                raise ProgrammingError(
+                    f"{mapped}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
+            except NotImplementedError as exc:
+                mapped_ns = NotSupportedError(str(exc))
+                if supports_transactions:
+                    self.engine.restore(snapshot)
+                    raise mapped_ns from exc
+                raise NotSupportedError(
+                    f"{mapped_ns}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
+            except (KeyError, TypeError, IndexError) as exc:
+                mapped_pe = ProgrammingError(str(exc))
+                if supports_transactions:
+                    self.engine.restore(snapshot)
+                    raise mapped_pe from exc
+                raise ProgrammingError(
+                    f"{mapped_pe}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
+            except OSError as exc:
+                mapped_op = OperationalError(str(exc))
+                if supports_transactions:
+                    self.engine.restore(snapshot)
+                    raise mapped_op from exc
+                raise OperationalError(
+                    f"{mapped_op}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
+            except Exception as exc:
+                mapped_db = DatabaseError(str(exc))
+                if supports_transactions:
+                    self.engine.restore(snapshot)
+                    raise mapped_db from exc
+                raise DatabaseError(
+                    f"{mapped_db}. Backend '{backend_name}' does not support transactional "
+                    "executemany rollback; partial writes may have occurred."
+                ) from exc
+            total_rowcount += result.rowcount
+            last_rowid = result.lastrowid
+            last_action = result.action
+
+        if self.autocommit and last_action is not None:
+            self._finalize_autocommit(last_action)
+
+        return ExecutionResult(
+            action=last_action or "",
+            rows=[],
+            description=[],
+            rowcount=total_rowcount,
+            lastrowid=last_rowid,
+        )
 
     def _ensure_write_lock_for_query(self, query: str) -> None:
         action = query.strip().split(None, 1)[0].upper() if query.strip() else ""

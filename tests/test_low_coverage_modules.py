@@ -259,6 +259,11 @@ def test_cursor_paths_for_executemany_and_fetch() -> None:
         ) -> ExecutionResult:
             raise NotImplementedError("not supported")
 
+        def executemany(
+            self, query: str, seq_of_params: Any
+        ) -> ExecutionResult:
+            raise NotImplementedError("not supported")
+
         def _finalize_autocommit(self, action: str) -> None:
             pass
 

@@ -112,60 +112,18 @@ class ExcelCursor:
         self, query: str, seq_of_params: Iterable[Sequence[Any]]
     ) -> "ExcelCursor":
         self._reset_state()
-        ensure_write_lock = getattr(
-            self.connection, "_ensure_write_lock_for_query", None
-        )
-        if callable(ensure_write_lock):
-            ensure_write_lock(query)
-        total_rowcount = 0
-        last_rowid = None
-        last_action = None
-        supports_transactions = self.connection.engine.supports_transactions
-        snapshot = self.connection.engine.snapshot() if supports_transactions else None
-        backend_name = type(self.connection.engine).__name__
-
-        for params in seq_of_params:
-            try:
-                result: ExecutionResult = self.connection._executor.execute_with_params(
-                    query, tuple(params)
-                )
-            except DatabaseError as exc:
-                self._reset_state()
-                if supports_transactions:
-                    self.connection.engine.restore(snapshot)
-                    raise
-                raise type(exc)(
-                    f"{exc}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            except Exception as exc:
-                self._reset_state()
-                mapped = _map_exception(exc)
-                if supports_transactions:
-                    self.connection.engine.restore(snapshot)
-                    raise mapped from exc
-                raise type(mapped)(
-                    f"{mapped}. Backend '{backend_name}' does not support transactional "
-                    "executemany rollback; partial writes may have occurred."
-                ) from exc
-            total_rowcount += result.rowcount
-            last_rowid = result.lastrowid
-            last_action = result.action
+        try:
+            result: ExecutionResult = self.connection.executemany(query, seq_of_params)
+        except DatabaseError:
+            raise
+        except Exception as exc:
+            raise _map_exception(exc) from exc
         self._results = []
         self._index = 0
         self.description = None
         self._has_result_set = False
-        self.rowcount = total_rowcount
-        self.lastrowid = last_rowid
-        if self.connection.autocommit and last_action is not None:
-            try:
-                self.connection._finalize_autocommit(last_action)
-            except Exception as exc:
-                from excel_dbapi.exceptions import Error as _DBAPIError
-
-                if isinstance(exc, _DBAPIError):
-                    raise
-                raise OperationalError(str(exc)) from exc
+        self.rowcount = result.rowcount
+        self.lastrowid = result.lastrowid
         return self
 
     @check_closed
