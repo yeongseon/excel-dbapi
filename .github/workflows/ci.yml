@@ -29,9 +29,9 @@ jobs:
           files: coverage.xml
           fail_ci_if_error: false
       - name: Run ruff
-        run: ruff check src/
+        run: ruff check src/ examples/
       - name: Run ruff format check
-        run: ruff format --check src/
+        run: ruff format --check src/ examples/
       - name: Run mypy strict
         run: mypy --strict src/
 
@@ -49,13 +49,21 @@ jobs:
           python -m pip install build
           python -m build
           python -m build --sdist
+      - name: Validate package metadata
+        run: |
+          python -m pip install twine
+          twine check dist/*
       - name: Smoke test wheel install in clean venv
         run: |
           python -m venv .venv-wheel
           .venv-wheel/bin/python -m pip install --upgrade pip
           .venv-wheel/bin/python -m pip install dist/*.whl
+          .venv-wheel/bin/python -m pip install "excel-dbapi[pandas,graph]"
           .venv-wheel/bin/python -c "import excel_dbapi; print(excel_dbapi.__version__)"
           .venv-wheel/bin/python -c "from importlib.metadata import metadata; m=metadata('excel-dbapi'); assert m['Name'] == 'excel-dbapi'; assert m['Version']"
+          .venv-wheel/bin/excel-dbapi --help
+          .venv-wheel/bin/python -c "import pandas; print('pandas extra OK')"
+          .venv-wheel/bin/python -c "import httpx; print('graph extra OK')"
       - name: Smoke test sdist install in clean venv
         run: |
           python -m venv .venv-sdist
@@ -63,3 +71,4 @@ jobs:
           .venv-sdist/bin/python -m pip install dist/*.tar.gz
           .venv-sdist/bin/python -c "import excel_dbapi; print(excel_dbapi.__version__)"
           .venv-sdist/bin/python -c "from importlib.metadata import metadata; m=metadata('excel-dbapi'); assert m['Name'] == 'excel-dbapi'; assert m['Version']"
+          .venv-sdist/bin/excel-dbapi --help

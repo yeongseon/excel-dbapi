@@ -48,7 +48,11 @@ dev = [
   "pre-commit>=3.0",
   "build>=1.0",
   "hypothesis>=6.0",
+  "twine>=5.0",
 ]
+
+[project.scripts]
+excel-dbapi = "excel_dbapi.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/excel_dbapi"]
