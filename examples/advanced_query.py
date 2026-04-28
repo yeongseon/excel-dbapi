@@ -1,16 +1,38 @@
 # examples/advanced_query.py
+# Demonstrates filtered queries with parameter binding.
 
-from excel_dbapi.connection import ExcelConnection
+import tempfile
+from pathlib import Path
+
+import openpyxl
+
+from excel_dbapi import connect
+
+
+def _create_sample(path: Path) -> None:
+    """Create a small sample workbook for this example."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+    ws.append(["id", "name", "score"])
+    ws.append([1, "Alice", 85])
+    ws.append([2, "Bob", 72])
+    ws.append([3, "Carol", 91])
+    wb.save(str(path))
 
 
 def main():
-    with ExcelConnection("tests/data/sample.xlsx") as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT id, name FROM Sheet1 WHERE id >= ? AND name != ? ORDER BY id DESC LIMIT 2",
-            (1, "Alice"),
-        )
-        print(cursor.fetchall())
+    with tempfile.TemporaryDirectory() as tmpdir:
+        sample = Path(tmpdir) / "sample.xlsx"
+        _create_sample(sample)
+
+        with connect(str(sample)) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, name FROM Sheet1 WHERE id >= ? AND name != ? ORDER BY id DESC LIMIT 2",
+                (1, "Alice"),
+            )
+            print(cursor.fetchall())
 
 
 if __name__ == "__main__":
