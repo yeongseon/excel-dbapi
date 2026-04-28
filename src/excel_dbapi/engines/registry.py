@@ -44,7 +44,9 @@ def _load_openpyxl() -> type[WorkbookBackend]:
 def _load_pandas() -> type[WorkbookBackend]:
     try:
         from .pandas.backend import PandasBackend
-    except ImportError as exc:
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"pandas", "openpyxl"}:
+            raise
         raise CapabilityError(
             "The pandas engine requires the 'pandas' package: "
             "pip install 'excel-dbapi[pandas]'"
@@ -59,7 +61,9 @@ register_engine("pandas", _load_pandas)
 def _load_graph() -> type[WorkbookBackend]:
     try:
         from .graph.backend import GraphBackend
-    except ImportError as exc:
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"httpx"}:
+            raise
         raise CapabilityError(
             "The graph engine requires the 'httpx' package: "
             "pip install 'excel-dbapi[graph]'"

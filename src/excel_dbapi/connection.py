@@ -97,7 +97,7 @@ class ExcelConnection:
     for reading and querying Excel files using openpyxl.
     """
 
-    _data_only_warning_issued: bool = False
+
 
     def __init__(
         self,
@@ -135,6 +135,7 @@ class ExcelConnection:
             **backend_options: Extra keyword arguments forwarded to the backend.
         """
         self._data_only = data_only
+        self._data_only_warning_issued = False
         # ── Resolve engine + location ──────────────────────────────
         try:
             engine_name, location = _resolve_engine_and_location(file_path, engine)
@@ -377,18 +378,29 @@ class ExcelConnection:
         if self.autocommit and action in _MUTATING_ACTIONS:
             self._warn_data_only_if_needed()
             self.engine.save()
-
+            self._snapshot = self.engine.snapshot()
     def _warn_data_only_if_needed(self) -> None:
         if self._data_only and not self._data_only_warning_issued:
+            # Compute stacklevel dynamically so the warning points at user code
+            # regardless of whether the call comes through cursor or connection.
+            import sys
+            frame = sys._getframe(1)
+            level = 2  # start at our caller
+            pkg = __name__.rsplit(".", 1)[0]
+            while frame.f_back is not None:
+                module = frame.f_globals.get("__name__", "")
+                if not module.startswith(pkg):
+                    break
+                frame = frame.f_back
+                level += 1
             warnings.warn(
                 "Workbook was opened with data_only=True (the default). "
                 "Saving will replace formulas with their last cached values. "
                 "Use connect(..., data_only=False) to preserve formulas.",
                 UserWarning,
-                stacklevel=4,
+                stacklevel=level,
             )
             self._data_only_warning_issued = True
-            self._snapshot = self.engine.snapshot()
 
     def close(self) -> None:
         try:

@@ -50,6 +50,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Engine backend to use (default: auto-detect)",
     )
+    _ = query_parser.add_argument(
+        "--data-only",
+        action="store_true",
+        default=False,
+        dest="data_only",
+        help="Open workbook with data_only=True (replaces formulas with cached values)",
+    )
 
     return parser
 
@@ -121,8 +128,8 @@ def _description_to_headers(result: ExecutionResult) -> list[str]:
     return []
 
 
-def _print_query(file_path: str, sql: str, engine: str | None) -> int:
-    with connect(file_path, engine=engine) as conn:
+def _print_query(file_path: str, sql: str, engine: str | None, *, data_only: bool = False) -> int:
+    with connect(file_path, engine=engine, data_only=data_only) as conn:
         result = conn.execute(sql)
 
     headers = _description_to_headers(result)
@@ -165,7 +172,8 @@ def _run(args: argparse.Namespace) -> int:
         if not isinstance(sql_obj, str):
             raise ValueError("Missing SQL query")
         sql = sql_obj
-        return _print_query(file_path, sql, engine)
+        data_only: bool = getattr(args, "data_only", False)
+        return _print_query(file_path, sql, engine, data_only=data_only)
 
     raise ValueError(f"Unknown command: {command}")
 

@@ -552,6 +552,41 @@ class TestAutocommitSnapshot:
         assert rows[0][1] == "Persist"
         conn2.close()
 
+    def test_autocommit_data_only_false_updates_snapshot(self, tmp_xlsx):
+        """Snapshot is updated after autocommit write even with data_only=False."""
+        conn = ExcelConnection(tmp_xlsx, autocommit=True, data_only=False)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO Sheet1 (id, name, score) VALUES (?, ?, ?)", (77, "NoCache", 80)
+        )
+        conn.autocommit = False
+        conn.rollback()
+        cur.execute("SELECT * FROM Sheet1 WHERE id = 77")
+        assert len(cur.fetchall()) == 1, (
+            "Autocommitted row should survive rollback with data_only=False"
+        )
+        conn.close()
+
+    def test_multiple_autocommit_writes_snapshot_stays_current(self, tmp_xlsx):
+        """Two consecutive autocommit writes: rollback after switching to manual
+        should keep both rows (snapshot updated after each save)."""
+        conn = ExcelConnection(tmp_xlsx, autocommit=True)
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO Sheet1 (id, name, score) VALUES (?, ?, ?)", (50, "First", 10)
+        )
+        cur.execute(
+            "INSERT INTO Sheet1 (id, name, score) VALUES (?, ?, ?)", (51, "Second", 20)
+        )
+        conn.autocommit = False
+        conn.rollback()
+        cur.execute("SELECT * FROM Sheet1 WHERE id IN (50, 51)")
+        rows = cur.fetchall()
+        assert len(rows) == 2, (
+            "Both autocommitted rows should survive rollback"
+        )
+        conn.close()
+
 class TestExceptionTypes:
     def test_unsupported_engine_raises_operational_error(self, tmp_xlsx):
         with pytest.raises(NotSupportedError, match="Unsupported engine"):

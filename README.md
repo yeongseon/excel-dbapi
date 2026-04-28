@@ -274,6 +274,51 @@ with connect("sample.xlsx", sanitize_formulas=False) as conn:
 
 ---
 
+## Backup and Row Warnings
+
+```python
+from excel_dbapi import connect
+
+# Create a timestamped backup before the first write operation
+with connect("sample.xlsx", backup=True) as conn:
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM Sheet1 WHERE id = 1")  # backup created here
+
+# Custom backup directory
+with connect("sample.xlsx", backup=True, backup_dir="/tmp/backups") as conn:
+    ...
+
+# Warn when a sheet exceeds a row threshold
+with connect("sample.xlsx", warn_rows=10000) as conn:
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM LargeSheet")  # emits UserWarning if >10k rows
+```
+
+## CLI
+
+```bash
+# List sheets in a workbook
+excel-dbapi tables sample.xlsx
+
+# Show schema (headers + row counts)
+excel-dbapi schema sample.xlsx
+excel-dbapi schema sample.xlsx Sheet1
+
+# Run a SQL query
+excel-dbapi query sample.xlsx "SELECT * FROM Sheet1 WHERE score > 80"
+
+# Workbook summary
+excel-dbapi inspect sample.xlsx
+
+# Use --data-only for formula workbooks that need cached values
+excel-dbapi query sample.xlsx "SELECT * FROM Sheet1" --data-only
+```
+
+By default the CLI opens workbooks with `data_only=False` to preserve formulas.
+Pass `--data-only` to read cached formula values instead.
+
+---
+
 ## Transactions
 
 ```python
