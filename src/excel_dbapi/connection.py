@@ -97,6 +97,8 @@ class ExcelConnection:
     for reading and querying Excel files using openpyxl.
     """
 
+    _data_only_warning_issued: bool = False
+
     def __init__(
         self,
         file_path: str,
@@ -132,6 +134,7 @@ class ExcelConnection:
             credential: Optional credential / token provider for cloud backends.
             **backend_options: Extra keyword arguments forwarded to the backend.
         """
+        self._data_only = data_only
         # ── Resolve engine + location ──────────────────────────────
         try:
             engine_name, location = _resolve_engine_and_location(file_path, engine)
@@ -226,7 +229,9 @@ class ExcelConnection:
         )
         if not self.autocommit:
             self.engine.ensure_write_lock()
-        self._snapshot: Any = self.engine.snapshot()
+        self._snapshot: Any | None = None
+        if not self.autocommit:
+            self._snapshot = self.engine.snapshot()
 
     @check_closed
     def cursor(self) -> Any:
@@ -237,6 +242,7 @@ class ExcelConnection:
     @check_closed
     def commit(self) -> None:
         try:
+            self._warn_data_only_if_needed()
             self.engine.save()
             self._snapshot = self.engine.snapshot()
         except Error:
@@ -255,6 +261,10 @@ class ExcelConnection:
             if self.autocommit:
                 raise NotSupportedError(
                     "Rollback is disabled when autocommit is enabled"
+                )
+            if self._snapshot is None:
+                raise NotSupportedError(
+                    "No snapshot available for rollback"
                 )
             self.engine.restore(self._snapshot)
         except Error:
@@ -365,7 +375,19 @@ class ExcelConnection:
         The parser guarantees uppercase; callers must not pass lowercase.
         """
         if self.autocommit and action in _MUTATING_ACTIONS:
+            self._warn_data_only_if_needed()
             self.engine.save()
+
+    def _warn_data_only_if_needed(self) -> None:
+        if self._data_only and not self._data_only_warning_issued:
+            warnings.warn(
+                "Workbook was opened with data_only=True (the default). "
+                "Saving will replace formulas with their last cached values. "
+                "Use connect(..., data_only=False) to preserve formulas.",
+                UserWarning,
+                stacklevel=4,
+            )
+            self._data_only_warning_issued = True
             self._snapshot = self.engine.snapshot()
 
     def close(self) -> None:

@@ -150,6 +150,7 @@ class ExcelCursor:
         return self._results[start:end]
 
     def close(self) -> None:
+        self._reset_state()
         self.closed = True
 
     @check_closed
