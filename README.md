@@ -10,8 +10,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/docs-GitHub-blue.svg)](https://github.com/yeongseon/excel-dbapi/tree/main/docs)
 
-A **local-first worksheet query engine** with a Python [DB-API 2.0 (PEP 249)](https://peps.python.org/pep-0249/) interface.
-Query, insert, update, and delete rows in `.xlsx` workbooks using SQL — no database server required.
+A [PEP 249 (DB-API 2.0)](https://peps.python.org/pep-0249/) compatible driver that lets you query `.xlsx` workbooks with SQL — no database server required.
 
 > **This is not a document-preservation tool.** excel-dbapi treats worksheets as
 > row-oriented datasets. It does not guarantee preservation of Excel formatting,
@@ -19,12 +18,28 @@ Query, insert, update, and delete rows in `.xlsx` workbooks using SQL — no dat
 > pandas engine, which rewrites the entire workbook on save. If you need a
 > round-trip-safe Excel editor, use openpyxl directly.
 
+### ✅ Best for
+
+- Querying small-to-medium `.xlsx` workbooks (up to ~50k rows) with SQL
+- Automating Excel read/write with a familiar DB-API interface
+- Teaching SQL without database setup
+- Prototyping data pipelines before moving to a real database
+
+### ❌ Not for
+
+- Large datasets (50k+ rows) — use SQLite, DuckDB, or PostgreSQL
+- Preserving Excel formatting, charts, or macros through write cycles
+- Concurrent multi-writer scenarios
+- Production OLTP/OLAP workloads
+
 ## Documentation
 
 - **[SQL Specification](docs/SQL_SPEC.md)** — authoritative feature matrix and SQL subset reference (v1.0)
 - [Usage Guide](docs/USAGE.md) — engine comparison, configuration, advanced patterns
+- [Engine Selection Guide](docs/engines.md) — choosing the right backend
 - [10-Minute Quickstart](docs/QUICKSTART_10_MIN.md)
 - [Engine Benchmarks](docs/BENCHMARKS.md) — row limits, performance characteristics, preservation matrix
+- [Microsoft Graph Backend](docs/graph-backend.md) — remote Excel on OneDrive/SharePoint
 - [Project Roadmap](docs/ROADMAP.md)
 - [Development Guide](docs/DEVELOPMENT.md)
 - [Operations Notes](docs/OPERATIONS.md)
@@ -90,10 +105,10 @@ See [CHANGELOG](CHANGELOG.md) for release history.
 ## Quick Start
 
 ```python
-from excel_dbapi.connection import ExcelConnection
+from excel_dbapi import connect
 
 # Open an Excel file and query it
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM Sheet1")
     print(cursor.fetchall())
@@ -102,7 +117,7 @@ with ExcelConnection("sample.xlsx") as conn:
 ### Insert, Update, Delete
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
 
     # Insert with parameter binding (recommended)
@@ -118,7 +133,7 @@ with ExcelConnection("sample.xlsx") as conn:
 ### Multi-row Insert
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
 
     # Insert multiple rows at once
@@ -131,7 +146,7 @@ with ExcelConnection("sample.xlsx") as conn:
 ### Create and Drop Sheets
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE NewSheet (id, name)")
     cursor.execute("DROP TABLE NewSheet")
@@ -148,8 +163,10 @@ with ExcelConnection("sample.xlsx") as conn:
 | graph | Microsoft Graph API (remote) | httpx | ✅ (cell values only) |
 
 ```python
-conn = ExcelConnection("sample.xlsx", engine="openpyxl")  # default
-conn = ExcelConnection("sample.xlsx", engine="pandas")
+from excel_dbapi import connect
+
+conn = connect("sample.xlsx", engine="openpyxl")  # default
+conn = connect("sample.xlsx", engine="pandas")
 ```
 
 ### Engine Capability Matrix
@@ -163,14 +180,14 @@ conn = ExcelConnection("sample.xlsx", engine="pandas")
 | `data_only=False` (read formulas) | ✅ | ❌ | ❌ |
 | File locking | ✅ (advisory PID-based) | ✅ (advisory PID-based) | N/A (remote) |
 | Remote/cloud access | ❌ | ❌ | ✅ (Microsoft Graph) |
-| `get_workbook()` access | ✅ | ❌ | ❌ |
+| `.workbook` access | ✅ | ❌ | ❌ |
 | Formula injection defense | ✅ (default on) | ✅ (default on) | ✅ (default on) |
 
 Choose **openpyxl** (default) for local files where you need formatting preservation and formula access.
 Choose **pandas** when you prefer DataFrame-based workflows and don't need formatting.
 Choose **graph** for remote Excel on OneDrive/SharePoint via Microsoft Graph API.
 
-For detailed engine comparison and benchmarks, see the [Usage Guide](docs/USAGE.md#engine-comparison) and [Benchmarks](docs/BENCHMARKS.md).
+For detailed engine comparison and benchmarks, see the [Engine Selection Guide](docs/engines.md) and [Benchmarks](docs/BENCHMARKS.md).
 
 ---
 
@@ -194,7 +211,9 @@ For detailed engine comparison and benchmarks, see the [Usage Guide](docs/USAGE.
 **LIKE patterns:** `%` matches any sequence of characters, `_` matches any single character.
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+from excel_dbapi import connect
+
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
 
     # IN operator
@@ -215,7 +234,7 @@ with ExcelConnection("sample.xlsx") as conn:
 ### Compound Queries (Set Operations)
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
 
     cursor.execute("SELECT id FROM t1 UNION SELECT id FROM t2")
@@ -236,15 +255,17 @@ Strings starting with `=`, `+`, `-`, `@`, `\t`, or `\r` are automatically prefix
 with a single quote (`'`) so they are stored as plain text, not executed as formulas.
 
 ```python
+from excel_dbapi import connect
+
 # Default: sanitization ON (recommended)
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute("INSERT INTO Sheet1 (id, name) VALUES (?, ?)",
                    (1, "=SUM(A1:A10)"))
     # Stored as: '=SUM(A1:A10)  (safe, not executed as formula)
 
 # Opt out if you intentionally write formulas
-with ExcelConnection("sample.xlsx", sanitize_formulas=False) as conn:
+with connect("sample.xlsx", sanitize_formulas=False) as conn:
     cursor = conn.cursor()
     cursor.execute("INSERT INTO Sheet1 (id, formula) VALUES (?, ?)",
                    (1, "=SUM(A1:A10)"))
@@ -256,7 +277,9 @@ with ExcelConnection("sample.xlsx", sanitize_formulas=False) as conn:
 ## Transactions
 
 ```python
-with ExcelConnection("sample.xlsx", autocommit=False) as conn:
+from excel_dbapi import connect
+
+with connect("sample.xlsx", autocommit=False) as conn:
     cursor = conn.cursor()
     cursor.execute("UPDATE Sheet1 SET name = 'Ann' WHERE id = 1")
     conn.rollback()
@@ -272,7 +295,9 @@ with ExcelConnection("sample.xlsx", autocommit=False) as conn:
 ## Cursor Metadata
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+from excel_dbapi import connect
+
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM Sheet1")
     print(cursor.description)
@@ -336,9 +361,9 @@ pip install excel-dbapi[graph]
 ```
 
 ```python
-from excel_dbapi.connection import ExcelConnection
+from excel_dbapi import connect
 
-conn = ExcelConnection(
+conn = connect(
     "msgraph://drives/{drive_id}/items/{item_id}",
     engine="graph",
     credential=your_credential,
@@ -357,7 +382,7 @@ Graph metadata sync is best-effort for write operations: if worksheet mutation s
 but metadata sync fails, excel-dbapi keeps the worksheet change and logs a warning.
 
 For DSN formats and dependency choices, see the
-[Usage Guide Graph section](docs/USAGE.md#graph-backend-dsn-and-installation).
+[Graph Backend Guide](docs/graph-backend.md).
 
 ---
 

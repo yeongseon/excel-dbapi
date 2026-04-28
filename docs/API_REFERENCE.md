@@ -5,7 +5,7 @@ module docstrings. It focuses on the stable user-facing surface.
 
 ## Top-level module: `excel_dbapi`
 
-### `connect(file_path, engine=None, autocommit=True, create=False, data_only=True, sanitize_formulas=True, credential=None, **backend_options) -> ExcelConnection`
+### `connect(file_path, engine=None, autocommit=True, create=False, backup=False, backup_dir=None, data_only=True, sanitize_formulas=True, credential=None, warn_rows=None, **backend_options) -> ExcelConnection`
 
 Create a DB-API connection to a local workbook (`.xlsx`) or a DSN.
 
@@ -13,9 +13,12 @@ Create a DB-API connection to a local workbook (`.xlsx`) or a DSN.
 - `engine`: `openpyxl`, `pandas`, `graph`, or `None` for DSN auto-detection
 - `autocommit`: save write operations automatically when `True`
 - `create`: create workbook if missing (backend-dependent)
+- `backup`: if `True`, create a timestamped backup before the first mutating operation (local files only)
+- `backup_dir`: custom backup directory (default: `.excel-dbapi-backups/` next to the workbook)
 - `data_only`: read formula cached values instead of formula text
 - `sanitize_formulas`: escape formula-like user input on write
 - `credential`: optional credential/token provider for cloud backends
+- `warn_rows`: emit a `UserWarning` when a sheet exceeds this row count (default: disabled)
 - `backend_options`: additional backend-specific options
 
 Example:
@@ -36,7 +39,7 @@ PEP 249-style connection object (`excel_dbapi.connection.ExcelConnection`).
 
 ### Constructor
 
-`ExcelConnection(file_path, engine=None, autocommit=True, create=False, data_only=True, sanitize_formulas=True, credential=None, **backend_options)`
+`ExcelConnection(file_path, engine=None, autocommit=True, create=False, backup=False, backup_dir=None, data_only=True, sanitize_formulas=True, credential=None, warn_rows=None, **backend_options)`
 
 ### Methods
 
@@ -55,9 +58,9 @@ PEP 249-style connection object (`excel_dbapi.connection.ExcelConnection`).
 Example with context manager:
 
 ```python
-from excel_dbapi.connection import ExcelConnection
+from excel_dbapi import connect
 
-with ExcelConnection("sample.xlsx", autocommit=False) as conn:
+with connect("sample.xlsx", autocommit=False) as conn:
     cur = conn.cursor()
     cur.execute("UPDATE users SET name = 'Ann' WHERE id = 1")
     conn.commit()
@@ -89,9 +92,9 @@ PEP 249-style cursor object (`excel_dbapi.cursor.ExcelCursor`).
 Example:
 
 ```python
-from excel_dbapi.connection import ExcelConnection
+from excel_dbapi import connect
 
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cur = conn.cursor()
     cur.execute("SELECT id, name FROM users WHERE id > ?", (10,))
     for row in cur.fetchall():
@@ -116,11 +119,11 @@ Defined in `excel_dbapi.exceptions`:
 Example:
 
 ```python
-from excel_dbapi.connection import ExcelConnection
+from excel_dbapi import connect
 from excel_dbapi.exceptions import ProgrammingError
 
 try:
-    with ExcelConnection("sample.xlsx") as conn:
+    with connect("sample.xlsx") as conn:
         conn.cursor().execute("SELECT missing_column FROM users")
 except ProgrammingError as exc:
     print(f"Invalid query: {exc}")

@@ -9,9 +9,9 @@ pip install excel-dbapi
 ## 2) Copy/paste first query
 
 ```python
-from excel_dbapi.connection import ExcelConnection
+from excel_dbapi import connect
 
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cur = conn.cursor()
     cur.execute("SELECT id, name FROM Sheet1 ORDER BY id LIMIT 3")
     print(cur.fetchall())
@@ -20,7 +20,7 @@ with ExcelConnection("sample.xlsx") as conn:
 ## 3) Safe write pattern
 
 ```python
-with ExcelConnection("sample.xlsx", autocommit=False) as conn:
+with connect("sample.xlsx", autocommit=False) as conn:
     cur = conn.cursor()
     cur.execute("INSERT INTO Sheet1 (id, name) VALUES (?, ?)", (99, "Classroom"))
     conn.commit()

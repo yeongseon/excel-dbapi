@@ -32,9 +32,9 @@ and `onedrive://path/to/workbook.xlsx` are not implemented.
 ### Example
 
 ```python
-from excel_dbapi.connection import ExcelConnection
+from excel_dbapi import connect
 
-with ExcelConnection(
+with connect(
     "msgraph://drives/{drive_id}/items/{item_id}",
     engine="graph",
     credential=your_credential,
@@ -53,10 +53,10 @@ rolling back the mutation.
 ## Basic Example
 
 ```python
-from excel_dbapi.connection import ExcelConnection
+from excel_dbapi import connect
 
 # Open a connection to the Excel file
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
 
     # Execute a query
@@ -89,7 +89,7 @@ limits.
 ## Write Operations
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute("INSERT INTO Sheet1 (id, name) VALUES (1, 'Alice')")
     cursor.execute("UPDATE Sheet1 SET name = 'Ann' WHERE id = 1")
@@ -99,7 +99,7 @@ with ExcelConnection("sample.xlsx") as conn:
 ## Bulk Inserts
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.executemany(
         "INSERT INTO Sheet1 (id, name) VALUES (?, ?)",
@@ -110,7 +110,7 @@ with ExcelConnection("sample.xlsx") as conn:
 ## DDL
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute("CREATE TABLE NewSheet (id, name)")
     cursor.execute("DROP TABLE NewSheet")
@@ -121,7 +121,7 @@ with ExcelConnection("sample.xlsx") as conn:
 Autocommit is enabled by default. To use manual transactions:
 
 ```python
-with ExcelConnection("sample.xlsx", autocommit=False) as conn:
+with connect("sample.xlsx", autocommit=False) as conn:
     cursor = conn.cursor()
     cursor.execute("UPDATE Sheet1 SET name = 'Ann' WHERE id = 1")
     conn.rollback()  # restores the in-memory snapshot (reverts uncommitted changes)
@@ -137,7 +137,7 @@ in-memory copy, not a durable transaction log.
 ## Advanced Examples
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute(
         "SELECT id, name FROM Sheet1 WHERE id >= ? ORDER BY id DESC LIMIT 1",
@@ -161,7 +161,7 @@ storage model, feature coverage, and operational trade-offs.
 | **Transactions** | ✅ commit / rollback (in-memory snapshot) | ✅ commit / rollback (in-memory snapshot) | ❌ writes are immediate |
 | **`data_only=False`** | ✅ read raw formulas | ❌ raises `NotSupportedError` | ❌ raises `NotSupportedError` |
 | **File locking** | ✅ advisory PID-based `.lock` file | ✅ advisory PID-based `.lock` file | N/A (remote; uses ETag concurrency) |
-| **`get_workbook()`** | ✅ returns openpyxl `Workbook` | ❌ raises `NotSupportedError` | ❌ |
+| **`.workbook`** | ✅ returns openpyxl `Workbook` | ❌ raises `NotSupportedError` | ❌ |
 | **Remote access** | ❌ local only | ❌ local only | ✅ OneDrive / SharePoint |
 | **Formula injection defense** | ✅ on by default | ✅ on by default | ✅ on by default |
 | **Dependency** | `openpyxl` | `pandas`, `openpyxl` | `httpx` |
@@ -190,7 +190,7 @@ and writes them back with `pd.ExcelWriter` (engine=`"openpyxl"`).
 - **Workbook rewrite**: every `save()` rebuilds the workbook from DataFrames.
   **Formatting, charts, images, comments, and formulas are dropped.**
 - **No formula access**: `data_only=False` raises `NotSupportedError`.
-- **No `get_workbook()`**: `get_workbook()` raises `NotSupportedError` because
+- **No `.workbook` access**: `.workbook` raises `NotSupportedError` because
   there is no persistent openpyxl `Workbook` object.
 - **Type fidelity**: pandas preserves Python types on read. `WHERE id = '2'`
   (string) will not match an integer column — use `WHERE id = 2`.
@@ -232,7 +232,7 @@ Microsoft Graph API.
 ## Limitations
 
 - `PandasBackend` (engine=`"pandas"`) rewrites workbooks and may drop formatting, charts, and formulas.
-- `OpenpyxlBackend` (engine=`"openpyxl"`) defaults to `data_only=True`, so formulas are read as cached values unless you set `data_only=False` on `ExcelConnection(...)`.
+- `OpenpyxlBackend` (engine=`"openpyxl"`) defaults to `data_only=True`, so formulas are read as cached values unless you set `data_only=False` via `connect(..., data_only=False)`.
 - Some advanced SQL patterns remain limited; see [SQL_SPEC.md](SQL_SPEC.md) for the
   exact supported subset and restrictions.
 - No concurrent write support — use a single-writer model.
@@ -251,7 +251,7 @@ Avoid string interpolation for SQL parameters. excel-dbapi uses **qmark paramsty
 ## Cursor Metadata
 
 ```python
-with ExcelConnection("sample.xlsx") as conn:
+with connect("sample.xlsx") as conn:
     cursor = conn.cursor()
     cursor.execute("SELECT id, name FROM Sheet1")
     print(cursor.description)

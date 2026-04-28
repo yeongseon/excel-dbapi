@@ -31,10 +31,9 @@ Both `max_rows` and `max_memory_mb` are configurable per-connection via
 `backend_options`:
 
 ```python
-conn = ExcelConnection(
-    "data.xlsx",
-    backend_options={"max_rows": 10_000, "max_memory_mb": 100.0},
-)
+from excel_dbapi import connect
+
+conn = connect("data.xlsx", max_rows=10_000, max_memory_mb=100.0)
 ```
 
 | Guard | Default | Behavior |
@@ -152,7 +151,7 @@ need to preserve anything beyond raw cell values, use openpyxl (local) or graph
 | Read `.xlsx` | ✅ | ✅ | ✅ (remote) |
 | Write `.xlsx` | ✅ | ✅ | ✅ (opt-in `readonly=False`) |
 | `data_only=False` (formulas) | ✅ | ❌ | ❌ |
-| `get_workbook()` | ✅ (returns openpyxl `Workbook`) | ❌ | ❌ |
+| `.workbook` | ✅ (returns openpyxl `Workbook`) | ❌ | ❌ |
 | `sanitize_formulas` | ✅ | ✅ | ✅ |
 | `max_rows` guard | ✅ | ✅ | ✅ |
 | `max_memory_mb` guard | ✅ | ✅ | ✅ |
