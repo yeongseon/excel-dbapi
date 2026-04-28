@@ -49,8 +49,8 @@ A [PEP 249 (DB-API 2.0)](https://peps.python.org/pep-0249/) compatible driver th
 Before you begin, understand what excel-dbapi is **not**:
 
 - **Not full SQL** — a documented SQL subset (see [SQL Specification](docs/SQL_SPEC.md))
-- **Not a document-preservation tool** — the pandas engine drops all formatting, charts, images, and formulas on save; openpyxl preserves formatting but not all Excel features survive round-trips through SQL DML
-- **No concurrent writes** — single-writer model; advisory PID-based file locking is provided but not ACID
+- **Not a document-preservation tool** — the pandas engine drops all formatting, charts, images, and formulas on save; openpyxl preserves most formatting but some Excel features (e.g. conditional formatting rules, data validation, sparklines) may not survive round-trips through SQL DML
+- **No concurrent writes** — single-writer model; advisory PID-based file locking prevents accidental double-opens within the same machine, but it is process-local and **not** a distributed lock
 - **Not for large datasets** — designed for worksheets up to ~50k rows; beyond that, use a real database
 - **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL-based recovery; a crash mid-save can lose data
 - **Identifier grammar** — both unquoted Unicode identifiers (`이름`, `naïve`) and double-quoted identifiers (`"Full Name"`, `"이름"`) are supported
@@ -291,6 +291,11 @@ with connect("sample.xlsx", autocommit=False) as conn:
 > write is saved immediately and `rollback()` is not supported. The graph engine
 > does not support transactions at all; writes are applied immediately to the
 > remote workbook.
+>
+> **Context manager behaviour:** `with connect(...) as conn:` calls `conn.close()`
+> on exit — it does **not** auto-commit or auto-rollback. If you need to persist
+> changes when `autocommit=False`, call `conn.commit()` explicitly before the
+> `with` block ends.
 
 ## Cursor Metadata
 
