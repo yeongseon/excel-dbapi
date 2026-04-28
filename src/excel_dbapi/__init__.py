@@ -87,9 +87,12 @@ def connect(
     engine: str | None = None,
     autocommit: bool = True,
     create: bool = False,
+    backup: bool = False,
+    backup_dir: str | None = None,
     data_only: bool = True,
     sanitize_formulas: bool = True,
     credential: Credential = None,
+    warn_rows: int | None = None,
     **backend_options: Any,
 ) -> ExcelConnection:
     return ExcelConnection(
@@ -97,9 +100,12 @@ def connect(
         engine=engine,
         autocommit=autocommit,
         create=create,
+        backup=backup,
+        backup_dir=backup_dir,
         data_only=data_only,
         sanitize_formulas=sanitize_formulas,
         credential=credential,
+        warn_rows=warn_rows,
         **backend_options,
     )
 

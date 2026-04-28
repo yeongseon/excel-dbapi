@@ -72,10 +72,20 @@ def check_closed(
 def _resolve_engine_and_location(file_path: str, engine: str | None) -> tuple[str, str]:
     """Determine engine name and normalised location from file_path/DSN."""
     dsn_engine = resolve_engine_from_dsn(file_path)
+    if "://" in file_path and dsn_engine is None:
+        scheme = file_path.split("://", 1)[0]
+        raise OperationalError(
+            f"Unsupported DSN scheme {scheme!r}. "
+            f"Supported schemes: msgraph, sharepoint, onedrive"
+        )
     if engine is None:
         engine = dsn_engine or "openpyxl"
-    elif dsn_engine and engine != dsn_engine:
-        raise BackendOperationError(f"Engine mismatch: DSN implies {dsn_engine!r}, got {engine!r}")
+    else:
+        engine = engine.lower()
+        if dsn_engine and engine != dsn_engine:
+            raise BackendOperationError(
+                f"Engine mismatch: DSN implies {dsn_engine!r}, got {engine!r}"
+            )
     if dsn_engine:
         return engine, file_path  # Don't Path.resolve() URLs/DSNs
     return engine, str(Path(file_path).expanduser().resolve())
@@ -93,9 +103,12 @@ class ExcelConnection:
         engine: str | None = None,
         autocommit: bool = True,
         create: bool = False,
+        backup: bool = False,
+        backup_dir: str | None = None,
         data_only: bool = True,
         sanitize_formulas: bool = True,
         credential: Credential = None,
+        warn_rows: int | None = None,
         **backend_options: Any,
     ):
         """
@@ -108,6 +121,10 @@ class ExcelConnection:
                 or None for auto-detection from DSN).
             autocommit: If True, auto-save after write operations.
             create: If True, create the file if it does not exist.
+            backup: If True, create a timestamped backup before the first
+                mutating operation for local workbook files.
+            backup_dir: Optional backup directory path. If omitted, backups are
+                written to ``.excel-dbapi-backups`` under the workbook directory.
             data_only: If True, read cached formula values instead of formulas.
             sanitize_formulas: If True (default), escape cell values that could
                 be interpreted as formulas by spreadsheet applications.
@@ -132,12 +149,6 @@ class ExcelConnection:
 
         if engine_name == "pandas":
             warnings.warn(
-                "The pandas engine will become an optional dependency in v2.0. "
-                "Install with: pip install excel-dbapi[pandas]",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            warnings.warn(
                 "The pandas engine rewrites workbooks on save. "
                 "Formatting, charts, images, and formulas will be dropped. "
                 "Use engine='openpyxl' if you need to preserve these.",
@@ -147,11 +158,27 @@ class ExcelConnection:
 
         # ── File existence check (local files only) ─────────────
         is_dsn = resolve_engine_from_dsn(file_path) is not None
+        if not is_dsn:
+            default_backup_dir = Path(self.file_path).parent / ".excel-dbapi-backups"
+            requested_backup_dir = (
+                Path(backup_dir).expanduser() if backup_dir is not None else default_backup_dir
+            )
+            if not requested_backup_dir.is_absolute():
+                requested_backup_dir = (
+                    Path(self.file_path).parent / requested_backup_dir
+                )
+            self._backup_dir: str | None = str(requested_backup_dir.resolve())
+        else:
+            self._backup_dir = None
+        self._backup_enabled: bool = backup and not is_dsn
+        self._backup_created: bool = False
+
         if not is_dsn and not create and not os.path.exists(self.file_path):
             raise OperationalError(f"Excel file not found: {self.file_path!r}")
 
         # ── Build backend options ────────────────────────────────
         opts: dict[str, Any] = {**backend_options}
+        opts["warn_rows"] = warn_rows
         if credential is not None:
             opts["credential"] = credential
 
@@ -271,9 +298,7 @@ class ExcelConnection:
 
         for params in seq_of_params:
             try:
-                result = self._executor.execute_with_params(
-                    query, tuple(params)
-                )
+                result = self._executor.execute_with_params(query, tuple(params))
             except Error as exc:
                 if supports_transactions:
                     self.engine.restore(snapshot)
@@ -310,6 +335,28 @@ class ExcelConnection:
         action = query.strip().split(None, 1)[0].upper() if query.strip() else ""
         if action in _MUTATING_ACTIONS:
             self.engine.ensure_write_lock()
+            self._create_backup_if_needed()
+
+    def _create_backup_if_needed(self) -> None:
+        if not self._backup_enabled or self._backup_created:
+            return
+        if self._backup_dir is None:
+            return
+        source = Path(self.file_path)
+        if not source.exists() or not source.is_file():
+            return
+
+        import shutil
+        from datetime import datetime
+
+        backup_dir = Path(self._backup_dir)
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        stem = source.stem
+        suffix = source.suffix
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        dest = backup_dir / f"{stem}.{timestamp}{suffix}"
+        shutil.copy2(source, dest)
+        self._backup_created = True
 
     def _finalize_autocommit(self, action: str) -> None:
         """Save and snapshot if autocommit is enabled and action is mutating.
@@ -330,9 +377,16 @@ class ExcelConnection:
         except Exception as exc:
             raise OperationalError(str(exc)) from exc
 
+    _CANONICAL_NAMES: dict[str, str] = {
+        "OpenpyxlBackend": "openpyxl",
+        "PandasBackend": "pandas",
+        "GraphBackend": "graph",
+    }
+
     @property
     def engine_name(self) -> str:
-        return self.engine.__class__.__name__
+        cls_name = self.engine.__class__.__name__
+        return self._CANONICAL_NAMES.get(cls_name, cls_name)
 
     @property
     def workbook(self) -> Any:

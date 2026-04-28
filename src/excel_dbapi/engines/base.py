@@ -43,6 +43,7 @@ class WorkbookBackend(ABC):
         self.file_path = file_path
         self.create = create
         self.sanitize_formulas = sanitize_formulas
+        self.warn_rows: int | None = self._normalize_warn_rows(options.get("warn_rows"))
         self.max_rows: int | None = self._normalize_max_rows(options.get("max_rows"))
         self.max_memory_mb: float | None = self._normalize_max_memory_mb(
             options.get("max_memory_mb")
@@ -51,8 +52,17 @@ class WorkbookBackend(ABC):
         self._file_locking_enabled = bool(options.get("file_locking", _is_local_path))
         self._lock_fd: int | None = None
         self._lock_path = f"{self.file_path}.lock"
+        self._warn_rows_emitted: set[str] = set()
         self._row_warning_emitted: set[tuple[str, int]] = set()
         self._memory_warning_emitted: set[tuple[str, int]] = set()
+
+    @staticmethod
+    def _normalize_warn_rows(value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise BackendOperationError("warn_rows must be a positive integer")
+        return int(value)
 
     @staticmethod
     def _normalize_max_rows(value: Any) -> int | None:
@@ -161,6 +171,19 @@ class WorkbookBackend(ABC):
 
     def _check_row_limit(self, sheet_name: str, row_count: int) -> None:
         from ..exceptions import OperationalError
+
+        if self.warn_rows is not None and row_count > self.warn_rows:
+            if sheet_name not in self._warn_rows_emitted:
+                warnings.warn(
+                    (
+                        f"Sheet '{sheet_name}' has {row_count} rows. "
+                        "excel-dbapi is optimized for small to medium workbooks. "
+                        "For large analytical workloads, consider SQLite, DuckDB, or PostgreSQL."
+                    ),
+                    UserWarning,
+                    stacklevel=2,
+                )
+                self._warn_rows_emitted.add(sheet_name)
 
         if self.max_rows is None:
             return
