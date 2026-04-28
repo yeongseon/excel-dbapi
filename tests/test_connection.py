@@ -10,8 +10,10 @@ from excel_dbapi import ExcelConnection, connect
 from excel_dbapi.connection import _resolve_engine_and_location
 from excel_dbapi.engines.base import _normalize_headers
 from excel_dbapi.exceptions import (
+    BackendOperationError,
     DataError,
     DatabaseError,
+    InterfaceError,
     NotSupportedError,
     OperationalError,
     ProgrammingError,
@@ -30,7 +32,7 @@ def test_connection_cursor():
     cursor = conn.cursor()
     assert cursor is not None
     conn.close()
-    with pytest.raises(Exception):
+    with pytest.raises(InterfaceError):
         conn.cursor()
 
 
@@ -65,22 +67,14 @@ def test_connection_execute_maps_exceptions(raised, expected):
 
 def test_nonexistent_file_raises_operational_error():
     """Issue 1: FileNotFoundError should be wrapped as OperationalError."""
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(OperationalError):
         ExcelConnection("nonexistent_file.xlsx")
-    # Should be OperationalError, not raw FileNotFoundError
-    assert "OperationalError" in str(type(exc_info.value)) or "Operational" in str(
-        exc_info.value
-    )
 
 
 def test_bad_graph_dsn_raises_operational_error():
-    """Issue 1: Invalid DSN ValueError should be wrapped as OperationalError."""
-    with pytest.raises(Exception) as exc_info:
+    """Issue 1: Invalid DSN scheme should be rejected as OperationalError."""
+    with pytest.raises(OperationalError, match="Unsupported DSN scheme"):
         ExcelConnection("bad://dsn")
-    # Should be OperationalError, not raw ValueError
-    assert "OperationalError" in str(type(exc_info.value)) or "Operational" in str(
-        exc_info.value
-    )
 
 
 def test_corrupt_file_raises_operational_error(tmp_path):
@@ -184,8 +178,6 @@ def _make_xlsx(
     ws = wb.active
     assert ws is not None
     ws.title = sheet
-    for h in headers or ["id", "name"]:
-        pass
     ws.append(headers or ["id", "name"])
     for row in rows or []:
         ws.append(row)
@@ -246,13 +238,13 @@ class TestConnectionExecuteAutocommit:
     def test_connection_execute_select_no_save(self, tmp_path: Path) -> None:
         """SELECT via connection.execute() does NOT trigger save."""
         fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Alice"]])
-        os.path.getmtime(fpath)
+        mtime_before = os.path.getmtime(fpath)
+        import time; time.sleep(0.05)  # ensure measurable mtime gap if save occurs
         with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
             result = conn.execute("SELECT * FROM users")
             assert len(result.rows) == 1
-        # File should not have been re-saved for a SELECT
-        # (mod_time could be same if fast, but at least no error)
-
+        mtime_after = os.path.getmtime(fpath)
+        assert mtime_after == mtime_before, "SELECT should not trigger save"
     def test_executemany_saves_once_not_per_row(self, tmp_path: Path) -> None:
         """executemany() should save only once at end, not per row."""
         fpath = _make_xlsx(tmp_path / "test.xlsx")
@@ -290,14 +282,14 @@ class TestDSNAutoEngineSelection:
         """connect() with local file still uses openpyxl when engine=None."""
         fpath = _make_xlsx(tmp_path / "test.xlsx")
         conn = connect(fpath, autocommit=True)
-        assert "Openpyxl" in conn.engine_name
+        assert conn.engine_name == "openpyxl"
         conn.close()
 
     def test_connect_explicit_engine_still_works(self, tmp_path: Path) -> None:
         """Explicit engine='openpyxl' still works."""
         fpath = _make_xlsx(tmp_path / "test.xlsx")
         conn = connect(fpath, engine="openpyxl", autocommit=True)
-        assert "Openpyxl" in conn.engine_name
+        assert conn.engine_name == "openpyxl"
         conn.close()
 
     def test_dsn_engine_auto_detection(self) -> None:
@@ -311,9 +303,9 @@ class TestDSNAutoEngineSelection:
         assert location == "msgraph://drives/fake/items/fake"
 
     def test_dsn_engine_mismatch_raises(self) -> None:
-        """Explicit engine conflicting with DSN raises ValueError."""
+        """Explicit engine conflicting with DSN raises BackendOperationError."""
 
-        with pytest.raises(DatabaseError, match="Engine mismatch"):
+        with pytest.raises(BackendOperationError, match="Engine mismatch"):
             _resolve_engine_and_location("msgraph://drives/fake/items/fake", "openpyxl")
 
     @pytest.mark.parametrize(

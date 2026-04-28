@@ -14,7 +14,7 @@ from excel_dbapi.connection import ExcelConnection
 from excel_dbapi.engines.graph.auth import _has_get_token_with_args, normalize_token_provider
 from excel_dbapi.engines.graph.client import GraphClient
 from excel_dbapi.engines.graph.session import WorkbookSession
-from excel_dbapi.exceptions import Error, NotSupportedError, OperationalError
+from excel_dbapi.exceptions import BackendOperationError, DatabaseError, Error, NotSupportedError, OperationalError
 
 
 DSN = "msgraph://drives/drv-test/items/itm-test"
@@ -139,17 +139,17 @@ def _make_rw_connection(**kwargs):
 class TestGraphConnectionAutoDetect:
     def test_engine_auto_detected_from_dsn(self):
         conn = _make_connection(engine=None)
-        assert conn.engine_name == "GraphBackend"
+        assert conn.engine_name == "graph"
         conn.close()
 
     def test_explicit_graph_engine(self):
         conn = _make_connection(engine="graph")
-        assert conn.engine_name == "GraphBackend"
+        assert conn.engine_name == "graph"
         conn.close()
 
     def test_engine_mismatch_raises(self):
         transport = httpx.MockTransport(_graph_handler)
-        with pytest.raises(Exception):  # OperationalError
+        with pytest.raises(BackendOperationError, match="Engine mismatch"):
             ExcelConnection(
                 DSN,
                 engine="openpyxl",
@@ -247,7 +247,7 @@ class TestGraphConnectionModuleConnect:
             credential="tok",
             transport=transport,
         )
-        assert conn.engine_name == "GraphBackend"
+        assert conn.engine_name == "graph"
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM Employees")
         assert len(cursor.fetchall()) == 3
@@ -391,27 +391,35 @@ class TestGraphConnectionResourceLeak:
 
     def test_autocommit_false_closes_backend(self):
         """When autocommit=False is rejected, backend.close() should be called."""
-        _close_called = {"n": 0}
+        close_called = {"n": 0}
         original_handler, _ = _build_handler()
 
         def tracking_handler(request: httpx.Request) -> httpx.Response:
             return original_handler(request)
 
         transport = httpx.MockTransport(tracking_handler)
-        with pytest.raises(NotSupportedError, match="transactions"):
-            ExcelConnection(
-                DSN,
-                engine=None,
-                credential="tok",
-                transport=transport,
-                autocommit=False,
-            )
-        # The backend should have been closed before the error propagated.
-        # We verify by ensuring no open httpx client was leaked.
-        # (If close() was NOT called, the httpx client would remain open.)
-        # Since we can't easily inspect client state, we verify the fix
-        # exists in connection.py by checking the code path works without error.
 
+        # Monkey-patch GraphBackend.close to track calls
+        from excel_dbapi.engines.graph.backend import GraphBackend
+        original_close = GraphBackend.close
+
+        def counting_close(self: Any) -> None:
+            close_called["n"] += 1
+            original_close(self)
+
+        GraphBackend.close = counting_close  # type: ignore[assignment]
+        try:
+            with pytest.raises(NotSupportedError, match="transactions"):
+                ExcelConnection(
+                    DSN,
+                    engine=None,
+                    credential="tok",
+                    transport=transport,
+                    autocommit=False,
+                )
+            assert close_called["n"] >= 1, "backend.close() was not called on autocommit=False rejection"
+        finally:
+            GraphBackend.close = original_close  # type: ignore[assignment]
 
 class TestGraphExecutemanySemantics:
     def test_executemany_raises_non_atomic_error_without_restore(self):
@@ -423,7 +431,7 @@ class TestGraphExecutemanySemantics:
 
         conn.engine.restore = fail_if_restore_called  # type: ignore[assignment]
         with pytest.raises(
-            Exception,
+            DatabaseError,
             match="partial writes may have occurred",
         ):
             cursor.executemany(
