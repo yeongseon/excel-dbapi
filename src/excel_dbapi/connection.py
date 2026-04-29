@@ -282,7 +282,10 @@ class ExcelConnection:
             self._warn_data_only_if_needed()
             self._warn_pandas_if_needed()
             self.engine.save()
-            self._snapshot = self.engine.snapshot()
+            if not self.autocommit:
+                self._snapshot = self.engine.snapshot()
+            else:
+                self._snapshot = None
         except Error:
             raise
         except Exception as exc:
@@ -343,7 +346,9 @@ class ExcelConnection:
             raise map_exception(exc) from exc
         supports_transactions = self.engine.supports_transactions
         try:
-            snapshot = self.engine.snapshot() if supports_transactions else None
+            action = query.strip().split(None, 1)[0].upper() if query.strip() else ""
+            is_mutating = action in _MUTATING_ACTIONS
+            snapshot = self.engine.snapshot() if supports_transactions and is_mutating else None
         except Error:
             raise
         except Exception as exc:
@@ -470,7 +475,7 @@ class ExcelConnection:
             self._warn_data_only_if_needed()
             self._warn_pandas_if_needed()
             self.engine.save()
-            self._snapshot = self.engine.snapshot()
+            self._snapshot = None  # autocommit=True: rollback not supported
     def _warn_data_only_if_needed(self) -> None:
         if self._data_only and not self._data_only_warning_issued:
             # Only warn for openpyxl — pandas/graph cannot preserve formulas

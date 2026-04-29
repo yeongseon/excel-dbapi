@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-29
+
+This release replaces the previous PyPI 2.0.0 package line with the current
+DB-API 2.0 implementation. Version 0.4.1 was the last pre-2.x release.
+
+### Fixed
+- Removed unnecessary workbook snapshot after autocommit writes (`_finalize_autocommit`);
+  autocommit mode does not support rollback so the snapshot was pure overhead.
+- `commit()` no longer creates a snapshot when `autocommit=True`.
+- `executemany()` skips snapshot creation for non-mutating queries and empty batches.
+
+### Added
+- `--backup` flag for `excel-dbapi query` CLI command: creates a timestamped backup
+  before executing a mutating query.
+
+### Changed
+- Renamed internal CLI helper `_open_readonly` → `_open_for_inspection` for clarity.
+- README engine capability matrix now uses "Best-effort" for openpyxl formatting
+  preservation instead of an unconditional ✅.
+
 ## [0.4.1] - 2026-04-13
 
 ### Added

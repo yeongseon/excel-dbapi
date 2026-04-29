@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def _open_readonly(file_path: str, engine: str | None) -> Generator["ExcelConnection", None, None]:
+def _open_for_inspection(file_path: str, engine: str | None) -> Generator["ExcelConnection", None, None]:
     """Open a connection preferring data_only=False (formula-preserving).
 
     Falls back to data_only=True for backends that don't support formula access
@@ -83,6 +83,12 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="data_only",
         help="Open workbook with data_only=True (replaces formulas with cached values)",
     )
+    _ = query_parser.add_argument(
+        "--backup",
+        action="store_true",
+        default=False,
+        help="Create a timestamped backup before executing a mutating query",
+    )
 
     return parser
 
@@ -92,7 +98,7 @@ def _headers_text(headers: list[str]) -> str:
 
 
 def _print_inspect(file_path: str, engine: str | None) -> int:
-    with _open_readonly(file_path, engine) as conn:
+    with _open_for_inspection(file_path, engine) as conn:
         workbook_name = Path(file_path).name
         engine_name = conn.engine_name
         print(f"Workbook: {workbook_name}")
@@ -109,14 +115,14 @@ def _print_inspect(file_path: str, engine: str | None) -> int:
 
 
 def _print_tables(file_path: str, engine: str | None) -> int:
-    with _open_readonly(file_path, engine) as conn:
+    with _open_for_inspection(file_path, engine) as conn:
         for sheet_name in list_tables(conn):
             print(sheet_name)
     return 0
 
 
 def _print_schema(file_path: str, engine: str | None, sheet: str | None = None) -> int:
-    with _open_readonly(file_path, engine) as conn:
+    with _open_for_inspection(file_path, engine) as conn:
         sheets = [sheet] if sheet else list_tables(conn)
         for sheet_name in sheets:
             table = conn.engine.read_sheet(sheet_name)
@@ -154,8 +160,8 @@ def _description_to_headers(result: ExecutionResult) -> list[str]:
     return []
 
 
-def _print_query(file_path: str, sql: str, engine: str | None, *, data_only: bool = False) -> int:
-    with connect(file_path, engine=engine, data_only=data_only) as conn:
+def _print_query(file_path: str, sql: str, engine: str | None, *, data_only: bool = False, backup: bool = False) -> int:
+    with connect(file_path, engine=engine, data_only=data_only, backup=backup) as conn:
         result = conn.execute(sql)
 
     headers = _description_to_headers(result)
@@ -199,7 +205,8 @@ def _run(args: argparse.Namespace) -> int:
             raise ValueError("Missing SQL query")
         sql = sql_obj
         data_only: bool = getattr(args, "data_only", False)
-        return _print_query(file_path, sql, engine, data_only=data_only)
+        backup: bool = getattr(args, "backup", False)
+        return _print_query(file_path, sql, engine, data_only=data_only, backup=backup)
 
     raise ValueError(f"Unknown command: {command}")
 

@@ -158,7 +158,7 @@ with connect("sample.xlsx") as conn:
 
 | Engine | Description | Dependency | Preserves formatting |
 |--------|-------------|------------|---------------------|
-| openpyxl (default) | Cell-level read/write | openpyxl | ✅ Yes |
+| openpyxl (default) | Cell-level read/write | openpyxl | ⚠️ Best-effort |
 | pandas | DataFrame-based operations | pandas, openpyxl | ❌ **No** — rewrites entire workbook |
 | graph | Microsoft Graph API (remote) | httpx | ✅ (cell values only) |
 
@@ -175,7 +175,7 @@ conn = connect("sample.xlsx", engine="pandas")
 |---|---|---|---|
 | Read support | ✅ | ✅ | ✅ |
 | Write support | ✅ | ✅ | ✅ (opt-in, `readonly=False`) |
-| Preserves formatting/charts/images | ✅ | ❌ (rewrites workbook) | ✅ (updates cell values only) |
+| Preserves formatting/charts/images | ⚠️ Best-effort (some features lost) | ❌ (rewrites workbook) | ✅ (updates cell values only) |
 | Transactions (commit/rollback) | ✅ (in-memory snapshot) | ✅ (in-memory snapshot) | ❌ (writes are immediate) |
 | `data_only=False` (read formulas) | ✅ | ❌ | ❌ |
 | File locking | ✅ (advisory PID-based) | ✅ (advisory PID-based) | N/A (remote) |
