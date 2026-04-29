@@ -50,7 +50,7 @@ Before you begin, understand what excel-dbapi is **not**:
 
 - **Not full SQL** — a documented SQL subset (see [SQL Specification](docs/SQL_SPEC.md))
 - **Not a document-preservation tool** — the pandas engine drops all formatting, charts, images, and formulas on save; openpyxl preserves most formatting but some Excel features (e.g. conditional formatting rules, data validation, sparklines) may not survive round-trips through SQL DML
-- **No concurrent writes** — single-writer model; advisory PID-based file locking prevents accidental double-opens within the same machine, but it is process-local and **not** a distributed lock
+- **No concurrent writes** — single-writer model; advisory PID-based file locking prevents concurrent writers once a mutating operation acquires the lock, but it is process-local and **not** a distributed lock; multiple read-only connections can coexist
 - **Not for large datasets** — designed for worksheets up to ~50k rows; beyond that, use a real database
 - **No transactional rollback guarantees** — rollback restores an in-memory snapshot, not a WAL-based recovery; a crash mid-save can lose data
 - **Identifier grammar** — both unquoted Unicode identifiers (`이름`, `naïve`) and double-quoted identifiers (`"Full Name"`, `"이름"`) are supported

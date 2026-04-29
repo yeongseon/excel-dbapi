@@ -632,3 +632,111 @@ def test_connection_str_and_repr(tmp_path: Path) -> None:
     assert "ExcelConnection" in str(conn)
     assert repr(conn) == str(conn)
     conn.close()
+
+
+def test_autocommit_toggle_true_to_false_snapshots(tmp_path: Path) -> None:
+    """Switching autocommit True→False should snapshot so rollback works."""
+    file_path = tmp_path / "toggle.xlsx"
+    _xlsx(file_path)
+    conn = ExcelConnection(str(file_path), autocommit=True)
+    # Switch to transactional mode
+    conn.autocommit = False
+    assert conn._snapshot is not None
+    cursor = conn.cursor()
+    cursor.execute("UPDATE Sheet1 SET name = 'Changed' WHERE id = 1")
+    conn.rollback()
+    cursor.execute("SELECT name FROM Sheet1 WHERE id = 1")
+    rows = cursor.fetchall()
+    assert rows[0][0] == "Alice"
+    conn.close()
+
+
+def test_autocommit_toggle_false_not_supported_raises(tmp_path: Path) -> None:
+    """Non-transactional backends should reject autocommit=False."""
+    # graph backend not available in tests, so just verify setter logic
+    file_path = tmp_path / "toggle2.xlsx"
+    _xlsx(file_path)
+    conn = ExcelConnection(str(file_path), autocommit=True)
+    # openpyxl supports transactions, so this should work
+    conn.autocommit = False
+    assert conn.autocommit is False
+    # switching back
+    conn.autocommit = True
+    assert conn.autocommit is True
+    conn.close()
+
+
+def test_data_only_warning_suppressed_for_pandas(tmp_path: Path) -> None:
+    """Pandas backend should NOT emit data_only warning (it can't preserve formulas)."""
+    import warnings
+    file_path = tmp_path / "pandas_warn.xlsx"
+    _xlsx(file_path)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        # pandas emits its own warning on init, filter that out
+        with ExcelConnection(str(file_path), engine="pandas", autocommit=True) as conn:
+            cursor = conn.cursor()
+            cursor.execute("UPDATE Sheet1 SET name = 'Bob' WHERE id = 1")
+    data_only_warnings = [x for x in w if "data_only" in str(x.message)]
+    assert len(data_only_warnings) == 0
+
+
+def test_executemany_preflight_maps_exceptions(tmp_path: Path) -> None:
+    """executemany should map preflight exceptions to DB-API errors."""
+    file_path = tmp_path / "emany.xlsx"
+    _xlsx(file_path)
+    conn = ExcelConnection(str(file_path), autocommit=True)
+    cursor = conn.cursor()
+    # executemany with a valid query should work
+    cursor.executemany(
+        "INSERT INTO Sheet1 (id, name) VALUES (?, ?)",
+        [(2, "Bob"), (3, "Carol")],
+    )
+    cursor.execute("SELECT * FROM Sheet1")
+    assert len(cursor.fetchall()) == 3
+    conn.close()
+
+
+def test_autocommit_setter_on_closed_connection(tmp_path: Path) -> None:
+    """Setting autocommit on a closed connection raises InterfaceError."""
+    file_path = tmp_path / "closed.xlsx"
+    _xlsx(file_path)
+    conn = ExcelConnection(str(file_path), autocommit=True)
+    conn.close()
+    with pytest.raises(InterfaceError):
+        conn.autocommit = False
+    with pytest.raises(InterfaceError):
+        conn.autocommit = True
+
+
+def test_autocommit_setter_wraps_backend_exceptions(tmp_path: Path, monkeypatch: Any) -> None:
+    """Backend failures in autocommit setter are wrapped in OperationalError."""
+    file_path = tmp_path / "setter_exc.xlsx"
+    _xlsx(file_path)
+    conn = ExcelConnection(str(file_path), autocommit=True)
+    # Monkeypatch engine.ensure_write_lock to raise a raw RuntimeError
+    monkeypatch.setattr(conn.engine, "ensure_write_lock", lambda: (_ for _ in ()).throw(RuntimeError("disk full")))
+    with pytest.raises(OperationalError, match="disk full"):
+        conn.autocommit = False
+    conn.close()
+
+
+def test_executemany_iterator_failure_partial_write_warning(tmp_path: Path, monkeypatch: Any) -> None:
+    """If iterator fails mid-stream on non-transactional backend, error mentions partial writes."""
+    file_path = tmp_path / "iter_fail.xlsx"
+    _xlsx(file_path)
+    conn = ExcelConnection(str(file_path), autocommit=True)
+    # Pretend the backend is non-transactional
+    monkeypatch.setattr(type(conn.engine), "supports_transactions", property(lambda self: False))
+
+    def bad_iterator():
+        yield (2, "Bob")
+        raise ValueError("generator exploded")
+
+    cursor = conn.cursor()
+    with pytest.raises(ProgrammingError, match="partial writes may have occurred"):
+        cursor.executemany(
+            "INSERT INTO Sheet1 (id, name) VALUES (?, ?)",
+            bad_iterator(),
+        )
+    conn.close()

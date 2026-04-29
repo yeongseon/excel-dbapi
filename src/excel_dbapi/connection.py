@@ -144,7 +144,7 @@ class ExcelConnection:
 
         self.file_path: str = location
         self.closed: bool = False
-        self.autocommit: bool = autocommit
+        self._autocommit: bool = autocommit
 
         try:
             engine_cls = get_engine(engine_name)
@@ -152,13 +152,9 @@ class ExcelConnection:
             raise OperationalError(str(exc)) from exc
 
         if engine_name == "pandas":
-            warnings.warn(
-                "The pandas engine rewrites workbooks on save. "
-                "Formatting, charts, images, and formulas will be dropped. "
-                "Use engine='openpyxl' if you need to preserve these.",
-                UserWarning,
-                stacklevel=2,
-            )
+            self._pandas_write_warning_pending = True
+        else:
+            self._pandas_write_warning_pending = False
 
         # ── File existence check (local files only) ─────────────
         is_dsn = resolve_engine_from_dsn(file_path) is not None
@@ -228,11 +224,19 @@ class ExcelConnection:
             sanitize_formulas=sanitize_formulas,
             connection=self,
         )
-        if not self.autocommit:
-            self.engine.ensure_write_lock()
+        if not self._autocommit:
+            try:
+                self.engine.ensure_write_lock()
+            except Exception as exc:
+                self.engine.close()
+                raise OperationalError(str(exc)) from exc
         self._snapshot: Any | None = None
-        if not self.autocommit:
-            self._snapshot = self.engine.snapshot()
+        if not self._autocommit:
+            try:
+                self._snapshot = self.engine.snapshot()
+            except Exception as exc:
+                self.engine.close()
+                raise OperationalError(str(exc)) from exc
 
     @check_closed
     def cursor(self) -> Any:
@@ -240,10 +244,43 @@ class ExcelConnection:
 
         return ExcelCursor(self)
 
+    @property
+    def autocommit(self) -> bool:
+        return self._autocommit
+
+    @autocommit.setter
+    def autocommit(self, value: bool) -> None:
+        if self.closed:
+            raise InterfaceError("Connection is already closed")
+        if value is self._autocommit:
+            return
+        try:
+            if not value:
+                # Switching True → False: acquire write lock and snapshot
+                if not self.engine.supports_transactions:
+                    raise NotSupportedError(
+                        f"Backend '{self.engine.__class__.__name__}' does not support "
+                        f"transactions (autocommit=False)"
+                    )
+                self.engine.ensure_write_lock()
+                self._snapshot = self.engine.snapshot()
+            else:
+                # Switching False → True: commit pending changes so they aren't lost
+                self._warn_data_only_if_needed()
+                self._warn_pandas_if_needed()
+                self.engine.save()
+                self._snapshot = None
+        except Error:
+            raise
+        except Exception as exc:
+            raise OperationalError(str(exc)) from exc
+        self._autocommit = value
+
     @check_closed
     def commit(self) -> None:
         try:
             self._warn_data_only_if_needed()
+            self._warn_pandas_if_needed()
             self.engine.save()
             self._snapshot = self.engine.snapshot()
         except Error:
@@ -298,21 +335,56 @@ class ExcelConnection:
         get atomic batch semantics.  Non-transactional backends warn on
         partial failure.
         """
-        self._ensure_write_lock_for_query(query)
+        try:
+            self._ensure_write_lock_for_query(query)
+        except Error:
+            raise
+        except Exception as exc:
+            raise map_exception(exc) from exc
         supports_transactions = self.engine.supports_transactions
-        snapshot = self.engine.snapshot() if supports_transactions else None
+        try:
+            snapshot = self.engine.snapshot() if supports_transactions else None
+        except Error:
+            raise
+        except Exception as exc:
+            raise map_exception(exc) from exc
         backend_name = type(self.engine).__name__
 
         total_rowcount = 0
         last_rowid: int | None = None
         last_action: str | None = None
 
-        for params in seq_of_params:
+        iter_params = iter(seq_of_params)
+        while True:
+            try:
+                params = next(iter_params)
+            except StopIteration:
+                break
+            except Error as exc:
+                if supports_transactions and snapshot is not None:
+                    self._safe_restore(snapshot, exc)
+                    raise
+                if total_rowcount > 0:
+                    raise type(exc)(
+                        f"{exc}. Backend '{backend_name}' does not support transactional "
+                        "executemany rollback; partial writes may have occurred."
+                    ) from exc
+                raise
+            except Exception as exc:
+                if supports_transactions and snapshot is not None:
+                    self._safe_restore(snapshot, exc)
+                mapped = map_exception(exc)
+                if total_rowcount > 0:
+                    raise type(mapped)(
+                        f"{mapped}. Backend '{backend_name}' does not support transactional "
+                        "executemany rollback; partial writes may have occurred."
+                    ) from exc
+                raise mapped from exc
             try:
                 result = self._executor.execute_with_params(query, tuple(params))
             except Error as exc:
                 if supports_transactions:
-                    self.engine.restore(snapshot)
+                    self._safe_restore(snapshot, exc)
                     raise
                 raise type(exc)(
                     f"{exc}. Backend '{backend_name}' does not support transactional "
@@ -321,7 +393,7 @@ class ExcelConnection:
             except Exception as exc:
                 mapped = map_exception(exc)
                 if supports_transactions:
-                    self.engine.restore(snapshot)
+                    self._safe_restore(snapshot, exc)
                     raise mapped from exc
                 raise type(mapped)(
                     f"{mapped}. Backend '{backend_name}' does not support transactional "
@@ -332,7 +404,12 @@ class ExcelConnection:
             last_action = result.action
 
         if self.autocommit and last_action is not None:
-            self._finalize_autocommit(last_action)
+            try:
+                self._finalize_autocommit(last_action)
+            except Error:
+                raise
+            except Exception as exc:
+                raise map_exception(exc) from exc
 
         return ExecutionResult(
             action=last_action or "",
@@ -341,6 +418,20 @@ class ExcelConnection:
             rowcount=total_rowcount,
             lastrowid=last_rowid,
         )
+
+
+    def _safe_restore(self, snapshot: Any, original_exc: BaseException) -> None:
+        """Restore snapshot; if restore fails, invalidate the connection."""
+        try:
+            self.engine.restore(snapshot)
+        except Exception:
+            # Restore failed — the in-memory state is now inconsistent.
+            # Close the engine to prevent the caller from using corrupted data.
+            try:
+                self.engine.close()
+            except Exception:
+                pass
+            self.closed = True
 
     def _ensure_write_lock_for_query(self, query: str) -> None:
         action = query.strip().split(None, 1)[0].upper() if query.strip() else ""
@@ -377,10 +468,16 @@ class ExcelConnection:
         """
         if self.autocommit and action in _MUTATING_ACTIONS:
             self._warn_data_only_if_needed()
+            self._warn_pandas_if_needed()
             self.engine.save()
             self._snapshot = self.engine.snapshot()
     def _warn_data_only_if_needed(self) -> None:
         if self._data_only and not self._data_only_warning_issued:
+            # Only warn for openpyxl — pandas/graph cannot preserve formulas
+            # regardless of data_only setting, so the warning is not actionable.
+            if self.engine_name != "openpyxl":
+                self._data_only_warning_issued = True
+                return
             # Compute stacklevel dynamically so the warning points at user code
             # regardless of whether the call comes through cursor or connection.
             import sys
@@ -401,6 +498,28 @@ class ExcelConnection:
                 stacklevel=level,
             )
             self._data_only_warning_issued = True
+
+    def _warn_pandas_if_needed(self) -> None:
+        if not getattr(self, "_pandas_write_warning_pending", False):
+            return
+        self._pandas_write_warning_pending = False
+        import sys
+        frame = sys._getframe(1)
+        level = 2
+        pkg = __name__.rsplit(".", 1)[0]
+        while frame.f_back is not None:
+            module = frame.f_globals.get("__name__", "")
+            if not module.startswith(pkg):
+                break
+            frame = frame.f_back
+            level += 1
+        warnings.warn(
+            "The pandas engine rewrites workbooks on save. "
+            "Formatting, charts, images, and formulas will be dropped. "
+            "Use engine='openpyxl' if you need to preserve these.",
+            UserWarning,
+            stacklevel=level,
+        )
 
     def close(self) -> None:
         try:

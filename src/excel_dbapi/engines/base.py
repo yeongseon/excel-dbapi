@@ -169,6 +169,20 @@ class WorkbookBackend(ABC):
             return
         self._acquire_lock()
 
+    @staticmethod
+    def _user_stacklevel() -> int:
+        """Compute stacklevel that exits the excel_dbapi package."""
+        import sys
+        frame = sys._getframe(1)
+        level = 2
+        pkg = "excel_dbapi"
+        while frame.f_back is not None:
+            module = frame.f_globals.get("__name__", "")
+            if not module.startswith(pkg):
+                break
+            frame = frame.f_back
+            level += 1
+        return level
     def _check_row_limit(self, sheet_name: str, row_count: int) -> None:
         from ..exceptions import OperationalError
 
@@ -181,7 +195,7 @@ class WorkbookBackend(ABC):
                         "For large analytical workloads, consider SQLite, DuckDB, or PostgreSQL."
                     ),
                     UserWarning,
-                    stacklevel=2,
+                    stacklevel=self._user_stacklevel(),
                 )
                 self._warn_rows_emitted.add(sheet_name)
 
@@ -196,7 +210,7 @@ class WorkbookBackend(ABC):
         ):
             warnings.warn(
                 f"Sheet '{sheet_name}' has reached {row_count}/{self.max_rows} rows",
-                stacklevel=2,
+                stacklevel=self._user_stacklevel(),
             )
             self._row_warning_emitted.add(warning_key)
         if row_count > self.max_rows:
@@ -220,7 +234,7 @@ class WorkbookBackend(ABC):
                     f"Sheet '{sheet_name}' has reached approximately "
                     f"{approx_bytes / (1024 * 1024):.2f}/{self.max_memory_mb:.2f} MB"
                 ),
-                stacklevel=2,
+                stacklevel=self._user_stacklevel(),
             )
             self._memory_warning_emitted.add(warning_key)
         if approx_bytes > limit_bytes:

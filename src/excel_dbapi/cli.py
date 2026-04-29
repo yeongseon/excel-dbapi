@@ -8,6 +8,32 @@ import sys
 from excel_dbapi import Error, connect
 from excel_dbapi.engines.result import ExecutionResult
 from excel_dbapi.reflection import list_tables
+from excel_dbapi.exceptions import NotSupportedError
+
+from contextlib import contextmanager
+from collections.abc import Generator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from excel_dbapi.connection import ExcelConnection
+
+
+@contextmanager
+def _open_readonly(file_path: str, engine: str | None) -> Generator["ExcelConnection", None, None]:
+    """Open a connection preferring data_only=False (formula-preserving).
+
+    Falls back to data_only=True for backends that don't support formula access
+    (pandas, graph).
+    """
+    try:
+        conn = connect(file_path, engine=engine, data_only=False)
+    except NotSupportedError:
+        conn = connect(file_path, engine=engine, data_only=True)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="excel-dbapi")
@@ -66,7 +92,7 @@ def _headers_text(headers: list[str]) -> str:
 
 
 def _print_inspect(file_path: str, engine: str | None) -> int:
-    with connect(file_path, engine=engine) as conn:
+    with _open_readonly(file_path, engine) as conn:
         workbook_name = Path(file_path).name
         engine_name = conn.engine_name
         print(f"Workbook: {workbook_name}")
@@ -83,14 +109,14 @@ def _print_inspect(file_path: str, engine: str | None) -> int:
 
 
 def _print_tables(file_path: str, engine: str | None) -> int:
-    with connect(file_path, engine=engine) as conn:
+    with _open_readonly(file_path, engine) as conn:
         for sheet_name in list_tables(conn):
             print(sheet_name)
     return 0
 
 
 def _print_schema(file_path: str, engine: str | None, sheet: str | None = None) -> int:
-    with connect(file_path, engine=engine) as conn:
+    with _open_readonly(file_path, engine) as conn:
         sheets = [sheet] if sheet else list_tables(conn)
         for sheet_name in sheets:
             table = conn.engine.read_sheet(sheet_name)
