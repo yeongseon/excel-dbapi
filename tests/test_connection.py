@@ -86,7 +86,6 @@ def test_corrupt_file_raises_operational_error(tmp_path):
         ExcelConnection(str(bad_file))
 
 
-
 def _create_r7_workbook(
     path: Path, headers: list[object], rows: list[list[object]]
 ) -> None:
@@ -100,12 +99,14 @@ def _create_r7_workbook(
     workbook.save(path)
     workbook.close()
 
+
 def test_pandas_backend_rejects_blank_headers(tmp_path: Path) -> None:
     file_path = tmp_path / "pandas-unnamed.xlsx"
     _create_r7_workbook(file_path, ["id", None], [[1, "Alice"]])
 
     with pytest.raises(DataError, match="Empty or None header"):
         ExcelConnection(str(file_path), engine="pandas")
+
 
 def test_pandas_backend_rejects_duplicate_headers(tmp_path: Path) -> None:
     file_path = tmp_path / "pandas-duplicate.xlsx"
@@ -114,13 +115,13 @@ def test_pandas_backend_rejects_duplicate_headers(tmp_path: Path) -> None:
     with pytest.raises(DataError, match="Duplicate header"):
         ExcelConnection(str(file_path), engine="pandas")
 
+
 def test_pandas_backend_rejects_data_only_false(tmp_path: Path) -> None:
     file_path = tmp_path / "pandas-data-only.xlsx"
     _create_r7_workbook(file_path, ["id"], [[1]])
 
     with pytest.raises(NotSupportedError, match="does not support data_only=False"):
         ExcelConnection(str(file_path), engine="pandas", data_only=False)
-
 
 
 def _create_people_workbook(path: Path) -> None:
@@ -133,6 +134,7 @@ def _create_people_workbook(path: Path) -> None:
     sheet.append([2, "Bob", "Road"])
     workbook.save(path)
     workbook.close()
+
 
 def test_commit_wraps_non_dbapi_backend_exceptions(
     tmp_path: Path,
@@ -150,6 +152,7 @@ def test_commit_wraps_non_dbapi_backend_exceptions(
         with pytest.raises(OperationalError, match="save failed"):
             conn.commit()
 
+
 def test_close_wraps_non_dbapi_backend_exceptions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -165,7 +168,6 @@ def test_close_wraps_non_dbapi_backend_exceptions(
     monkeypatch.setattr(conn.engine, "close", _boom_close)
     with pytest.raises(OperationalError, match="close failed"):
         conn.close()
-
 
 
 def _make_xlsx(
@@ -185,6 +187,7 @@ def _make_xlsx(
     wb.save(fpath)
     wb.close()
     return fpath
+
 
 class TestConnectionExecuteAutocommit:
     """Fix 1: connection.execute() must save when autocommit=True."""
@@ -239,12 +242,15 @@ class TestConnectionExecuteAutocommit:
         """SELECT via connection.execute() does NOT trigger save."""
         fpath = _make_xlsx(tmp_path / "test.xlsx", rows=[[1, "Alice"]])
         mtime_before = os.path.getmtime(fpath)
-        import time; time.sleep(0.05)  # ensure measurable mtime gap if save occurs
+        import time
+
+        time.sleep(0.05)
         with ExcelConnection(fpath, engine="openpyxl", autocommit=True) as conn:
             result = conn.execute("SELECT * FROM users")
             assert len(result.rows) == 1
         mtime_after = os.path.getmtime(fpath)
         assert mtime_after == mtime_before, "SELECT should not trigger save"
+
     def test_executemany_saves_once_not_per_row(self, tmp_path: Path) -> None:
         """executemany() should save only once at end, not per row."""
         fpath = _make_xlsx(tmp_path / "test.xlsx")
@@ -274,6 +280,7 @@ class TestConnectionExecuteAutocommit:
         with ExcelConnection(fpath, engine="openpyxl") as conn:
             result = conn.execute("SELECT * FROM orders")
             assert result.rows == []
+
 
 class TestDSNAutoEngineSelection:
     """Fix 2: engine default=None allows DSN-based auto-detection."""
@@ -328,6 +335,7 @@ class TestDSNAutoEngineSelection:
         engine, location = _resolve_engine_and_location(dsn, None)
         assert engine == "graph"
         assert location == expected_location
+
 
 class TestHeaderNormalization:
     """Fix 4: _normalize_headers validates and coerces headers."""
@@ -392,6 +400,7 @@ class TestHeaderNormalization:
             with pytest.raises(DataError, match="Empty or None header"):
                 conn.execute("SELECT * FROM bad")
 
+
 class TestHeaderWhitespaceTrimming:
     """Regression: _normalize_headers strips leading/trailing whitespace."""
 
@@ -404,7 +413,6 @@ class TestHeaderWhitespaceTrimming:
         """After trimming, duplicate headers are detected."""
         with pytest.raises(DataError, match="Duplicate header"):
             _normalize_headers(["  id  ", "id", "name"])
-
 
 
 @pytest.fixture
@@ -423,10 +431,12 @@ def tmp_xlsx(tmp_path):
     wb.close()
     return str(path)
 
+
 @pytest.fixture
 def tmp_xlsx_path(tmp_path):
     """Return a path (but don't create the file) — for testing create=True / missing file."""
     return str(tmp_path / "missing.xlsx")
+
 
 class TestPathCanonicalization:
     def test_dotdot_in_path_is_resolved(self, tmp_path, tmp_xlsx):
@@ -456,6 +466,7 @@ class TestPathCanonicalization:
         assert "~" not in conn.file_path
         conn.close()
 
+
 class TestTempFilePermissions:
     def test_openpyxl_save_creates_restricted_temp(self, tmp_xlsx):
         """After save, the target file should exist and be writable by owner."""
@@ -483,6 +494,7 @@ class TestTempFilePermissions:
         conn.commit()
         conn.close()
         assert os.path.exists(tmp_xlsx)
+
 
 class TestAutocommitSnapshot:
     def test_autocommit_write_updates_snapshot(self, tmp_xlsx):
@@ -582,10 +594,9 @@ class TestAutocommitSnapshot:
         conn.rollback()
         cur.execute("SELECT * FROM Sheet1 WHERE id IN (50, 51)")
         rows = cur.fetchall()
-        assert len(rows) == 2, (
-            "Both autocommitted rows should survive rollback"
-        )
+        assert len(rows) == 2, "Both autocommitted rows should survive rollback"
         conn.close()
+
 
 class TestExceptionTypes:
     def test_unsupported_engine_raises_operational_error(self, tmp_xlsx):
@@ -615,7 +626,6 @@ class TestExceptionTypes:
             ExcelConnection(tmp_xlsx_path, engine="nonexistent")
 
 
-
 def _xlsx(path: Path) -> None:
     wb = Workbook()
     ws = wb.active
@@ -624,6 +634,7 @@ def _xlsx(path: Path) -> None:
     ws.append(["id", "name"])
     ws.append([1, "Alice"])
     wb.save(path)
+
 
 def test_connection_str_and_repr(tmp_path: Path) -> None:
     file_path = tmp_path / "repr.xlsx"
@@ -669,6 +680,7 @@ def test_autocommit_toggle_false_not_supported_raises(tmp_path: Path) -> None:
 def test_data_only_warning_suppressed_for_pandas(tmp_path: Path) -> None:
     """Pandas backend should NOT emit data_only warning (it can't preserve formulas)."""
     import warnings
+
     file_path = tmp_path / "pandas_warn.xlsx"
     _xlsx(file_path)
     with warnings.catch_warnings(record=True) as w:
@@ -709,25 +721,35 @@ def test_autocommit_setter_on_closed_connection(tmp_path: Path) -> None:
         conn.autocommit = True
 
 
-def test_autocommit_setter_wraps_backend_exceptions(tmp_path: Path, monkeypatch: Any) -> None:
+def test_autocommit_setter_wraps_backend_exceptions(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     """Backend failures in autocommit setter are wrapped in OperationalError."""
     file_path = tmp_path / "setter_exc.xlsx"
     _xlsx(file_path)
     conn = ExcelConnection(str(file_path), autocommit=True)
     # Monkeypatch engine.ensure_write_lock to raise a raw RuntimeError
-    monkeypatch.setattr(conn.engine, "ensure_write_lock", lambda: (_ for _ in ()).throw(RuntimeError("disk full")))
+    monkeypatch.setattr(
+        conn.engine,
+        "ensure_write_lock",
+        lambda: (_ for _ in ()).throw(RuntimeError("disk full")),
+    )
     with pytest.raises(OperationalError, match="disk full"):
         conn.autocommit = False
     conn.close()
 
 
-def test_executemany_iterator_failure_partial_write_warning(tmp_path: Path, monkeypatch: Any) -> None:
+def test_executemany_iterator_failure_partial_write_warning(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     """If iterator fails mid-stream on non-transactional backend, error mentions partial writes."""
     file_path = tmp_path / "iter_fail.xlsx"
     _xlsx(file_path)
     conn = ExcelConnection(str(file_path), autocommit=True)
     # Pretend the backend is non-transactional
-    monkeypatch.setattr(type(conn.engine), "supports_transactions", property(lambda self: False))
+    monkeypatch.setattr(
+        type(conn.engine), "supports_transactions", property(lambda self: False)
+    )
 
     def bad_iterator():
         yield (2, "Bob")

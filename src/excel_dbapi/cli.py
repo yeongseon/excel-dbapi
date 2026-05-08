@@ -19,7 +19,9 @@ if TYPE_CHECKING:
 
 
 @contextmanager
-def _open_for_inspection(file_path: str, engine: str | None) -> Generator["ExcelConnection", None, None]:
+def _open_for_inspection(
+    file_path: str, engine: str | None
+) -> Generator["ExcelConnection", None, None]:
     """Open a connection preferring data_only=False (formula-preserving).
 
     Falls back to data_only=True for backends that don't support formula access
@@ -82,6 +84,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         dest="data_only",
         help="Open workbook with data_only=True (replaces formulas with cached values)",
+    )
+    _ = query_parser.add_argument(
+        "--write",
+        action="store_true",
+        default=False,
+        help="Allow mutating SQL (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER)",
     )
     _ = query_parser.add_argument(
         "--backup",
@@ -160,7 +168,28 @@ def _description_to_headers(result: ExecutionResult) -> list[str]:
     return []
 
 
-def _print_query(file_path: str, sql: str, engine: str | None, *, data_only: bool = False, backup: bool = False) -> int:
+_MUTATING_KEYWORDS = {"INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"}
+
+
+def _is_mutating_sql(sql: str) -> bool:
+    """Return True if the SQL statement begins with a mutating keyword."""
+    first_word = sql.strip().split(None, 1)[0].upper() if sql.strip() else ""
+    return first_word in _MUTATING_KEYWORDS
+
+
+def _print_query(
+    file_path: str,
+    sql: str,
+    engine: str | None,
+    *,
+    data_only: bool = False,
+    backup: bool = False,
+    write: bool = False,
+) -> int:
+    if _is_mutating_sql(sql) and not write:
+        raise ValueError(
+            "Mutating SQL requires --write flag. Use --backup for safer edits."
+        )
     with connect(file_path, engine=engine, data_only=data_only, backup=backup) as conn:
         result = conn.execute(sql)
 
@@ -206,9 +235,13 @@ def _run(args: argparse.Namespace) -> int:
         sql = sql_obj
         data_only: bool = getattr(args, "data_only", False)
         backup: bool = getattr(args, "backup", False)
-        return _print_query(file_path, sql, engine, data_only=data_only, backup=backup)
+        write: bool = getattr(args, "write", False)
+        return _print_query(
+            file_path, sql, engine, data_only=data_only, backup=backup, write=write
+        )
 
     raise ValueError(f"Unknown command: {command}")
+
 
 def main(argv: Sequence[str] | None = None) -> None:
     parser = _build_parser()

@@ -4,22 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [2.1.0] - 2026-04-29
+## [0.5.0] - 2026-05-07
 
-This release replaces the previous PyPI 2.0.0 package line with the current
-DB-API 2.0 implementation. Version 0.4.1 was the last pre-2.x release.
+This release includes significant internal refactors, new features, and a
+CLI breaking change. The Python API remains backward-compatible with 0.4.1.
 
 ### Fixed
 - Removed unnecessary workbook snapshot after autocommit writes (`_finalize_autocommit`);
   autocommit mode does not support rollback so the snapshot was pure overhead.
 - `commit()` no longer creates a snapshot when `autocommit=True`.
 - `executemany()` skips snapshot creation for non-mutating queries and empty batches.
+- Formula injection defense now covers DDL headers: `CREATE TABLE`, `ALTER TABLE ADD COLUMN`,
+  and `ALTER TABLE RENAME COLUMN` sanitize column names when `sanitize_formulas=True`.
 
 ### Added
+- `--write` flag for `excel-dbapi query` CLI command: mutating SQL (`INSERT`, `UPDATE`,
+  `DELETE`, `CREATE`, `DROP`, `ALTER`) is now rejected unless `--write` is passed.
+  This prevents accidental modification of Excel files via the CLI.
 - `--backup` flag for `excel-dbapi query` CLI command: creates a timestamped backup
   before executing a mutating query.
 
 ### Changed
+- **Breaking (CLI):** `excel-dbapi query` no longer executes mutating SQL by default.
+  Existing scripts that run write operations via the CLI must add `--write`.
 - Renamed internal CLI helper `_open_readonly` → `_open_for_inspection` for clarity.
 - README engine capability matrix now uses "Best-effort" for openpyxl formatting
   preservation instead of an unconditional ✅.

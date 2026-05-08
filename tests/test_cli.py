@@ -273,6 +273,7 @@ class TestQueryCommand:
                     "query",
                     str(sample_workbook),
                     "INSERT INTO Sheet1 VALUES (3, 'Carol', 92)",
+                    "--write",
                 ]
             )
         assert exc_info.value.code == 0
@@ -291,6 +292,7 @@ class TestQueryCommand:
                     "query",
                     str(sample_workbook),
                     "INSERT INTO Sheet1 VALUES (3, 'Carol', 92), (4, 'David', 88)",
+                    "--write",
                 ]
             )
         assert exc_info.value.code == 0
@@ -309,6 +311,7 @@ class TestQueryCommand:
                     "query",
                     str(sample_workbook),
                     "UPDATE Sheet1 SET name = 'Alicia' WHERE id = 1",
+                    "--write",
                 ]
             )
         assert exc_info.value.code == 0
@@ -321,12 +324,29 @@ class TestQueryCommand:
     ) -> None:
         """Test that DELETE statement displays OK message."""
         with pytest.raises(SystemExit) as exc_info:
-            main(["query", str(sample_workbook), "DELETE FROM Sheet1 WHERE id = 1"])
+            main(
+                [
+                    "query",
+                    str(sample_workbook),
+                    "DELETE FROM Sheet1 WHERE id = 1",
+                    "--write",
+                ]
+            )
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
 
         assert "OK" in captured.out
         assert "1 rows affected" in captured.out
+
+    def test_query_mutating_without_write_flag(
+        self, sample_workbook: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Mutating SQL without --write must fail."""
+        with pytest.raises(SystemExit) as exc_info:
+            main(["query", str(sample_workbook), "DELETE FROM Sheet1 WHERE id = 1"])
+        assert exc_info.value.code == 1
+        captured = capsys.readouterr()
+        assert "--write" in captured.err
 
     def test_query_nonexistent_file(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Test that query raises SystemExit(1) for missing file."""

@@ -10,7 +10,12 @@ from typing import Any, Callable, Iterator, cast
 
 from ..engines.base import TableData, WorkbookBackend
 from ..engines.result import Description, ExecutionResult
-from ..exceptions import CapabilityError, ProgrammingError, SqlParseError, SqlSemanticError
+from ..exceptions import (
+    CapabilityError,
+    ProgrammingError,
+    SqlParseError,
+    SqlSemanticError,
+)
 from ..parser import _parse_column_expression, parse_sql
 from ..reflection import METADATA_SHEET
 from ..sanitize import sanitize_cell_value, sanitize_row
@@ -24,7 +29,6 @@ from ._functions import (
 )
 
 _logger = logging.getLogger(__name__)
-
 
 
 class SharedExecutor:
@@ -205,7 +209,9 @@ class SharedExecutor:
                 )
             if not selected_data.headers:
                 if parsed.get("columns") != ["*"]:
-                    raise SqlSemanticError(f"No columns defined in sheet '{selected_table}' — cannot resolve column references")
+                    raise SqlSemanticError(
+                        f"No columns defined in sheet '{selected_table}' — cannot resolve column references"
+                    )
                 return ExecutionResult(
                     action=action, rows=[], description=[], rowcount=0, lastrowid=None
                 )
@@ -239,13 +245,17 @@ class SharedExecutor:
                 raise SqlSemanticError(msg)
             table_data = self.backend.read_sheet(resolved_table)
             if not table_data.headers:
-                raise SqlSemanticError(f"No columns defined in sheet '{resolved_table}' — cannot resolve column references")
+                raise SqlSemanticError(
+                    f"No columns defined in sheet '{resolved_table}' — cannot resolve column references"
+                )
             headers = list(table_data.headers)
             header_index = self._build_header_index(headers)
             updates = parsed["set"]
             for update in updates:
                 if not self._has_header(update["column"], header_index):
-                    raise SqlSemanticError(f"Unknown column: {update['column']}. Available columns: {headers}")
+                    raise SqlSemanticError(
+                        f"Unknown column: {update['column']}. Available columns: {headers}"
+                    )
 
             where = parsed.get("where")
             if where:
@@ -271,7 +281,9 @@ class SharedExecutor:
                         update["column"], header_index
                     )
                     if col_index is None:
-                        raise SqlSemanticError(f"Unknown column: {update['column']}. Available columns: {headers}")
+                        raise SqlSemanticError(
+                            f"Unknown column: {update['column']}. Available columns: {headers}"
+                        )
                     raw_value = update["value"]
                     should_eval_str = (
                         isinstance(raw_value, str)
@@ -328,7 +340,9 @@ class SharedExecutor:
             if not table_data.headers:
                 where = parsed.get("where")
                 if where and self._collect_where_column_refs(where):
-                    raise SqlSemanticError(f"No columns defined in sheet '{resolved_table}' — cannot resolve column references")
+                    raise SqlSemanticError(
+                        f"No columns defined in sheet '{resolved_table}' — cannot resolve column references"
+                    )
                 return ExecutionResult(
                     action=action, rows=[], description=[], rowcount=0, lastrowid=None
                 )
@@ -387,7 +401,9 @@ class SharedExecutor:
             if insert_columns is not None:
                 missing = self._missing_headers(insert_columns, header_index)
                 if missing:
-                    raise SqlSemanticError(f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}")
+                    raise SqlSemanticError(
+                        f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}"
+                    )
 
             rows_to_insert: list[list[Any]]
             if isinstance(values, dict):
@@ -405,9 +421,11 @@ class SharedExecutor:
                 if subquery_result.description:
                     actual_count = len(subquery_result.description)
                     if actual_count != expected_count:
-                        raise SqlSemanticError(f"INSERT...SELECT column count mismatch: "
-                        f"target has {expected_count} column(s), "
-                        f"SELECT returns {actual_count}")
+                        raise SqlSemanticError(
+                            f"INSERT...SELECT column count mismatch: "
+                            f"target has {expected_count} column(s), "
+                            f"SELECT returns {actual_count}"
+                        )
             elif isinstance(values, list):
                 rows_to_insert = [list(row) for row in values]
             else:
@@ -421,9 +439,13 @@ class SharedExecutor:
             for values_row in rows_to_insert:
                 if len(values_row) != expected_count:
                     if insert_columns is None:
-                        raise SqlSemanticError("INSERT values count does not match header count")
+                        raise SqlSemanticError(
+                            "INSERT values count does not match header count"
+                        )
                     else:
-                        raise SqlSemanticError("INSERT values count does not match column count")
+                        raise SqlSemanticError(
+                            "INSERT values count does not match column count"
+                        )
                 if insert_columns is None:
                     row_values = list(values_row)
                 else:
@@ -431,7 +453,9 @@ class SharedExecutor:
                     for col, value in zip(insert_columns, values_row):
                         col_index = self._resolve_header_index(col, header_index)
                         if col_index is None:
-                            raise SqlSemanticError(f"Unknown column: {col}. Available columns: {headers}")
+                            raise SqlSemanticError(
+                                f"Unknown column: {col}. Available columns: {headers}"
+                            )
                         row_values[col_index] = value
                 sanitized_row = (
                     sanitize_row(row_values) if self.sanitize_formulas else row_values
@@ -443,7 +467,9 @@ class SharedExecutor:
                 target_cols = on_conflict["target_columns"]
                 for target_col in target_cols:
                     if not self._has_header(target_col, header_index):
-                        raise SqlSemanticError(f"ON CONFLICT column '{target_col}' not found in headers")
+                        raise SqlSemanticError(
+                            f"ON CONFLICT column '{target_col}' not found in headers"
+                        )
 
                 unresolved_target_indices = [
                     self._resolve_header_index(target_col, header_index)
@@ -452,7 +478,9 @@ class SharedExecutor:
                 if any(
                     target_index is None for target_index in unresolved_target_indices
                 ):
-                    raise SqlSemanticError("ON CONFLICT target column resolution failed")
+                    raise SqlSemanticError(
+                        "ON CONFLICT target column resolution failed"
+                    )
                 target_indices = [
                     cast(int, target_index)
                     for target_index in unresolved_target_indices
@@ -462,7 +490,9 @@ class SharedExecutor:
                 if action_name == "UPDATE":
                     for update in upsert_updates:
                         if not self._has_header(update["column"], header_index):
-                            raise SqlSemanticError(f"Unknown column: {update['column']}. Available columns: {headers}")
+                            raise SqlSemanticError(
+                                f"Unknown column: {update['column']}. Available columns: {headers}"
+                            )
 
                 rowcount = 0
                 for sanitized_row in sanitized_rows:
@@ -503,7 +533,9 @@ class SharedExecutor:
                         continue
 
                     if action_name != "UPDATE":
-                        raise SqlSemanticError(f"Invalid ON CONFLICT action: {on_conflict.get('action')}")
+                        raise SqlSemanticError(
+                            f"Invalid ON CONFLICT action: {on_conflict.get('action')}"
+                        )
 
                     row_map = self._row_from_values(headers, conflict_row)
                     excluded_map = self._row_from_values(headers, sanitized_row)
@@ -521,7 +553,9 @@ class SharedExecutor:
                             update["column"], header_index
                         )
                         if col_index is None:
-                            raise SqlSemanticError(f"Unknown column: {update['column']}. Available columns: {headers}")
+                            raise SqlSemanticError(
+                                f"Unknown column: {update['column']}. Available columns: {headers}"
+                            )
                         raw_value = update["value"]
                         should_eval_str = isinstance(raw_value, str) and (
                             self._resolve_row_value(row_map, raw_value) is not None
@@ -601,8 +635,12 @@ class SharedExecutor:
             for col in columns:
                 lower = col.casefold()
                 if lower in seen:
-                    raise SqlSemanticError(f"Duplicate column name '{col}' in CREATE TABLE")
+                    raise SqlSemanticError(
+                        f"Duplicate column name '{col}' in CREATE TABLE"
+                    )
                 seen.add(lower)
+            if self.sanitize_formulas:
+                columns = [sanitize_cell_value(c) for c in columns]
             self.backend.create_sheet(table, columns)
             type_by_column = {
                 str(definition["name"]): str(definition.get("type_name", "TEXT"))
@@ -665,8 +703,11 @@ class SharedExecutor:
                 if col in data.headers or col.casefold() in {
                     h.casefold() for h in data.headers
                 }:
-                    raise SqlSemanticError(f"Column '{col}' already exists in '{table}'")
-                data.headers.append(col)
+                    raise SqlSemanticError(
+                        f"Column '{col}' already exists in '{table}'"
+                    )
+                safe_col = sanitize_cell_value(col) if self.sanitize_formulas else col
+                data.headers.append(safe_col)
                 for row in data.rows:
                     row.append(None)
                 self.backend.write_sheet(resolved_table, data)
@@ -689,7 +730,9 @@ class SharedExecutor:
                 if idx == -1:
                     raise SqlSemanticError(f"Column '{col}' not found in '{table}'")
                 if len(data.headers) == 1:
-                    raise SqlSemanticError(f"Cannot drop the only column '{col}' from '{table}'")
+                    raise SqlSemanticError(
+                        f"Cannot drop the only column '{col}' from '{table}'"
+                    )
                 data.headers.pop(idx)
                 for row in data.rows:
                     if idx < len(row):
@@ -714,8 +757,13 @@ class SharedExecutor:
                 if new_col in data.headers or new_col.casefold() in {
                     h.casefold() for h in data.headers if h != matched_old_col
                 }:
-                    raise SqlSemanticError(f"Column '{new_col}' already exists in '{table}'")
-                data.headers[idx] = new_col
+                    raise SqlSemanticError(
+                        f"Column '{new_col}' already exists in '{table}'"
+                    )
+                safe_new_col = (
+                    sanitize_cell_value(new_col) if self.sanitize_formulas else new_col
+                )
+                data.headers[idx] = safe_new_col
                 self.backend.write_sheet(resolved_table, data)
                 self._write_metadata_for_headers(resolved_table, list(data.headers))
             else:
@@ -778,7 +826,9 @@ class SharedExecutor:
         for item in order_by:
             column_name = str(item["column"])
             if column_name.casefold() not in selected:
-                raise SqlSemanticError("ORDER BY columns must appear in SELECT list when using DISTINCT")
+                raise SqlSemanticError(
+                    "ORDER BY columns must appear in SELECT list when using DISTINCT"
+                )
 
     @staticmethod
     def _build_header_index(headers: list[str]) -> dict[str, int]:
@@ -1338,7 +1388,9 @@ class SharedExecutor:
             for item in order_by:
                 col = str(item["column"])
                 if col.casefold() not in available_columns_casefold:
-                    raise SqlSemanticError(f"Unknown column: {col}. Available columns: {sorted(available_columns)}")
+                    raise SqlSemanticError(
+                        f"Unknown column: {col}. Available columns: {sorted(available_columns)}"
+                    )
         if len(rows) < 2:
             return rows
         for item in reversed(order_by):
@@ -1653,7 +1705,9 @@ class SharedExecutor:
     def _execute_compound(self, parsed: dict[str, Any]) -> ExecutionResult:
         queries = parsed.get("queries")
         if not isinstance(queries, list) or not queries:
-            raise SqlSemanticError("COMPOUND query must contain at least one SELECT query")
+            raise SqlSemanticError(
+                "COMPOUND query must contain at least one SELECT query"
+            )
 
         operators = parsed.get("operators")
         if not isinstance(operators, list):
@@ -1673,7 +1727,9 @@ class SharedExecutor:
         expected_columns = len(first_result.description)
         for result in results[1:]:
             if len(result.description) != expected_columns:
-                raise SqlSemanticError("Compound queries require matching column counts")
+                raise SqlSemanticError(
+                    "Compound queries require matching column counts"
+                )
 
         rows = list(first_result.rows)
         for idx, operator in enumerate(operators, start=1):
@@ -1723,7 +1779,9 @@ class SharedExecutor:
                         col_index = i
                         break
                 if col_index is None:
-                    raise SqlSemanticError(f"ORDER BY column '{col_name}' not found in compound result")
+                    raise SqlSemanticError(
+                        f"ORDER BY column '{col_name}' not found in compound result"
+                    )
                 resolved_indexes[col_name] = col_index
             rows = self._apply_order_by(
                 rows,
@@ -2098,8 +2156,10 @@ class SharedExecutor:
             if valid is None:
                 raise SqlSemanticError(f"Unknown source reference: {source}")
             if name not in valid:
-                raise SqlSemanticError(f"Unknown column: {source}.{name}. "
-                f"Available columns in '{source}': {sorted(valid)}")
+                raise SqlSemanticError(
+                    f"Unknown column: {source}.{name}. "
+                    f"Available columns in '{source}': {sorted(valid)}"
+                )
 
         for join_spec in joins:
             right_source = join_spec["source"]
@@ -2143,7 +2203,9 @@ class SharedExecutor:
                 return
             if isinstance(expression, str):
                 if "." not in expression:
-                    raise SqlSemanticError("JOIN queries require qualified column names in SELECT")
+                    raise SqlSemanticError(
+                        "JOIN queries require qualified column names in SELECT"
+                    )
                 source, name = expression.split(".", 1)
                 _validate_column_ref(source, name, "SELECT")
                 return
@@ -2160,7 +2222,9 @@ class SharedExecutor:
                     arg = str(expression.get("arg", ""))
                     if arg != "*":
                         if "." not in arg:
-                            raise SqlSemanticError("Aggregate arguments in JOIN queries must be qualified column names or *")
+                            raise SqlSemanticError(
+                                "Aggregate arguments in JOIN queries must be qualified column names or *"
+                            )
                         source, name = arg.split(".", 1)
                         _validate_column_ref(source, name, "SELECT")
 
@@ -2178,7 +2242,9 @@ class SharedExecutor:
                                 if argument == "*":
                                     continue
                                 if "." not in argument:
-                                    raise SqlSemanticError("Window function arguments in JOIN queries must be qualified column names or *")
+                                    raise SqlSemanticError(
+                                        "Window function arguments in JOIN queries must be qualified column names or *"
+                                    )
                                 source, name = argument.split(".", 1)
                                 _validate_column_ref(source, name, "SELECT")
                             else:
@@ -2204,7 +2270,9 @@ class SharedExecutor:
                                 if order_column.startswith("__expr__:"):
                                     continue
                                 if "." not in order_column:
-                                    raise SqlSemanticError("Window function ORDER BY in JOIN queries requires qualified column names")
+                                    raise SqlSemanticError(
+                                        "Window function ORDER BY in JOIN queries requires qualified column names"
+                                    )
                                 source, name = order_column.split(".", 1)
                                 _validate_column_ref(source, name, "SELECT")
 
@@ -2252,7 +2320,9 @@ class SharedExecutor:
                     return
                 if expression_type == "subquery":
                     return
-            raise SqlSemanticError("JOIN queries require qualified column names in SELECT")
+            raise SqlSemanticError(
+                "JOIN queries require qualified column names in SELECT"
+            )
 
         if parsed["columns"] != ["*"]:
             for column in parsed["columns"]:
@@ -2331,7 +2401,9 @@ class SharedExecutor:
         having = parsed.get("having")
 
         if columns == ["*"] and (aggregate_query or group_by is not None):
-            raise SqlSemanticError("SELECT * is not supported with GROUP BY or aggregate functions")
+            raise SqlSemanticError(
+                "SELECT * is not supported with GROUP BY or aggregate functions"
+            )
 
         if aggregate_query or group_by is not None:
             flattened_headers: list[str] = []
@@ -2486,7 +2558,9 @@ class SharedExecutor:
         aggregate_query = any(self._is_aggregate_column(col) for col in columns)
 
         if columns == ["*"] and (aggregate_query or group_by):
-            raise SqlSemanticError("SELECT * is not supported with GROUP BY or aggregate functions")
+            raise SqlSemanticError(
+                "SELECT * is not supported with GROUP BY or aggregate functions"
+            )
 
         if aggregate_query or group_by is not None:
             return self._execute_aggregate_select(
@@ -2527,7 +2601,9 @@ class SharedExecutor:
         else:
             missing = self._missing_headers(selected_columns, header_index)
         if missing:
-            raise SqlSemanticError(f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}")
+            raise SqlSemanticError(
+                f"Unknown column(s): {', '.join(missing)}. Available columns: {headers}"
+            )
 
         alias_map = self._build_alias_map(columns)
         order_by = self._normalize_order_by(parsed.get("order_by"))
@@ -2715,8 +2791,10 @@ class SharedExecutor:
                     if not self._has_header(column_name, header_index)
                 )
                 if missing_group_columns:
-                    raise SqlSemanticError("Unknown column(s): "
-                    f"{', '.join(missing_group_columns)}. Available columns: {headers}")
+                    raise SqlSemanticError(
+                        "Unknown column(s): "
+                        f"{', '.join(missing_group_columns)}. Available columns: {headers}"
+                    )
                 group_entries.append((group_key, group_expression))
         group_by_keys = {key for key, _ in group_entries}
 
@@ -2766,7 +2844,9 @@ class SharedExecutor:
                 raw_arg = str(aggregate_column.get("arg"))
                 arg = self._normalize_single_source_aggregate_arg(raw_arg, headers)
                 if arg != "*" and not self._has_header(arg, header_index):
-                    raise SqlSemanticError(f"Unknown column: {raw_arg}. Available columns: {headers}")
+                    raise SqlSemanticError(
+                        f"Unknown column: {raw_arg}. Available columns: {headers}"
+                    )
                 label = self._aggregate_label(aggregate_column)
                 filter_clause = aggregate_column.get("filter")
                 filter_condition = (
@@ -2790,11 +2870,17 @@ class SharedExecutor:
                 if not self._has_header(ref, header_index)
             )
             if missing_selected_columns:
-                raise SqlSemanticError(f"Unknown column(s): {', '.join(missing_selected_columns)}. Available columns: {headers}")
+                raise SqlSemanticError(
+                    f"Unknown column(s): {', '.join(missing_selected_columns)}. Available columns: {headers}"
+                )
             if group_by is None:
-                raise SqlSemanticError("Non-aggregate columns in aggregate queries require GROUP BY")
+                raise SqlSemanticError(
+                    "Non-aggregate columns in aggregate queries require GROUP BY"
+                )
             if column_name not in group_by_keys:
-                raise SqlSemanticError(f"Selected column '{column_name}' must appear in GROUP BY")
+                raise SqlSemanticError(
+                    f"Selected column '{column_name}' must appear in GROUP BY"
+                )
             output_columns.append(self._output_name(column))
             output_sources.append(column_name)
 
@@ -2810,7 +2896,9 @@ class SharedExecutor:
                 if normalized_arg != "*" and not self._has_header(
                     normalized_arg, header_index
                 ):
-                    raise SqlSemanticError(f"Unknown column: {arg}. Available columns: {headers}")
+                    raise SqlSemanticError(
+                        f"Unknown column: {arg}. Available columns: {headers}"
+                    )
                 required_aggregates[ref] = (
                     func,
                     normalized_arg,
@@ -2844,7 +2932,9 @@ class SharedExecutor:
                 if normalized_arg != "*" and not self._has_header(
                     normalized_arg, header_index
                 ):
-                    raise SqlSemanticError(f"Unknown column: {arg}. Available columns: {headers}")
+                    raise SqlSemanticError(
+                        f"Unknown column: {arg}. Available columns: {headers}"
+                    )
                 required_aggregates[ref] = (
                     func,
                     normalized_arg,
@@ -2857,7 +2947,9 @@ class SharedExecutor:
                 if self._aggregate_spec_from_label(column_ref) is not None:
                     continue
                 if group_by is None or column_ref not in group_by_keys:
-                    raise SqlSemanticError(f"Column '{column_ref}' in HAVING must be a GROUP BY column or aggregate function")
+                    raise SqlSemanticError(
+                        f"Column '{column_ref}' in HAVING must be a GROUP BY column or aggregate function"
+                    )
 
         grouped_rows: list[dict[str, Any]] = []
         if group_entries:

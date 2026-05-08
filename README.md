@@ -152,6 +152,23 @@ with connect("sample.xlsx") as conn:
     cursor.execute("DROP TABLE NewSheet")
 ```
 
+### Formulas and `data_only`
+
+By default the Python API opens workbooks with `data_only=True`, which reads
+cached formula values. **If you write back to a workbook that contains formulas,
+the formulas will be replaced by their cached values.** To preserve formulas,
+pass `data_only=False`:
+
+```python
+with connect("sample.xlsx", data_only=False) as conn:
+    cursor = conn.cursor()
+    cursor.execute("UPDATE Sheet1 SET score = 100 WHERE id = 1")
+```
+
+> **Note:** The CLI defaults to `data_only=False` (safe). The Python API defaults
+> to `data_only=True` for backward compatibility. A future release may change
+> the Python API default.
+
 ---
 
 ## Engine Options
@@ -304,8 +321,14 @@ excel-dbapi tables sample.xlsx
 excel-dbapi schema sample.xlsx
 excel-dbapi schema sample.xlsx Sheet1
 
-# Run a SQL query
+# Run a read-only SQL query
 excel-dbapi query sample.xlsx "SELECT * FROM Sheet1 WHERE score > 80"
+
+# Mutating SQL requires --write (prevents accidental modifications)
+excel-dbapi query sample.xlsx "DELETE FROM Sheet1 WHERE id = 1" --write
+
+# Combine --write with --backup for safer edits
+excel-dbapi query sample.xlsx "DELETE FROM Sheet1 WHERE id = 1" --write --backup
 
 # Workbook summary
 excel-dbapi inspect sample.xlsx
@@ -316,6 +339,9 @@ excel-dbapi query sample.xlsx "SELECT * FROM Sheet1" --data-only
 
 By default the CLI opens workbooks with `data_only=False` to preserve formulas.
 Pass `--data-only` to read cached formula values instead.
+
+Mutating SQL (`INSERT`, `UPDATE`, `DELETE`, `CREATE`, `DROP`, `ALTER`) requires
+the `--write` flag. This prevents accidental modification of Excel files.
 
 ---
 

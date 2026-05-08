@@ -201,3 +201,59 @@ class TestPandasSanitizationIntegration:
             row = cursor.fetchone()
             assert row is not None
             assert row[1] == "@SUM(A1)"
+
+
+# ---------------------------------------------------------------------------
+# DDL header sanitization
+# ---------------------------------------------------------------------------
+
+
+class TestDDLHeaderSanitization:
+    """CREATE TABLE and ALTER TABLE must sanitize header names."""
+
+    def test_create_table_sanitizes_headers(self, tmp_xlsx: str) -> None:
+        from excel_dbapi.connection import ExcelConnection
+
+        with ExcelConnection(tmp_xlsx) as conn:
+            cursor = conn.cursor()
+            cursor.execute('CREATE TABLE danger ("=SUM(1,1)", "normal")')
+            cursor.execute("SELECT * FROM danger")
+            desc = cursor.description
+            assert desc is not None
+            assert desc[0][0] == "'=SUM(1,1)"
+            assert desc[1][0] == "normal"
+
+    def test_alter_add_column_sanitizes(self, tmp_xlsx: str) -> None:
+        from excel_dbapi.connection import ExcelConnection
+
+        with ExcelConnection(tmp_xlsx) as conn:
+            cursor = conn.cursor()
+            cursor.execute('ALTER TABLE Sheet1 ADD COLUMN "+cmd" TEXT')
+            cursor.execute("SELECT * FROM Sheet1")
+            desc = cursor.description
+            assert desc is not None
+            col_names = [col[0] for col in desc]
+            assert "'+cmd" in col_names
+
+    def test_alter_rename_column_sanitizes(self, tmp_xlsx: str) -> None:
+        from excel_dbapi.connection import ExcelConnection
+
+        with ExcelConnection(tmp_xlsx) as conn:
+            cursor = conn.cursor()
+            cursor.execute('ALTER TABLE Sheet1 RENAME COLUMN name TO "@evil"')
+            cursor.execute("SELECT * FROM Sheet1")
+            desc = cursor.description
+            assert desc is not None
+            col_names = [col[0] for col in desc]
+            assert "'@evil" in col_names
+
+    def test_create_table_no_sanitize_when_disabled(self, tmp_xlsx: str) -> None:
+        from excel_dbapi.connection import ExcelConnection
+
+        with ExcelConnection(tmp_xlsx, sanitize_formulas=False) as conn:
+            cursor = conn.cursor()
+            cursor.execute('CREATE TABLE raw ("=SUM(1,1)", "normal")')
+            cursor.execute("SELECT * FROM raw")
+            desc = cursor.description
+            assert desc is not None
+            assert desc[0][0] == "=SUM(1,1)"
