@@ -52,7 +52,8 @@ Reference: [OWASP — CSV Injection](https://owasp.org/www-community/attacks/CSV
 
 **Default behavior (`sanitize_formulas=True`)**:
 
-All string values written via `INSERT` or `UPDATE` are checked before being
+All string values written via `INSERT` or `UPDATE`, and column names created
+or renamed via `CREATE TABLE` or `ALTER TABLE`, are checked before being
 stored. If a value starts with any of the dangerous prefix characters
 (`=`, `+`, `-`, `@`, `\t`, `\r`), it is prefixed with a single-quote (`'`)
 so the spreadsheet treats it as a text literal rather than a formula.
@@ -75,7 +76,8 @@ conn = connect("workbook.xlsx", sanitize_formulas=False)
 
 ### Scope
 
-- **Covered**: All DML writes (`INSERT`, `UPDATE`) across all engines.
+- **Covered**: All DML writes (`INSERT`, `UPDATE`) and DDL header names
+  (`CREATE TABLE`, `ALTER TABLE ADD/RENAME COLUMN`) across all engines.
 - **Not covered**: Data written via direct workbook access (`conn.workbook`)
   bypasses the SQL layer and its sanitization. If you use `.workbook`,
   you are responsible for your own sanitization.

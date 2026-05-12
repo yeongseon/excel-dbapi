@@ -266,7 +266,8 @@ with connect("sample.xlsx") as conn:
 
 ### Formula Injection Defense
 
-By default, `excel-dbapi` sanitizes cell values on write (INSERT/UPDATE) to prevent
+By default, `excel-dbapi` sanitizes cell values on write (INSERT/UPDATE) and
+DDL header names (CREATE TABLE, ALTER TABLE ADD/RENAME COLUMN) to prevent
 [formula injection attacks](https://owasp.org/www-community/attacks/CSV_Injection).
 Strings starting with `=`, `+`, `-`, `@`, `\t`, or `\r` are automatically prefixed
 with a single quote (`'`) so they are stored as plain text, not executed as formulas.

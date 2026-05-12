@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-12
+
+### Fixed
+- DDL header sanitization now runs before duplicate-name validation; previously
+  two different raw names could sanitize to the same value and create a corrupt sheet.
+- Sanitized DDL headers now preserve declared column types in metadata instead of
+  falling back to `TEXT`.
+
 ## [0.5.0] - 2026-05-07
 
 This release includes significant internal refactors, new features, and a
@@ -21,8 +29,6 @@ CLI breaking change. The Python API remains backward-compatible with 0.4.1.
 - `--write` flag for `excel-dbapi query` CLI command: mutating SQL (`INSERT`, `UPDATE`,
   `DELETE`, `CREATE`, `DROP`, `ALTER`) is now rejected unless `--write` is passed.
   This prevents accidental modification of Excel files via the CLI.
-- `--backup` flag for `excel-dbapi query` CLI command: creates a timestamped backup
-  before executing a mutating query.
 
 ### Changed
 - **Breaking (CLI):** `excel-dbapi query` no longer executes mutating SQL by default.

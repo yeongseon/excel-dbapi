@@ -631,6 +631,8 @@ class SharedExecutor:
             if resolved_table is not None:
                 raise SqlSemanticError(f"Sheet '{table}' already exists")
             columns = parsed["columns"]
+            if self.sanitize_formulas:
+                columns = [sanitize_cell_value(c) for c in columns]
             seen: set[str] = set()
             for col in columns:
                 lower = col.casefold()
@@ -639,11 +641,13 @@ class SharedExecutor:
                         f"Duplicate column name '{col}' in CREATE TABLE"
                     )
                 seen.add(lower)
-            if self.sanitize_formulas:
-                columns = [sanitize_cell_value(c) for c in columns]
             self.backend.create_sheet(table, columns)
             type_by_column = {
-                str(definition["name"]): str(definition.get("type_name", "TEXT"))
+                str(
+                    sanitize_cell_value(definition["name"])
+                    if self.sanitize_formulas
+                    else definition["name"]
+                ): str(definition.get("type_name", "TEXT"))
                 for definition in parsed.get("column_definitions", [])
             }
             self._write_metadata_for_headers(table, columns, type_by_column)
@@ -700,13 +704,13 @@ class SharedExecutor:
 
             if operation == "ADD_COLUMN":
                 col = parsed["column"]
-                if col in data.headers or col.casefold() in {
+                safe_col = sanitize_cell_value(col) if self.sanitize_formulas else col
+                if safe_col in data.headers or safe_col.casefold() in {
                     h.casefold() for h in data.headers
                 }:
                     raise SqlSemanticError(
                         f"Column '{col}' already exists in '{table}'"
                     )
-                safe_col = sanitize_cell_value(col) if self.sanitize_formulas else col
                 data.headers.append(safe_col)
                 for row in data.rows:
                     row.append(None)
@@ -754,15 +758,15 @@ class SharedExecutor:
                 if idx == -1:
                     raise SqlSemanticError(f"Column '{old_col}' not found in '{table}'")
                 matched_old_col = data.headers[idx]
-                if new_col in data.headers or new_col.casefold() in {
+                safe_new_col = (
+                    sanitize_cell_value(new_col) if self.sanitize_formulas else new_col
+                )
+                if safe_new_col in data.headers or safe_new_col.casefold() in {
                     h.casefold() for h in data.headers if h != matched_old_col
                 }:
                     raise SqlSemanticError(
                         f"Column '{new_col}' already exists in '{table}'"
                     )
-                safe_new_col = (
-                    sanitize_cell_value(new_col) if self.sanitize_formulas else new_col
-                )
                 data.headers[idx] = safe_new_col
                 self.backend.write_sheet(resolved_table, data)
                 self._write_metadata_for_headers(resolved_table, list(data.headers))

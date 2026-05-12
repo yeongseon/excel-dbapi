@@ -27,7 +27,7 @@ from .reflection import (
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "qmark"
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 
 class DBAPITypeObject:

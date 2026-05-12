@@ -257,3 +257,35 @@ class TestDDLHeaderSanitization:
             desc = cursor.description
             assert desc is not None
             assert desc[0][0] == "=SUM(1,1)"
+
+    def test_create_table_sanitized_collision_rejected(self, tmp_xlsx: str) -> None:
+        from excel_dbapi.connection import ExcelConnection
+        from excel_dbapi.exceptions import DatabaseError
+
+        with ExcelConnection(tmp_xlsx) as conn:
+            cursor = conn.cursor()
+            with pytest.raises(DatabaseError, match="Duplicate"):
+                cursor.execute("""CREATE TABLE dup ("=name" TEXT, "'=name" TEXT)""")
+
+    def test_alter_add_column_sanitized_collision_rejected(self, tmp_xlsx: str) -> None:
+        from excel_dbapi.connection import ExcelConnection
+        from excel_dbapi.exceptions import DatabaseError
+
+        with ExcelConnection(tmp_xlsx) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM Sheet1")
+            headers = [col[0] for col in cursor.description or []]
+            if "'=evil" not in headers:
+                cursor.execute('ALTER TABLE Sheet1 ADD COLUMN "\'=evil" TEXT')
+            with pytest.raises(DatabaseError, match="already exists"):
+                cursor.execute('ALTER TABLE Sheet1 ADD COLUMN "=evil" TEXT')
+
+    def test_alter_rename_sanitized_collision_rejected(self, tmp_xlsx: str) -> None:
+        from excel_dbapi.connection import ExcelConnection
+        from excel_dbapi.exceptions import DatabaseError
+
+        with ExcelConnection(tmp_xlsx) as conn:
+            cursor = conn.cursor()
+            cursor.execute('CREATE TABLE rcol ("a" TEXT, "\'=b" TEXT)')
+            with pytest.raises(DatabaseError, match="already exists"):
+                cursor.execute('ALTER TABLE rcol RENAME COLUMN a TO "=b"')
